@@ -35,7 +35,7 @@ pub fn solve_cubic(a: f64, b: f64, c: f64, d: f64) -> Vec<f64> {
     let r = d / a;
     let p3 = p / 3.0;
     let alpha = q - p * p / 3.0;
-    let beta  = 2.0 * p * p * p / 27.0 - p * q / 3.0 + r;
+    let beta = 2.0 * p * p * p / 27.0 - p * q / 3.0 + r;
     let disc = -4.0 * alpha.powi(3) - 27.0 * beta * beta;
     let mut roots = Vec::new();
     if disc > 0.0 {
@@ -68,13 +68,15 @@ pub fn solve_quartic(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
     let s = e / a;
     let p4 = p / 4.0;
     let alpha = q - 3.0 * p * p / 8.0;
-    let beta  = r - p * q / 2.0 + p * p * p / 8.0;
+    let beta = r - p * q / 2.0 + p * p * p / 8.0;
     let gamma = s - p * r / 4.0 + p * p * q / 16.0 - 3.0 * p.powi(4) / 256.0;
 
     if beta.abs() < 1e-12 {
         let mut out = Vec::new();
         for &u2 in &solve_quadratic(1.0, alpha, gamma) {
-            if u2 < 0.0 { continue; }
+            if u2 < 0.0 {
+                continue;
+            }
             let u = u2.sqrt();
             out.push(u - p4);
             out.push(-u - p4);
@@ -83,12 +85,21 @@ pub fn solve_quartic(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
         return out;
     }
 
-    let cubic_roots = solve_cubic(8.0, 8.0 * alpha, 2.0 * alpha * alpha - 8.0 * gamma, -beta * beta);
+    let cubic_roots = solve_cubic(
+        8.0,
+        8.0 * alpha,
+        2.0 * alpha * alpha - 8.0 * gamma,
+        -beta * beta,
+    );
     let y = cubic_roots.into_iter().fold(f64::NEG_INFINITY, f64::max);
     let two_y = 2.0 * y;
-    if two_y < 0.0 { return Vec::new(); }
+    if two_y < 0.0 {
+        return Vec::new();
+    }
     let sqrt_2y = two_y.sqrt();
-    if sqrt_2y.abs() < 1e-15 { return Vec::new(); }
+    if sqrt_2y.abs() < 1e-15 {
+        return Vec::new();
+    }
 
     let m1 = alpha + 2.0 * y - beta / sqrt_2y;
     let m2 = alpha + 2.0 * y + beta / sqrt_2y;
