@@ -13,7 +13,10 @@ impl Line {
     /// Construct from two distinct points; returns `None` if they coincide.
     pub fn through(p: Point3, q: Point3) -> Option<Self> {
         let direction = (q - p).try_normalize(0.0)?;
-        Some(Line { origin: p, direction })
+        Some(Line {
+            origin: p,
+            direction,
+        })
     }
 
     /// Construct from origin + direction; returns `None` if direction is zero.
@@ -24,9 +27,15 @@ impl Line {
 }
 
 impl Curve for Line {
-    fn point_at(&self, t: f64) -> Point3 { self.origin + t * self.direction }
-    fn tangent_at(&self, _t: f64) -> Vec3 { self.direction }
-    fn domain(&self) -> (f64, f64) { (f64::NEG_INFINITY, f64::INFINITY) }
+    fn point_at(&self, t: f64) -> Point3 {
+        self.origin + t * self.direction
+    }
+    fn tangent_at(&self, _t: f64) -> Vec3 {
+        self.direction
+    }
+    fn domain(&self) -> (f64, f64) {
+        (f64::NEG_INFINITY, f64::INFINITY)
+    }
     fn project(&self, p: Point3) -> (f64, Point3) {
         let t = (p - self.origin).dot(&self.direction);
         (t, self.point_at(t))
@@ -74,11 +83,8 @@ mod tests {
 
     #[test]
     fn project_round_trips_with_point_at() {
-        let l = Line::from_origin_dir(
-            Point3::new(1.0, 2.0, 3.0),
-            Vec3::new(1.0, 1.0, 0.0),
-        )
-        .unwrap();
+        let l =
+            Line::from_origin_dir(Point3::new(1.0, 2.0, 3.0), Vec3::new(1.0, 1.0, 0.0)).unwrap();
         for t in [-3.5, 0.0, 7.25] {
             let p = l.point_at(t);
             let (t2, p2) = l.project(p);

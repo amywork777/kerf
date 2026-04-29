@@ -28,12 +28,16 @@ impl Curve for Circle {
         -s * self.frame.x + c * self.frame.y
     }
 
-    fn domain(&self) -> (f64, f64) { (0.0, TAU) }
+    fn domain(&self) -> (f64, f64) {
+        (0.0, TAU)
+    }
 
     fn project(&self, p: Point3) -> (f64, Point3) {
         let (lx, ly, _lz) = self.frame.local_of(p);
         let mut t = ly.atan2(lx);
-        if t < 0.0 { t += TAU; }
+        if t < 0.0 {
+            t += TAU;
+        }
         (t, self.point_at(t))
     }
 }
@@ -52,7 +56,11 @@ mod tests {
     fn point_at_traces_unit_circle_in_xy() {
         let c = unit_xy_circle();
         assert_relative_eq!(c.point_at(0.0), Point3::new(1.0, 0.0, 0.0));
-        assert_relative_eq!(c.point_at(FRAC_PI_2), Point3::new(0.0, 1.0, 0.0), epsilon = 1e-12);
+        assert_relative_eq!(
+            c.point_at(FRAC_PI_2),
+            Point3::new(0.0, 1.0, 0.0),
+            epsilon = 1e-12
+        );
     }
 
     #[test]

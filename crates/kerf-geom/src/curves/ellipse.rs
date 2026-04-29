@@ -15,7 +15,11 @@ pub struct Ellipse {
 impl Ellipse {
     pub fn new(frame: Frame, semi_major: f64, semi_minor: f64) -> Self {
         debug_assert!(semi_major > 0.0 && semi_minor > 0.0);
-        Ellipse { frame, semi_major, semi_minor }
+        Ellipse {
+            frame,
+            semi_major,
+            semi_minor,
+        }
     }
 }
 
@@ -31,7 +35,9 @@ impl Curve for Ellipse {
         v.normalize()
     }
 
-    fn domain(&self) -> (f64, f64) { (0.0, TAU) }
+    fn domain(&self) -> (f64, f64) {
+        (0.0, TAU)
+    }
 
     fn project(&self, p: Point3) -> (f64, Point3) {
         // Newton's method on the eccentric anomaly to minimize squared distance.
@@ -43,18 +49,25 @@ impl Curve for Ellipse {
             let dx = self.semi_major * c - lx;
             let dy = self.semi_minor * s - ly;
             // f(t) = -a*sin(t)*dx + b*cos(t)*dy is the gradient of d²/2 wrt t.
-            let f  = -self.semi_major * s * dx + self.semi_minor * c * dy;
-            let fp = -self.semi_major * c * dx
-                   + self.semi_major * s * (self.semi_major * s)
-                   - self.semi_minor * s * dy
-                   + self.semi_minor * c * (self.semi_minor * c);
-            if fp.abs() < 1e-18 { break; }
+            let f = -self.semi_major * s * dx + self.semi_minor * c * dy;
+            let fp = -self.semi_major * c * dx + self.semi_major * s * (self.semi_major * s)
+                - self.semi_minor * s * dy
+                + self.semi_minor * c * (self.semi_minor * c);
+            if fp.abs() < 1e-18 {
+                break;
+            }
             let dt = f / fp;
             t -= dt;
-            if dt.abs() < 1e-12 { break; }
+            if dt.abs() < 1e-12 {
+                break;
+            }
         }
-        if t < 0.0 { t += TAU; }
-        if t >= TAU { t -= TAU; }
+        if t < 0.0 {
+            t += TAU;
+        }
+        if t >= TAU {
+            t -= TAU;
+        }
         (t, self.point_at(t))
     }
 }
@@ -73,7 +86,11 @@ mod tests {
     fn point_at_matches_parametric_formula() {
         let e = ellipse_3_2_xy();
         assert_relative_eq!(e.point_at(0.0), Point3::new(3.0, 0.0, 0.0));
-        assert_relative_eq!(e.point_at(FRAC_PI_2), Point3::new(0.0, 2.0, 0.0), epsilon = 1e-12);
+        assert_relative_eq!(
+            e.point_at(FRAC_PI_2),
+            Point3::new(0.0, 2.0, 0.0),
+            epsilon = 1e-12
+        );
     }
 
     #[test]
