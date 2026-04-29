@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/kerf-geom", "crates/kerf-topo", "crates/kerf-brep"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Amy Zhou <amy.zhou@vizcom.com>"]
+repository = "https://github.com/amyzhou/kerf"
+
+[workspace.dependencies]
+nalgebra  = "0.33"
+thiserror = "1"
+approx    = "0.5"
+proptest  = "1"
