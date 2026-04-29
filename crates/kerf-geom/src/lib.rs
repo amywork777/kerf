@@ -10,6 +10,6 @@ pub mod types;
 pub use curve::Curve;
 pub use curves::{Circle, Ellipse, Line};
 pub use surface::{Domain2, Surface};
-pub use surfaces::{Cylinder, Plane};
+pub use surfaces::{Cylinder, Plane, Sphere};
 pub use tolerance::Tolerance;
 pub use types::{Axis, Frame, Point3, Vec3};
