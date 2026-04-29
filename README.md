@@ -9,7 +9,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 
 - [x] M1 — Geometry foundations: workspace, primitives (Line, Circle, Ellipse, Plane, Cylinder, Sphere, Cone, Torus).
 - [x] M2a — Line intersections: Line vs Line, Plane, Cylinder, Sphere, Cone, Torus + polynomial solvers.
-- [ ] M2b — Circle and Ellipse intersections.
+- [x] M2b — Circle intersections (closed-form): Line-Circle, Circle-Circle (coplanar), Circle-Plane, Circle-Sphere. Harder pairs deferred to numerical fallback in M3.
 - [ ] M3 — Surface–surface intersection.
 - [ ] M4 — Half-edge topology and Euler operators.
 - [ ] M5 — Primitives, extrude, revolve.

@@ -1,9 +1,9 @@
 //! Closed-form intersection routines for Kerf geometry.
 //!
-//! M2a covers line-* pairs: Line–Line, Line–Plane,
-//! Line–Cylinder, Line–Sphere, Line–Cone, Line–Torus.
-//! M2b adds the closed-form circle pairs:
+//! M2a covers line-* pairs. M2b adds the closed-form circle pairs:
 //! Line–Circle, Circle–Circle (coplanar), Circle–Plane, Circle–Sphere.
+//! Harder pairs (Circle vs Cylinder/Cone/Torus, all Ellipse pairs) are
+//! deferred to the numerical fallback in M3.
 
 use crate::types::Point3;
 
@@ -30,7 +30,6 @@ pub use line_plane::intersect_line_plane;
 pub use line_sphere::intersect_line_sphere;
 pub use line_torus::intersect_line_torus;
 
-/// Result of intersecting two curves.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CurveCurveIntersection {
     Empty,
@@ -38,7 +37,6 @@ pub enum CurveCurveIntersection {
     Coincident,
 }
 
-/// Result of intersecting a curve with a surface.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CurveSurfaceIntersection {
     Empty,
