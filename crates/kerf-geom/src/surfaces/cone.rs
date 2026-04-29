@@ -28,11 +28,13 @@ impl Surface for Cone {
         self.frame.origin + v * self.frame.z + r * cu * self.frame.x + r * su * self.frame.y
     }
 
-    fn normal_at(&self, u: f64, _v: f64) -> Vec3 {
+    fn normal_at(&self, u: f64, v: f64) -> Vec3 {
         // Outward normal: radial cos(α) component minus axial sin(α).
+        // For the lower nappe (v < 0) the outward direction flips.
         let (su, cu) = u.sin_cos();
         let (sa, ca) = self.half_angle.sin_cos();
-        ca * (cu * self.frame.x + su * self.frame.y) - sa * self.frame.z
+        let sign = if v < 0.0 { -1.0 } else { 1.0 };
+        sign * (ca * (cu * self.frame.x + su * self.frame.y) - sa * self.frame.z)
     }
 
     fn domain(&self) -> Domain2 {
@@ -84,11 +86,30 @@ mod tests {
         );
     }
 
+    fn cu_su(u: f64) -> (f64, f64) {
+        let (s, c) = u.sin_cos();
+        (c, s)
+    }
+
     #[test]
-    fn normal_is_unit_for_all_u() {
+    fn normal_is_unit_and_outward_for_both_nappes() {
         let c = pi4_cone();
-        for u in [0.0, 1.2, 3.3, 5.7] {
-            assert_relative_eq!(c.normal_at(u, 0.5).norm(), 1.0, epsilon = 1e-12);
+        for u in [0.0_f64, 1.2, 3.3, 5.7] {
+            for v in [0.5_f64, -0.5_f64] {
+                let n = c.normal_at(u, v);
+                assert_relative_eq!(n.norm(), 1.0, epsilon = 1e-12);
+                // Outward: the normal's radial component must point the same direction
+                // as the point's radial offset from the apex (sign of v gives the nappe side).
+                let p = c.point_at(u, v);
+                let from_apex = p - c.frame.origin;
+                let (cu, su) = cu_su(u);
+                let radial_dir = (cu * c.frame.x + su * c.frame.y) * v.signum();
+                assert!(
+                    n.dot(&radial_dir) > 0.0,
+                    "normal not outward for u={u}, v={v}"
+                );
+                let _ = from_apex; // silence unused
+            }
         }
     }
 
@@ -98,9 +119,9 @@ mod tests {
         for (u, v) in [(0.5, 1.0), (2.0, 3.0), (5.0, 2.5)] {
             let p = c.point_at(u, v);
             let ((u2, v2), p2) = c.project(p);
-            assert_relative_eq!(p2, p, epsilon = 1e-9);
-            assert_relative_eq!(u2, u, epsilon = 1e-9);
-            assert_relative_eq!(v2, v, epsilon = 1e-9);
+            assert_relative_eq!(p2, p, epsilon = 1e-12);
+            assert_relative_eq!(u2, u, epsilon = 1e-12);
+            assert_relative_eq!(v2, v, epsilon = 1e-12);
         }
     }
 }

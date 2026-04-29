@@ -15,7 +15,10 @@ pub struct Torus {
 
 impl Torus {
     pub fn new(frame: Frame, major_radius: f64, minor_radius: f64) -> Self {
-        debug_assert!(major_radius > 0.0 && minor_radius > 0.0);
+        debug_assert!(
+            minor_radius > 0.0 && minor_radius < major_radius,
+            "Torus must be a ring: minor_radius < major_radius required"
+        );
         Torus {
             frame,
             major_radius,
@@ -95,9 +98,9 @@ mod tests {
         for (u, v) in [(0.7, 1.0), (2.5, 3.0), (4.5, 5.5)] {
             let p = t.point_at(u, v);
             let ((u2, v2), p2) = t.project(p);
-            assert_relative_eq!(p2, p, epsilon = 1e-9);
-            assert_relative_eq!(u2, u, epsilon = 1e-9);
-            assert_relative_eq!(v2, v, epsilon = 1e-9);
+            assert_relative_eq!(p2, p, epsilon = 1e-12);
+            assert_relative_eq!(u2, u, epsilon = 1e-12);
+            assert_relative_eq!(v2, v, epsilon = 1e-12);
         }
     }
 }
