@@ -6,6 +6,6 @@ pub mod tolerance;
 pub mod types;
 
 pub use curve::Curve;
-pub use curves::Line;
+pub use curves::{Circle, Line};
 pub use tolerance::Tolerance;
 pub use types::{Axis, Frame, Point3, Vec3};
