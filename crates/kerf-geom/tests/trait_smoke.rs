@@ -7,7 +7,9 @@ use kerf_geom::{
 };
 use std::f64::consts::FRAC_PI_4;
 
-fn unit_frame() -> Frame { Frame::world(Point3::origin()) }
+fn unit_frame() -> Frame {
+    Frame::world(Point3::origin())
+}
 
 fn curves() -> Vec<Box<dyn Curve>> {
     vec![
