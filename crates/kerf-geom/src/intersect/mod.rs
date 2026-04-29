@@ -7,6 +7,7 @@
 
 use crate::types::Point3;
 
+pub mod circle_circle;
 pub mod line_circle;
 pub mod line_cone;
 pub mod line_cylinder;
@@ -16,6 +17,7 @@ pub mod line_sphere;
 pub mod line_torus;
 pub mod poly;
 
+pub use circle_circle::intersect_circle_circle;
 pub use line_circle::intersect_line_circle;
 pub use line_cone::intersect_line_cone;
 pub use line_cylinder::intersect_line_cylinder;
