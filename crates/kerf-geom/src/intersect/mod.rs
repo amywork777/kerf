@@ -1,11 +1,13 @@
 //! Closed-form intersection routines for Kerf geometry.
 //!
-//! M2a (this batch) covers line-* pairs: Line–Line, Line–Plane,
+//! M2a covers line-* pairs: Line–Line, Line–Plane,
 //! Line–Cylinder, Line–Sphere, Line–Cone, Line–Torus.
-//! M2b adds circle/ellipse pairs.
+//! M2b adds the closed-form circle pairs:
+//! Line–Circle, Circle–Circle (coplanar), Circle–Plane, Circle–Sphere.
 
 use crate::types::Point3;
 
+pub mod line_circle;
 pub mod line_cone;
 pub mod line_cylinder;
 pub mod line_line;
@@ -14,6 +16,7 @@ pub mod line_sphere;
 pub mod line_torus;
 pub mod poly;
 
+pub use line_circle::intersect_line_circle;
 pub use line_cone::intersect_line_cone;
 pub use line_cylinder::intersect_line_cylinder;
 pub use line_line::intersect_line_line;
