@@ -9,16 +9,23 @@ pub struct Plane {
 }
 
 impl Plane {
-    pub fn new(frame: Frame) -> Self { Plane { frame } }
+    pub fn new(frame: Frame) -> Self {
+        Plane { frame }
+    }
 }
 
 impl Surface for Plane {
     fn point_at(&self, u: f64, v: f64) -> Point3 {
         self.frame.origin + u * self.frame.x + v * self.frame.y
     }
-    fn normal_at(&self, _u: f64, _v: f64) -> Vec3 { self.frame.z }
+    fn normal_at(&self, _u: f64, _v: f64) -> Vec3 {
+        self.frame.z
+    }
     fn domain(&self) -> Domain2 {
-        ((f64::NEG_INFINITY, f64::INFINITY), (f64::NEG_INFINITY, f64::INFINITY))
+        (
+            (f64::NEG_INFINITY, f64::INFINITY),
+            (f64::NEG_INFINITY, f64::INFINITY),
+        )
     }
     fn project(&self, p: Point3) -> ((f64, f64), Point3) {
         let (lx, ly, _lz) = self.frame.local_of(p);
@@ -31,7 +38,9 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
 
-    fn xy_plane() -> Plane { Plane::new(Frame::world(Point3::origin())) }
+    fn xy_plane() -> Plane {
+        Plane::new(Frame::world(Point3::origin()))
+    }
 
     #[test]
     fn point_at_walks_the_plane() {

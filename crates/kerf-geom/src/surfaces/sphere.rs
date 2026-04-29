@@ -37,16 +37,24 @@ impl Surface for Sphere {
         sv * cu * self.frame.x + sv * su * self.frame.y + cv * self.frame.z
     }
 
-    fn domain(&self) -> Domain2 { ((0.0, TAU), (0.0, PI)) }
+    fn domain(&self) -> Domain2 {
+        ((0.0, TAU), (0.0, PI))
+    }
 
     fn project(&self, p: Point3) -> ((f64, f64), Point3) {
         let d = p - self.frame.origin;
         if d.norm() == 0.0 {
             return ((0.0, 0.0), self.point_at(0.0, 0.0));
         }
-        let (lx, ly, lz) = (d.dot(&self.frame.x), d.dot(&self.frame.y), d.dot(&self.frame.z));
+        let (lx, ly, lz) = (
+            d.dot(&self.frame.x),
+            d.dot(&self.frame.y),
+            d.dot(&self.frame.z),
+        );
         let mut u = ly.atan2(lx);
-        if u < 0.0 { u += TAU; }
+        if u < 0.0 {
+            u += TAU;
+        }
         let v = (lz / d.norm()).clamp(-1.0, 1.0).acos();
         ((u, v), self.point_at(u, v))
     }
@@ -62,7 +70,11 @@ mod tests {
     fn point_at_pole_and_equator() {
         let s = Sphere::at_origin(2.0);
         assert_relative_eq!(s.point_at(0.0, 0.0), Point3::new(0.0, 0.0, 2.0));
-        assert_relative_eq!(s.point_at(0.0, FRAC_PI_2), Point3::new(2.0, 0.0, 0.0), epsilon = 1e-12);
+        assert_relative_eq!(
+            s.point_at(0.0, FRAC_PI_2),
+            Point3::new(2.0, 0.0, 0.0),
+            epsilon = 1e-12
+        );
     }
 
     #[test]

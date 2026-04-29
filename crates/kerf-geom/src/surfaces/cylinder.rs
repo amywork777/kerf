@@ -40,7 +40,9 @@ impl Surface for Cylinder {
     fn project(&self, p: Point3) -> ((f64, f64), Point3) {
         let (lx, ly, lz) = self.frame.local_of(p);
         let mut u = ly.atan2(lx);
-        if u < 0.0 { u += TAU; }
+        if u < 0.0 {
+            u += TAU;
+        }
         ((u, lz), self.point_at(u, lz))
     }
 }

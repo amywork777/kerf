@@ -35,14 +35,22 @@ impl Surface for Cone {
         ca * (cu * self.frame.x + su * self.frame.y) - sa * self.frame.z
     }
 
-    fn domain(&self) -> Domain2 { ((0.0, TAU), (f64::NEG_INFINITY, f64::INFINITY)) }
+    fn domain(&self) -> Domain2 {
+        ((0.0, TAU), (f64::NEG_INFINITY, f64::INFINITY))
+    }
 
     fn project(&self, p: Point3) -> ((f64, f64), Point3) {
         let d = p - self.frame.origin;
-        let (lx, ly, lz) = (d.dot(&self.frame.x), d.dot(&self.frame.y), d.dot(&self.frame.z));
+        let (lx, ly, lz) = (
+            d.dot(&self.frame.x),
+            d.dot(&self.frame.y),
+            d.dot(&self.frame.z),
+        );
         let r_p = (lx * lx + ly * ly).sqrt();
         let mut u = ly.atan2(lx);
-        if u < 0.0 { u += TAU; }
+        if u < 0.0 {
+            u += TAU;
+        }
         // Closest point on the 2D line through origin with slope tan(α) to point (lz, r_p):
         let t = self.half_angle.tan();
         let v = (lz + r_p * t) / (1.0 + t * t);
@@ -69,7 +77,11 @@ mod tests {
     #[test]
     fn point_at_unit_height_has_unit_radius_for_pi4() {
         let c = pi4_cone();
-        assert_relative_eq!(c.point_at(0.0, 1.0), Point3::new(1.0, 0.0, 1.0), epsilon = 1e-12);
+        assert_relative_eq!(
+            c.point_at(0.0, 1.0),
+            Point3::new(1.0, 0.0, 1.0),
+            epsilon = 1e-12
+        );
     }
 
     #[test]

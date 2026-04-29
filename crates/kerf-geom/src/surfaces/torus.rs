@@ -16,7 +16,11 @@ pub struct Torus {
 impl Torus {
     pub fn new(frame: Frame, major_radius: f64, minor_radius: f64) -> Self {
         debug_assert!(major_radius > 0.0 && minor_radius > 0.0);
-        Torus { frame, major_radius, minor_radius }
+        Torus {
+            frame,
+            major_radius,
+            minor_radius,
+        }
     }
 }
 
@@ -25,7 +29,9 @@ impl Surface for Torus {
         let (su, cu) = u.sin_cos();
         let (sv, cv) = v.sin_cos();
         let big = self.major_radius + self.minor_radius * cv;
-        self.frame.origin + big * cu * self.frame.x + big * su * self.frame.y
+        self.frame.origin
+            + big * cu * self.frame.x
+            + big * su * self.frame.y
             + self.minor_radius * sv * self.frame.z
     }
 
@@ -35,17 +41,27 @@ impl Surface for Torus {
         cv * (cu * self.frame.x + su * self.frame.y) + sv * self.frame.z
     }
 
-    fn domain(&self) -> Domain2 { ((0.0, TAU), (0.0, TAU)) }
+    fn domain(&self) -> Domain2 {
+        ((0.0, TAU), (0.0, TAU))
+    }
 
     fn project(&self, p: Point3) -> ((f64, f64), Point3) {
         let d = p - self.frame.origin;
-        let (lx, ly, lz) = (d.dot(&self.frame.x), d.dot(&self.frame.y), d.dot(&self.frame.z));
+        let (lx, ly, lz) = (
+            d.dot(&self.frame.x),
+            d.dot(&self.frame.y),
+            d.dot(&self.frame.z),
+        );
         let mut u = ly.atan2(lx);
-        if u < 0.0 { u += TAU; }
+        if u < 0.0 {
+            u += TAU;
+        }
         let big = (lx * lx + ly * ly).sqrt();
         let dr = big - self.major_radius;
         let mut v = lz.atan2(dr);
-        if v < 0.0 { v += TAU; }
+        if v < 0.0 {
+            v += TAU;
+        }
         ((u, v), self.point_at(u, v))
     }
 }
