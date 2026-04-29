@@ -1,14 +1,12 @@
 //! Circle–Sphere intersection. Closed-form via sphere's plane cross-section.
 
+use super::{CurveCurveIntersection, CurveSurfaceIntersection, intersect_circle_circle};
 use crate::curve::Curve;
 use crate::curves::Circle;
 use crate::surface::Surface;
 use crate::surfaces::Sphere;
 use crate::tolerance::Tolerance;
 use crate::types::Frame;
-use super::{
-    intersect_circle_circle, CurveCurveIntersection, CurveSurfaceIntersection,
-};
 
 pub fn intersect_circle_sphere(
     circle: &Circle,
@@ -28,14 +26,23 @@ pub fn intersect_circle_sphere(
         let dist = (point - cf.origin).norm();
         if (dist - circle.radius).abs() < tol.point_eq {
             let (t_circle, _) = circle.project(point);
-            return CurveSurfaceIntersection::Points(vec![(t_circle, sphere.project(point).0, point)]);
+            return CurveSurfaceIntersection::Points(vec![(
+                t_circle,
+                sphere.project(point).0,
+                point,
+            )]);
         }
         return CurveSurfaceIntersection::Empty;
     }
 
     let o_x = sphere.frame.origin - h * cf.z;
     let r_x = (r_s * r_s - h * h).sqrt();
-    let cross_frame = Frame { origin: o_x, x: cf.x, y: cf.y, z: cf.z };
+    let cross_frame = Frame {
+        origin: o_x,
+        x: cf.x,
+        y: cf.y,
+        z: cf.z,
+    };
     let cross = Circle::new(cross_frame, r_x);
 
     match intersect_circle_circle(circle, &cross, tol) {
@@ -57,7 +64,9 @@ mod tests {
     use crate::types::{Frame, Point3};
     use approx::assert_relative_eq;
 
-    fn unit_xy(at: Point3) -> Circle { Circle::new(Frame::world(at), 1.0) }
+    fn unit_xy(at: Point3) -> Circle {
+        Circle::new(Frame::world(at), 1.0)
+    }
 
     #[test]
     fn circle_through_unit_sphere_in_xy_at_origin_is_on_surface() {
@@ -101,7 +110,9 @@ mod tests {
                 let dist_from_circle_center = (dx * dx + p.2.y * p.2.y).sqrt();
                 assert_relative_eq!(dist_from_circle_center, 1.0, epsilon = 1e-9);
             }
-        } else { panic!(); }
+        } else {
+            panic!();
+        }
     }
 
     #[test]

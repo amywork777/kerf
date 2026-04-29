@@ -1,12 +1,10 @@
 //! Circle–Plane intersection. Closed-form.
 
+use super::{CurveCurveIntersection, CurveSurfaceIntersection, intersect_line_circle};
 use crate::curves::{Circle, Line};
 use crate::surface::Surface;
 use crate::surfaces::Plane;
 use crate::tolerance::Tolerance;
-use super::{
-    intersect_line_circle, CurveCurveIntersection, CurveSurfaceIntersection,
-};
 
 pub fn intersect_circle_plane(
     circle: &Circle,
@@ -58,7 +56,9 @@ mod tests {
     use crate::types::{Frame, Point3, Vec3};
     use approx::assert_relative_eq;
 
-    fn unit_xy(at: Point3) -> Circle { Circle::new(Frame::world(at), 1.0) }
+    fn unit_xy(at: Point3) -> Circle {
+        Circle::new(Frame::world(at), 1.0)
+    }
 
     #[test]
     fn circle_in_xy_plane_on_xy_surface() {
@@ -90,8 +90,18 @@ mod tests {
         {
             assert_eq!(pts.len(), 2);
             let xs: Vec<f64> = pts.iter().map(|p| p.2.x).collect();
-            assert_relative_eq!(xs.iter().fold(f64::INFINITY, |a, &b| a.min(b)), -1.0, epsilon = 1e-9);
-            assert_relative_eq!(xs.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)), 1.0, epsilon = 1e-9);
-        } else { panic!(); }
+            assert_relative_eq!(
+                xs.iter().fold(f64::INFINITY, |a, &b| a.min(b)),
+                -1.0,
+                epsilon = 1e-9
+            );
+            assert_relative_eq!(
+                xs.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)),
+                1.0,
+                epsilon = 1e-9
+            );
+        } else {
+            panic!();
+        }
     }
 }

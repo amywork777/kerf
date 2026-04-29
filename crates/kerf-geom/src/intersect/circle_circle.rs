@@ -1,15 +1,11 @@
 //! Circle–Circle intersection (coplanar case only). Closed-form.
 
+use super::CurveCurveIntersection;
 use crate::curve::Curve;
 use crate::curves::Circle;
 use crate::tolerance::Tolerance;
-use super::CurveCurveIntersection;
 
-pub fn intersect_circle_circle(
-    a: &Circle,
-    b: &Circle,
-    tol: &Tolerance,
-) -> CurveCurveIntersection {
+pub fn intersect_circle_circle(a: &Circle, b: &Circle, tol: &Tolerance) -> CurveCurveIntersection {
     if !tol.directions_parallel(a.frame.z, b.frame.z) {
         return CurveCurveIntersection::Empty;
     }
@@ -45,7 +41,9 @@ pub fn intersect_circle_circle(
         let (t_a, _) = a.project(p);
         let (t_b, _) = b.project(p);
         hits.push((t_a, t_b, p));
-        if h.abs() < tol.point_eq { break; }
+        if h.abs() < tol.point_eq {
+            break;
+        }
     }
     CurveCurveIntersection::Points(hits)
 }
@@ -72,7 +70,9 @@ mod tests {
                 assert_relative_eq!(p.2.x, 0.5, epsilon = 1e-12);
                 assert_relative_eq!(p.2.y.abs(), 0.75_f64.sqrt(), epsilon = 1e-12);
             }
-        } else { panic!(); }
+        } else {
+            panic!();
+        }
     }
 
     #[test]
@@ -84,7 +84,9 @@ mod tests {
         {
             assert_eq!(pts.len(), 1);
             assert_relative_eq!(pts[0].2, Point3::new(1.0, 0.0, 0.0), epsilon = 1e-12);
-        } else { panic!(); }
+        } else {
+            panic!();
+        }
     }
 
     #[test]

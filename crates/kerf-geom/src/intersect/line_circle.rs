@@ -1,14 +1,12 @@
 //! Line–Circle intersection in 3D. Closed-form.
 
+use super::{CurveCurveIntersection, CurveSurfaceIntersection, line_plane::intersect_line_plane};
 use crate::curve::Curve;
 use crate::curves::{Circle, Line};
 use crate::intersect::poly::solve_quadratic;
 use crate::surfaces::Plane;
 use crate::tolerance::Tolerance;
 use std::f64::consts::TAU;
-use super::{
-    line_plane::intersect_line_plane, CurveCurveIntersection, CurveSurfaceIntersection,
-};
 
 pub fn intersect_line_circle(
     line: &Line,
@@ -41,7 +39,9 @@ pub fn intersect_line_circle(
             for t in solve_quadratic(a, b, c) {
                 let p = line.origin + t * line.direction;
                 let mut t_circle = (qy + t * dy).atan2(qx + t * dx);
-                if t_circle < 0.0 { t_circle += TAU; }
+                if t_circle < 0.0 {
+                    t_circle += TAU;
+                }
                 hits.push((t, t_circle, p));
             }
             if hits.is_empty() {
@@ -59,7 +59,9 @@ mod tests {
     use crate::types::{Frame, Point3, Vec3};
     use approx::assert_relative_eq;
 
-    fn unit_xy_circle() -> Circle { Circle::new(Frame::world(Point3::origin()), 1.0) }
+    fn unit_xy_circle() -> Circle {
+        Circle::new(Frame::world(Point3::origin()), 1.0)
+    }
 
     #[test]
     fn line_through_xy_plane_inside_circle_yields_one_point() {
@@ -76,7 +78,9 @@ mod tests {
         {
             assert_eq!(pts.len(), 1);
             assert_relative_eq!(pts[0].2, Point3::new(1.0, 0.0, 0.0), epsilon = 1e-12);
-        } else { panic!(); }
+        } else {
+            panic!();
+        }
     }
 
     #[test]
@@ -89,7 +93,9 @@ mod tests {
             let xs: Vec<f64> = pts.iter().map(|p| p.2.x).collect();
             assert_relative_eq!(xs[0], -1.0, epsilon = 1e-12);
             assert_relative_eq!(xs[1], 1.0, epsilon = 1e-12);
-        } else { panic!(); }
+        } else {
+            panic!();
+        }
     }
 
     #[test]
