@@ -1,13 +1,23 @@
 //! Core geometric types: points, vectors, axes, and orthonormal frames.
 
 pub type Point3 = nalgebra::Point3<f64>;
-pub type Vec3   = nalgebra::Vector3<f64>;
+pub type Vec3 = nalgebra::Vector3<f64>;
 
 /// A directed line: a point on the line plus a unit direction.
 #[derive(Clone, Copy, Debug)]
 pub struct Axis {
     pub origin: Point3,
     pub direction: Vec3, // unit length
+}
+
+impl Axis {
+    /// Construct from origin + direction. Returns `None` if `direction` has zero magnitude.
+    pub fn new(origin: Point3, direction: Vec3) -> Option<Self> {
+        Some(Axis {
+            origin,
+            direction: direction.try_normalize(0.0)?,
+        })
+    }
 }
 
 /// An orthonormal right-handed frame: origin + (x, y, z) unit basis.
@@ -22,7 +32,8 @@ pub struct Frame {
 impl Frame {
     /// Construct a frame from an origin, an x direction, and an approximate y direction.
     /// `y_hint` is reprojected to be exactly perpendicular to `x`.
-    /// Returns `None` if `x` is zero, `y_hint` is collinear with `x`, or either is non-finite.
+    /// Returns `None` if `x` has zero magnitude or `y_hint` is collinear with `x`.
+    /// Non-finite inputs are not explicitly checked; behavior is unspecified for NaN/Inf.
     pub fn from_x_yhint(origin: Point3, x: Vec3, y_hint: Vec3) -> Option<Self> {
         let x = x.try_normalize(0.0)?;
         let z = x.cross(&y_hint).try_normalize(0.0)?;
@@ -72,8 +83,8 @@ mod tests {
     fn frame_from_x_yhint_orthonormalizes() {
         let f = Frame::from_x_yhint(
             Point3::origin(),
-            Vec3::new(2.0, 0.0, 0.0),       // x will normalize
-            Vec3::new(0.5, 1.0, 0.0),       // not unit, not perp
+            Vec3::new(2.0, 0.0, 0.0), // x will normalize
+            Vec3::new(0.5, 1.0, 0.0), // not unit, not perp
         )
         .unwrap();
         assert_relative_eq!(f.x.dot(&f.y), 0.0, epsilon = 1e-12);
@@ -87,11 +98,21 @@ mod tests {
 
     #[test]
     fn frame_from_x_yhint_rejects_collinear_inputs() {
-        assert!(Frame::from_x_yhint(
-            Point3::origin(),
-            Vec3::new(1.0, 0.0, 0.0),
-            Vec3::new(2.0, 0.0, 0.0),
-        )
-        .is_none());
+        assert!(
+            Frame::from_x_yhint(
+                Point3::origin(),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(2.0, 0.0, 0.0),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn axis_new_normalizes_direction_and_rejects_zero() {
+        let a = Axis::new(Point3::origin(), Vec3::new(0.0, 3.0, 4.0)).unwrap();
+        assert_relative_eq!(a.direction.norm(), 1.0, epsilon = 1e-12);
+        assert_relative_eq!(a.direction, Vec3::new(0.0, 0.6, 0.8), epsilon = 1e-12);
+        assert!(Axis::new(Point3::origin(), Vec3::zeros()).is_none());
     }
 }
