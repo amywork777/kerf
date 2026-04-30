@@ -65,6 +65,21 @@ impl Solid {
             current: Some(start),
         }
     }
+
+    /// Iterate over all vertex IDs.
+    pub fn vertex_ids(&self) -> impl Iterator<Item = VertexId> + '_ {
+        self.vertices.iter().map(|(id, _)| id)
+    }
+
+    /// Iterate over all edge IDs.
+    pub fn edge_ids(&self) -> impl Iterator<Item = EdgeId> + '_ {
+        self.edges.iter().map(|(id, _)| id)
+    }
+
+    /// Iterate over all face IDs.
+    pub fn face_ids(&self) -> impl Iterator<Item = FaceId> + '_ {
+        self.faces.iter().map(|(id, _)| id)
+    }
 }
 
 pub struct LoopWalker<'a> {
