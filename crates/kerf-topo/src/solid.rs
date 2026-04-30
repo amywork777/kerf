@@ -1,0 +1,98 @@
+//! `Solid`: container for one connected B-rep solid.
+
+use slotmap::SlotMap;
+
+use crate::entity::{Edge, Face, HalfEdge, Loop, Shell, Vertex};
+use crate::id::{EdgeId, FaceId, HalfEdgeId, LoopId, ShellId, SolidId, VertexId};
+
+#[derive(Clone, Debug, Default)]
+pub struct Solid {
+    pub(crate) vertices: SlotMap<VertexId, Vertex>,
+    pub(crate) half_edges: SlotMap<HalfEdgeId, HalfEdge>,
+    pub(crate) edges: SlotMap<EdgeId, Edge>,
+    pub(crate) loops: SlotMap<LoopId, Loop>,
+    pub(crate) faces: SlotMap<FaceId, Face>,
+    pub(crate) shells: SlotMap<ShellId, Shell>,
+    pub(crate) solid_id: Option<SolidId>,
+    pub(crate) solids: SlotMap<SolidId, ()>,
+}
+
+impl Solid {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn vertex(&self, id: VertexId) -> Option<&Vertex> {
+        self.vertices.get(id)
+    }
+    pub fn half_edge(&self, id: HalfEdgeId) -> Option<&HalfEdge> {
+        self.half_edges.get(id)
+    }
+    pub fn edge(&self, id: EdgeId) -> Option<&Edge> {
+        self.edges.get(id)
+    }
+    pub fn loop_(&self, id: LoopId) -> Option<&Loop> {
+        self.loops.get(id)
+    }
+    pub fn face(&self, id: FaceId) -> Option<&Face> {
+        self.faces.get(id)
+    }
+    pub fn shell(&self, id: ShellId) -> Option<&Shell> {
+        self.shells.get(id)
+    }
+
+    pub fn vertex_count(&self) -> usize {
+        self.vertices.len()
+    }
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+    pub fn face_count(&self) -> usize {
+        self.faces.len()
+    }
+    pub fn shell_count(&self) -> usize {
+        self.shells.len()
+    }
+    pub fn loop_count(&self) -> usize {
+        self.loops.len()
+    }
+
+    /// Walk a loop's half-edges via `next`, terminating when we return to start.
+    pub fn iter_loop_half_edges(&self, start: HalfEdgeId) -> LoopWalker<'_> {
+        LoopWalker {
+            solid: self,
+            start,
+            current: Some(start),
+        }
+    }
+}
+
+pub struct LoopWalker<'a> {
+    solid: &'a Solid,
+    start: HalfEdgeId,
+    current: Option<HalfEdgeId>,
+}
+
+impl Iterator for LoopWalker<'_> {
+    type Item = HalfEdgeId;
+    fn next(&mut self) -> Option<HalfEdgeId> {
+        let cur = self.current?;
+        let nxt = self.solid.half_edges[cur].next;
+        self.current = if nxt == self.start { None } else { Some(nxt) };
+        Some(cur)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_solid_has_no_entities() {
+        let s = Solid::new();
+        assert_eq!(s.vertex_count(), 0);
+        assert_eq!(s.edge_count(), 0);
+        assert_eq!(s.face_count(), 0);
+        assert_eq!(s.shell_count(), 0);
+    }
+}
