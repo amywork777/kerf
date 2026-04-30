@@ -13,8 +13,18 @@ pub enum ValidationError {
     NextPrevMismatch(HalfEdgeId),
     #[error("loop walk did not close within {0} steps")]
     LoopWalkOpen(usize),
-    #[error("euler invariant violated: V={v} E={e} F={f} R={r} S={s}; expected {expected}, got {got}")]
-    EulerInvariant { v: i64, e: i64, f: i64, r: i64, s: i64, expected: i64, got: i64 },
+    #[error(
+        "euler invariant violated: V={v} E={e} F={f} R={r} S={s}; expected {expected}, got {got}"
+    )]
+    EulerInvariant {
+        v: i64,
+        e: i64,
+        f: i64,
+        r: i64,
+        s: i64,
+        expected: i64,
+        got: i64,
+    },
 }
 
 pub fn validate(solid: &Solid) -> Result<(), ValidationError> {
@@ -40,7 +50,9 @@ pub fn validate(solid: &Solid) -> Result<(), ValidationError> {
     }
     // 3. Loop closure.
     for (_lid, lp) in &solid.loops {
-        let Some(start) = lp.half_edge else { continue; };
+        let Some(start) = lp.half_edge else {
+            continue;
+        };
         let max_steps = solid.half_edges.len() + 1;
         let mut cur = start;
         let mut steps = 0;
@@ -69,7 +81,13 @@ pub fn validate(solid: &Solid) -> Result<(), ValidationError> {
     let rhs = 2 * s;
     if lhs != rhs {
         return Err(ValidationError::EulerInvariant {
-            v, e, f, r, s, expected: rhs, got: lhs,
+            v,
+            e,
+            f,
+            r,
+            s,
+            expected: rhs,
+            got: lhs,
         });
     }
     Ok(())

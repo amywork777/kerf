@@ -12,7 +12,8 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M2b — Circle intersections (closed-form): Line-Circle, Circle-Circle (coplanar), Circle-Plane, Circle-Sphere. Harder pairs deferred to numerical fallback in M3.
 - [x] M3a — Surface intersections (closed-form): Plane-Plane, Plane-Sphere, Sphere-Sphere, Plane-Cylinder. Plane-Cone, Plane-Torus, Cyl-Cyl, etc. deferred to M3b/numerical in M3c.
 - [ ] M3b/M3c — Remaining surface pairs + numerical curve-surface and surface-surface fallback.
-- [ ] M4 — Half-edge topology and Euler operators.
+- [x] M4 — Half-edge topology + core Euler operators (mvfs, mev/kev, mef/kef) + validator. Ring operators (kemr/kfmrh) deferred to M4b.
+- [ ] M4b — Ring operators (kemr/mekr, kfmrh/mfkrh) for solids with holes.
 - [ ] M5 — Primitives, extrude, revolve.
 - [ ] M6 — Booleans.
 - [ ] M7 — Tessellation and STL.
