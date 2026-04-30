@@ -16,7 +16,7 @@ pub struct HalfEdge {
     pub(crate) next: HalfEdgeId,
     pub(crate) prev: HalfEdgeId,
     pub(crate) loop_: LoopId,
-    // Read by the validator (T6); not yet read by mev/kev operators.
+    // Read by the validator (T6); not yet read by T4 operators.
     #[allow(dead_code)]
     pub(crate) edge: EdgeId,
 }
@@ -30,8 +30,6 @@ pub struct Edge {
 pub struct Loop {
     /// Some half-edge in this loop. None for an empty loop (e.g., right after mvfs).
     pub(crate) half_edge: Option<HalfEdgeId>,
-    // Read by mef/kef (T4).
-    #[allow(dead_code)]
     pub(crate) face: FaceId,
 }
 
@@ -41,8 +39,6 @@ pub struct Face {
     // Used by kemr/mfkrh (T5) and validator (T6).
     #[allow(dead_code)]
     pub(crate) inner_loops: Vec<LoopId>,
-    // Read by mef/kef (T4).
-    #[allow(dead_code)]
     pub(crate) shell: ShellId,
 }
 
