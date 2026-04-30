@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 slotmap = "1.0"
+thiserror = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
