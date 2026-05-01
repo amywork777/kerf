@@ -31,6 +31,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M13 — cylinder primitive (with seam topology) + tessellator. STL output for curved solids.
 - [x] M14 — cone primitive (apex + base topology, 2V/2E/2F) + tessellator fan triangulation.
 - [x] M15 — sphere primitive (1V/0E/1F, empty-loop topology) + lat-long tessellator with polar triangle fan and equatorial quad strip.
+- [x] M16 — torus primitive (1V/2E/1F, genus-1 topology with self-loop edges) + validator extended to accept any non-negative integer genus via Euler-Poincaré; toroidal quad-strip tessellator.
 
 ## Crates
 
