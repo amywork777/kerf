@@ -1,5 +1,6 @@
 //! The Kerf B-rep kernel: topology + geometry + constructors.
 
+pub mod booleans;
 pub mod geometry;
 pub mod primitives;
 pub mod solid;
