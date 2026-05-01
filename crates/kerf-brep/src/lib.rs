@@ -7,6 +7,6 @@ pub mod solid;
 pub mod stl;
 
 pub use geometry::{CurveKind, CurveSegment, Sense, SurfaceKind};
-pub use primitives::{box_, extrude_polygon};
+pub use primitives::{box_, box_at, extrude_polygon};
 pub use solid::Solid;
 pub use stl::{write_ascii, write_binary};

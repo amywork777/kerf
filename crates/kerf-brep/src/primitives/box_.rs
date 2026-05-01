@@ -169,6 +169,29 @@ pub fn box_(extents: Vec3) -> Solid {
     s
 }
 
+/// Construct an axis-aligned box with the given extents, with its minimum corner
+/// placed at `origin` instead of the world origin.
+/// `extents.x/y/z` must all be positive.
+pub fn box_at(extents: Vec3, origin: Point3) -> Solid {
+    use crate::geometry::{CurveKind, SurfaceKind};
+    let mut s = box_(extents);
+    let offset = origin - Point3::origin();
+    for (_, p) in s.vertex_geom.iter_mut() {
+        *p += offset;
+    }
+    for (_, surf) in s.face_geom.iter_mut() {
+        if let SurfaceKind::Plane(plane) = surf {
+            plane.frame.origin += offset;
+        }
+    }
+    for (_, seg) in s.edge_geom.iter_mut() {
+        if let CurveKind::Line(line) = &mut seg.curve {
+            line.origin += offset;
+        }
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -221,34 +221,15 @@ pub fn classify_face(a: &Solid, face_a: FaceId, b: &Solid, tol: &Tolerance) -> F
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kerf_geom::Vec3;
+    use kerf_geom::{Point3, Vec3};
 
-    use crate::geometry::{CurveKind, SurfaceKind};
-    use crate::primitives::box_;
-
-    fn make_box_at(extents: Vec3, offset: Vec3) -> Solid {
-        let mut s = box_(extents);
-        for (_, p) in s.vertex_geom.iter_mut() {
-            *p += offset;
-        }
-        for (_, surf) in s.face_geom.iter_mut() {
-            if let SurfaceKind::Plane(plane) = surf {
-                plane.frame.origin += offset;
-            }
-        }
-        for (_, seg) in s.edge_geom.iter_mut() {
-            if let CurveKind::Line(line) = &mut seg.curve {
-                line.origin += offset;
-            }
-        }
-        s
-    }
+    use crate::primitives::{box_, box_at};
 
     #[test]
     fn nested_small_box_is_fully_inside_big() {
         // Big [0,10]^3, small [4,6]^3. Every face of small has centroid inside big.
         let big = box_(Vec3::new(10.0, 10.0, 10.0));
-        let small = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
+        let small = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(4.0, 4.0, 4.0));
         let tol = Tolerance::default();
         for face_id in small.topo.face_ids() {
             let cls = classify_face(&small, face_id, &big, &tol);
@@ -263,7 +244,7 @@ mod tests {
     #[test]
     fn disjoint_boxes_classify_as_outside() {
         let a = box_(Vec3::new(1.0, 1.0, 1.0));
-        let b = make_box_at(Vec3::new(1.0, 1.0, 1.0), Vec3::new(5.0, 0.0, 0.0));
+        let b = box_at(Vec3::new(1.0, 1.0, 1.0), Point3::new(5.0, 0.0, 0.0));
         let tol = Tolerance::default();
         for face_id in a.topo.face_ids() {
             let cls = classify_face(&a, face_id, &b, &tol);
@@ -276,7 +257,7 @@ mod tests {
         // Big [0,10]^3 with small [4,6]^3 inside. Big's faces are far from small.
         // But a face of big lying entirely outside small → classify as Outside.
         let big = box_(Vec3::new(10.0, 10.0, 10.0));
-        let small = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
+        let small = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(4.0, 4.0, 4.0));
         let tol = Tolerance::default();
         for face_id in big.topo.face_ids() {
             let cls = classify_face(&big, face_id, &small, &tol);

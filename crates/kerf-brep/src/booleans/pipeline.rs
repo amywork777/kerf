@@ -111,34 +111,15 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kerf_geom::Vec3;
+    use kerf_geom::{Point3, Vec3};
 
-    use crate::geometry::{CurveKind, SurfaceKind};
-    use crate::primitives::box_;
-
-    fn make_box_at(extents: Vec3, offset: Vec3) -> Solid {
-        let mut s = box_(extents);
-        for (_, p) in s.vertex_geom.iter_mut() {
-            *p += offset;
-        }
-        for (_, surf) in s.face_geom.iter_mut() {
-            if let SurfaceKind::Plane(plane) = surf {
-                plane.frame.origin += offset;
-            }
-        }
-        for (_, seg) in s.edge_geom.iter_mut() {
-            if let CurveKind::Line(line) = &mut seg.curve {
-                line.origin += offset;
-            }
-        }
-        s
-    }
+    use crate::primitives::{box_, box_at};
 
     #[test]
     fn union_of_disjoint_boxes_yields_all_faces_of_both() {
         // 2 unit boxes far apart: each contributes 6 quad faces = 12 quads = 24 triangles.
         let a = box_(Vec3::new(1.0, 1.0, 1.0));
-        let b = make_box_at(Vec3::new(1.0, 1.0, 1.0), Vec3::new(5.0, 0.0, 0.0));
+        let b = box_at(Vec3::new(1.0, 1.0, 1.0), Point3::new(5.0, 0.0, 0.0));
         let soup = boolean(&a, &b, BooleanOp::Union, &Tolerance::default());
         assert_eq!(
             soup.triangles.len(),
@@ -151,7 +132,7 @@ mod tests {
     #[test]
     fn intersection_of_disjoint_boxes_is_empty() {
         let a = box_(Vec3::new(1.0, 1.0, 1.0));
-        let b = make_box_at(Vec3::new(1.0, 1.0, 1.0), Vec3::new(5.0, 0.0, 0.0));
+        let b = box_at(Vec3::new(1.0, 1.0, 1.0), Point3::new(5.0, 0.0, 0.0));
         let soup = boolean(&a, &b, BooleanOp::Intersection, &Tolerance::default());
         assert_eq!(soup.triangles.len(), 0);
     }
@@ -160,7 +141,7 @@ mod tests {
     fn intersection_of_nested_boxes_is_smaller_box() {
         // Big [0,10]^3 ∩ small [4,6]^3 = small box's surface = 6 quads = 12 triangles.
         let big = box_(Vec3::new(10.0, 10.0, 10.0));
-        let small = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
+        let small = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(4.0, 4.0, 4.0));
         let soup = boolean(&big, &small, BooleanOp::Intersection, &Tolerance::default());
         // Small box's 6 faces are inside big → 12 triangles. Big's faces are outside small → 0 contribution.
         assert_eq!(soup.triangles.len(), 12);
@@ -170,7 +151,7 @@ mod tests {
     fn union_of_nested_boxes_is_larger_box() {
         // big ∪ small (small inside big) = big alone (small contributes nothing).
         let big = box_(Vec3::new(10.0, 10.0, 10.0));
-        let small = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
+        let small = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(4.0, 4.0, 4.0));
         let soup = boolean(&big, &small, BooleanOp::Union, &Tolerance::default());
         assert_eq!(soup.triangles.len(), 12, "big's 6 faces = 12 triangles");
     }
@@ -179,7 +160,7 @@ mod tests {
     fn difference_of_nested_boxes_keeps_big_outside_and_small_inside_flipped() {
         // big - small: big's 6 outside faces + small's 6 inside-flipped faces = 24 triangles.
         let big = box_(Vec3::new(10.0, 10.0, 10.0));
-        let small = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
+        let small = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(4.0, 4.0, 4.0));
         let soup = boolean(&big, &small, BooleanOp::Difference, &Tolerance::default());
         assert_eq!(soup.triangles.len(), 24);
     }
@@ -187,7 +168,7 @@ mod tests {
     #[test]
     fn boolean_solid_intersection_of_nested_yields_smaller_box_topology() {
         let big = box_(Vec3::new(10.0, 10.0, 10.0));
-        let small = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
+        let small = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(4.0, 4.0, 4.0));
         let result = boolean_solid(&big, &small, BooleanOp::Intersection, &Tolerance::default());
         assert_eq!(result.vertex_count(), 8);
         assert_eq!(result.edge_count(), 12);
@@ -198,7 +179,7 @@ mod tests {
     #[test]
     fn boolean_solid_union_of_nested_yields_big_box_topology() {
         let big = box_(Vec3::new(10.0, 10.0, 10.0));
-        let small = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
+        let small = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(4.0, 4.0, 4.0));
         let result = boolean_solid(&big, &small, BooleanOp::Union, &Tolerance::default());
         assert_eq!(result.vertex_count(), 8);
         assert_eq!(result.face_count(), 6);
@@ -209,8 +190,8 @@ mod tests {
     fn recursive_boolean_three_box_intersection() {
         // (A ∩ B) ∩ C — verifies recursion works.
         let a = box_(Vec3::new(10.0, 10.0, 10.0));
-        let b = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
-        let c = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
+        let b = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(4.0, 4.0, 4.0));
+        let c = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(4.0, 4.0, 4.0));
         let ab = boolean_solid(&a, &b, BooleanOp::Intersection, &Tolerance::default());
         let abc = boolean_solid(&ab, &c, BooleanOp::Intersection, &Tolerance::default());
         // ab is "small" (inside big); abc = small ∩ small = small.

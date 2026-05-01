@@ -153,34 +153,15 @@ fn add_chord(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kerf_geom::Vec3;
+    use kerf_geom::{Point3, Vec3};
 
     use crate::booleans::{face_intersections, split_solids_at_intersections};
-    use crate::geometry::{CurveKind, SurfaceKind};
-    use crate::primitives::box_;
-
-    fn make_box_at(extents: Vec3, offset: Vec3) -> Solid {
-        let mut s = box_(extents);
-        for (_, p) in s.vertex_geom.iter_mut() {
-            *p += offset;
-        }
-        for (_, surf) in s.face_geom.iter_mut() {
-            if let SurfaceKind::Plane(plane) = surf {
-                plane.frame.origin += offset;
-            }
-        }
-        for (_, seg) in s.edge_geom.iter_mut() {
-            if let CurveKind::Line(line) = &mut seg.curve {
-                line.origin += offset;
-            }
-        }
-        s
-    }
+    use crate::primitives::{box_, box_at};
 
     #[test]
     fn overlapping_boxes_get_split_faces() {
         let mut a = box_(Vec3::new(1.0, 1.0, 1.0));
-        let mut b = make_box_at(Vec3::new(1.0, 1.0, 1.0), Vec3::new(0.5, 0.0, 0.0));
+        let mut b = box_at(Vec3::new(1.0, 1.0, 1.0), Point3::new(0.5, 0.0, 0.0));
 
         let f_b_before = b.face_count();
 
@@ -214,7 +195,7 @@ mod tests {
     #[test]
     fn nested_boxes_have_no_chord_to_add() {
         let mut big = box_(Vec3::new(10.0, 10.0, 10.0));
-        let mut small = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
+        let mut small = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(4.0, 4.0, 4.0));
 
         let intersections = face_intersections(&big, &small, &Tolerance::default());
         let outcome = split_solids_at_intersections(

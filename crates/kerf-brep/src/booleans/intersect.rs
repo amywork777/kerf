@@ -100,15 +100,14 @@ fn intersect_planar_pair(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kerf_geom::Vec3;
+    use kerf_geom::{Point3, Vec3};
 
-    use crate::CurveKind;
-    use crate::primitives::box_;
+    use crate::primitives::{box_, box_at};
 
     #[test]
     fn disjoint_boxes_have_no_face_intersections() {
         let a = box_(Vec3::new(1.0, 1.0, 1.0));
-        let b = make_box_at(Vec3::new(1.0, 1.0, 1.0), Vec3::new(5.0, 0.0, 0.0));
+        let b = box_at(Vec3::new(1.0, 1.0, 1.0), Point3::new(5.0, 0.0, 0.0));
         let result = face_intersections(&a, &b, &Tolerance::default());
         assert_eq!(result.len(), 0);
     }
@@ -116,7 +115,7 @@ mod tests {
     #[test]
     fn overlapping_boxes_produce_intersection_segments() {
         let a = box_(Vec3::new(1.0, 1.0, 1.0));
-        let b = make_box_at(Vec3::new(1.0, 1.0, 1.0), Vec3::new(0.5, 0.0, 0.0));
+        let b = box_at(Vec3::new(1.0, 1.0, 1.0), Point3::new(0.5, 0.0, 0.0));
         let result = face_intersections(&a, &b, &Tolerance::default());
         assert!(
             result.len() >= 4,
@@ -137,26 +136,8 @@ mod tests {
     #[test]
     fn nested_box_inside_larger_has_no_intersection() {
         let big = box_(Vec3::new(10.0, 10.0, 10.0));
-        let small = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
+        let small = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(4.0, 4.0, 4.0));
         let result = face_intersections(&big, &small, &Tolerance::default());
         assert_eq!(result.len(), 0);
-    }
-
-    fn make_box_at(extents: Vec3, offset: Vec3) -> Solid {
-        let mut s = box_(extents);
-        for (_, p) in s.vertex_geom.iter_mut() {
-            *p += offset;
-        }
-        for (_, surf) in s.face_geom.iter_mut() {
-            if let SurfaceKind::Plane(plane) = surf {
-                plane.frame.origin += offset;
-            }
-        }
-        for (_, seg) in s.edge_geom.iter_mut() {
-            if let CurveKind::Line(line) = &mut seg.curve {
-                line.origin += offset;
-            }
-        }
-        s
     }
 }

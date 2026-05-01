@@ -68,9 +68,7 @@ mod tests {
     use super::*;
 
     use crate::booleans::{boolean, BooleanOp};
-    use crate::geometry::{CurveKind, SurfaceKind};
-    use crate::primitives::box_;
-    use crate::Solid;
+    use crate::primitives::{box_, box_at};
     use kerf_geom::{Tolerance, Vec3};
 
     fn unit_tri_soup() -> FaceSoup {
@@ -81,24 +79,6 @@ mod tests {
                 Point3::new(0.0, 1.0, 0.0),
             ]],
         }
-    }
-
-    fn make_box_at(extents: Vec3, offset: Vec3) -> Solid {
-        let mut s = box_(extents);
-        for (_, p) in s.vertex_geom.iter_mut() {
-            *p += offset;
-        }
-        for (_, surf) in s.face_geom.iter_mut() {
-            if let SurfaceKind::Plane(plane) = surf {
-                plane.frame.origin += offset;
-            }
-        }
-        for (_, seg) in s.edge_geom.iter_mut() {
-            if let CurveKind::Line(line) = &mut seg.curve {
-                line.origin += offset;
-            }
-        }
-        s
     }
 
     #[test]
@@ -130,7 +110,7 @@ mod tests {
     fn boolean_to_stl_round_trip_count() {
         // Big - small (nested) → 24 triangles → 24 facets in ASCII, 80+4+24*50 bytes binary.
         let big = box_(Vec3::new(10.0, 10.0, 10.0));
-        let small = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
+        let small = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(4.0, 4.0, 4.0));
         let soup = boolean(&big, &small, BooleanOp::Difference, &Tolerance::default());
         assert_eq!(soup.triangles.len(), 24);
 

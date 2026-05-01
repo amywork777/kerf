@@ -19,27 +19,9 @@ use std::fs::File;
 use std::io::BufWriter;
 
 use kerf_brep::booleans::{BooleanOp, boolean, boolean_solid};
-use kerf_brep::geometry::{CurveKind, SurfaceKind};
-use kerf_brep::primitives::{box_, extrude_polygon};
-use kerf_brep::{Solid, write_ascii, write_binary};
+use kerf_brep::primitives::{box_at, extrude_polygon};
+use kerf_brep::{write_ascii, write_binary};
 use kerf_geom::{Point3, Tolerance, Vec3};
-
-/// Translate all geometry of `s` by `offset`.
-fn translate(s: &mut Solid, offset: Vec3) {
-    for (_, p) in s.vertex_geom.iter_mut() {
-        *p += offset;
-    }
-    for (_, surf) in s.face_geom.iter_mut() {
-        if let SurfaceKind::Plane(plane) = surf {
-            plane.frame.origin += offset;
-        }
-    }
-    for (_, seg) in s.edge_geom.iter_mut() {
-        if let CurveKind::Line(line) = &mut seg.curve {
-            line.origin += offset;
-        }
-    }
-}
 
 fn main() -> std::io::Result<()> {
     let tol = Tolerance::default();
@@ -62,8 +44,7 @@ fn main() -> std::io::Result<()> {
 
     // ── Step 2: box nested inside prism_large ────────────────────────────────
     // Box at (−2, 2, 5) with extents 4×4×4 — fully inside the large prism.
-    let mut nested_box = box_(Vec3::new(4.0, 4.0, 4.0));
-    translate(&mut nested_box, Vec3::new(-2.0, 2.0, 5.0));
+    let nested_box = box_at(Vec3::new(4.0, 4.0, 4.0), Point3::new(-2.0, 2.0, 5.0));
 
     // First boolean_solid: Intersection selects what is inside both → nested_box.
     let result_1 = boolean_solid(&prism_large, &nested_box, BooleanOp::Intersection, &tol);
@@ -103,8 +84,7 @@ fn main() -> std::io::Result<()> {
     // ── Step 4: triangle soup for STL output ─────────────────────────────────
     // Use the FaceSoup path for a richer output: union of the large prism and a
     // detached small box (disjoint, so no intersection issues).
-    let mut detached_box = box_(Vec3::new(3.0, 3.0, 3.0));
-    translate(&mut detached_box, Vec3::new(15.0, 0.0, 0.0)); // clearly outside the prism
+    let detached_box = box_at(Vec3::new(3.0, 3.0, 3.0), Point3::new(15.0, 0.0, 0.0)); // clearly outside the prism
     let soup = boolean(&prism_large, &detached_box, BooleanOp::Union, &tol);
     println!("Triangle count (prism ∪ detached_box): {}", soup.triangles.len());
 
