@@ -7,7 +7,7 @@ pub mod solid;
 pub mod validate;
 
 pub use entity::{Edge, Face, HalfEdge, Loop, Shell, Vertex};
-pub use euler::{MefResult, MevResult, MvfsResult};
+pub use euler::{MefResult, MevResult, MvfsResult, SplitEdgeResult};
 pub use id::{EdgeId, FaceId, HalfEdgeId, LoopId, ShellId, SolidId, VertexId};
 pub use solid::{LoopWalker, Solid};
 pub use validate::{ValidationError, validate};

@@ -339,6 +339,70 @@ impl Solid {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct SplitEdgeResult {
+    pub new_edge: EdgeId,
+    pub new_vertex: VertexId,
+}
+
+impl Solid {
+    /// Split an edge in two by inserting a new vertex in its middle.
+    /// V+1, E+1, F+0; preserves the Euler invariant. Manifold-preserving.
+    pub fn split_edge(&mut self, edge: EdgeId) -> SplitEdgeResult {
+        let [he_a, he_b] = self.edges[edge].half_edges;
+        let next_a = self.half_edges[he_a].next;
+        let next_b = self.half_edges[he_b].next;
+        let loop_a = self.half_edges[he_a].loop_;
+        let loop_b = self.half_edges[he_b].loop_;
+
+        let v_new = self.vertices.insert(Vertex { outgoing: None });
+
+        // Allocate the new edge first as a placeholder so the new half-edges can reference it.
+        let new_edge = self.edges.insert(Edge {
+            half_edges: [HalfEdgeId::null(), HalfEdgeId::null()],
+        });
+
+        // new_he_a2: origin v_new, twin he_b, splice after he_a in loop_a.
+        let new_he_a2 = self.half_edges.insert(HalfEdge {
+            origin: v_new,
+            twin: he_b,
+            next: next_a,
+            prev: he_a,
+            loop_: loop_a,
+            edge: new_edge,
+        });
+        // new_he_b2: origin v_new, twin he_a, splice after he_b in loop_b.
+        let new_he_b2 = self.half_edges.insert(HalfEdge {
+            origin: v_new,
+            twin: he_a,
+            next: next_b,
+            prev: he_b,
+            loop_: loop_b,
+            edge,
+        });
+
+        // Wire pointers.
+        self.half_edges[he_a].next = new_he_a2;
+        self.half_edges[he_a].twin = new_he_b2;
+        self.half_edges[next_a].prev = new_he_a2;
+
+        self.half_edges[he_b].next = new_he_b2;
+        self.half_edges[he_b].twin = new_he_a2;
+        self.half_edges[next_b].prev = new_he_b2;
+        // he_b's edge changes from `edge` to `new_edge`.
+        self.half_edges[he_b].edge = new_edge;
+
+        // Update edge endpoints.
+        self.edges[edge].half_edges = [he_a, new_he_b2];
+        self.edges[new_edge].half_edges = [new_he_a2, he_b];
+
+        // v_new's outgoing.
+        self.vertices[v_new].outgoing = Some(new_he_a2);
+
+        SplitEdgeResult { new_edge, new_vertex: v_new }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,5 +499,40 @@ mod tests {
         s.kef(mef_r.edge);
         assert_eq!(s.face_count(), 1);
         assert_eq!(s.edge_count(), 2);
+    }
+
+    #[test]
+    fn split_edge_creates_new_v_and_e_preserving_invariant() {
+        let mut s = Solid::new();
+        let r = s.mvfs();
+        let m1 = s.mev_at_lone_vertex(r.loop_, r.vertex);
+        // s now: 2V, 1E, 1F, 1S; outer loop has the sticker.
+        crate::validate(&s).unwrap();
+        let split = s.split_edge(m1.edge);
+        // After split: 3V, 2E, 1F, 1S.
+        assert_eq!(s.vertex_count(), 3);
+        assert_eq!(s.edge_count(), 2);
+        assert_eq!(s.face_count(), 1);
+        crate::validate(&s).unwrap();
+        let _ = split;
+    }
+
+    #[test]
+    fn split_edge_in_box_topology_passes_validation() {
+        // Build a box-like topology then split one of its edges. Use the test from m4
+        // as a starting topology builder.
+        let mut s = Solid::new();
+        let r = s.mvfs();
+        let m1 = s.mev_at_lone_vertex(r.loop_, r.vertex);
+        let m2 = s.mev(r.loop_, m1.half_edges.0);
+        let h_a = m1.half_edges.0;
+        let h_b = m2.half_edges.1; // origin = m2.vertex
+        let _mef_r = s.mef(h_a, h_b);
+        crate::validate(&s).unwrap();
+        let _split = s.split_edge(m1.edge);
+        crate::validate(&s).unwrap();
+        assert_eq!(s.vertex_count(), 4);
+        assert_eq!(s.edge_count(), 4);
+        assert_eq!(s.face_count(), 2);
     }
 }
