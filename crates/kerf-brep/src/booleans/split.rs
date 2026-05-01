@@ -62,9 +62,19 @@ fn endpoint_to_vertices(
 ) -> Option<EndpointVertices> {
     let p = if is_start { inter.start } else { inter.end };
 
-    let vertex_a = ensure_vertex_at(a, inter.face_a, p, tol)?;
-    let vertex_b = ensure_vertex_at(b, inter.face_b, p, tol)?;
-    Some(EndpointVertices { vertex_a, vertex_b })
+    // Resolve EACH side independently — splitting an OnEdge on one solid even
+    // if the other solid's location is Interior (phase B will deal with the
+    // interior side). Only when BOTH sides resolve to a vertex do we report
+    // Some; otherwise return None and defer to phase B.
+    let vertex_a = ensure_vertex_at(a, inter.face_a, p, tol);
+    let vertex_b = ensure_vertex_at(b, inter.face_b, p, tol);
+    match (vertex_a, vertex_b) {
+        (Some(va), Some(vb)) => Some(EndpointVertices {
+            vertex_a: va,
+            vertex_b: vb,
+        }),
+        _ => None,
+    }
 }
 
 /// If `p` is on a face vertex, return that vertex. If on an edge, split the
