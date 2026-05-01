@@ -93,7 +93,7 @@ pub fn validate(solid: &Solid) -> Result<(), ValidationError> {
             }
         }
     }
-    // 4. Euler-Poincaré (with rings, genus assumed 0).
+    // 4. Euler-Poincaré: V - E + F - R = 2(S - G), G ≥ 0.
     let v = solid.vertex_count() as i64;
     let e = solid.edge_count() as i64;
     let f = solid.face_count() as i64;
@@ -104,18 +104,19 @@ pub fn validate(solid: &Solid) -> Result<(), ValidationError> {
         .map(|(_, f)| f.inner_loops.len() as i64)
         .sum();
     let lhs = v - e + f - r;
-    let rhs = 2 * s;
-    if lhs != rhs {
+    let genus_x2 = 2 * s - lhs;
+    if genus_x2 < 0 || genus_x2 % 2 != 0 {
         return Err(ValidationError::EulerInvariant {
             v,
             e,
             f,
             r,
             s,
-            expected: rhs,
+            expected: 2 * s,
             got: lhs,
         });
     }
+    let _genus = genus_x2 / 2;
     Ok(())
 }
 
