@@ -18,7 +18,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [ ] M5b — Remaining primitives (cylinder, sphere, cone, torus) + extrude/revolve.
 - [x] M6a — Face-face intersection: per face-pair, compute clipped 3D segments. Foundation for full booleans.
 - [x] M6b — Edge splitting along intersection segment endpoints. Both solids gain vertices at intersection points.
-- [ ] M6c — Face splitting (re-trace loops with new edges).
+- [x] M6c — Face splitting: add intersection chords as edges via mef. Faces sub-divide where boundaries cross.
 - [ ] M6d — Inside/outside classification.
 - [ ] M6e — Stitching (assemble result solid).
 - [ ] M7 — Tessellation and STL.

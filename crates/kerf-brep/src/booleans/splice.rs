@@ -3,10 +3,10 @@
 use kerf_geom::{Line, Tolerance};
 use kerf_topo::{FaceId, HalfEdgeId, LoopId, VertexId};
 
+use crate::Solid;
 use crate::booleans::intersect::FaceIntersection;
 use crate::booleans::split::SplitOutcome;
 use crate::geometry::{CurveSegment, SurfaceKind};
-use crate::Solid;
 
 /// Find a half-edge in `loop_id` whose origin is `target_vertex`. Returns None if absent.
 pub fn find_he_in_loop(
@@ -188,8 +188,13 @@ mod tests {
         let outcome =
             split_solids_at_intersections(&mut a, &mut b, &intersections, &Tolerance::default());
 
-        let added =
-            add_intersection_edges(&mut a, &mut b, &intersections, &outcome, &Tolerance::default());
+        let added = add_intersection_edges(
+            &mut a,
+            &mut b,
+            &intersections,
+            &outcome,
+            &Tolerance::default(),
+        );
 
         // Expect at least some new edges.
         assert!(!added.is_empty(), "expected some new edges");
