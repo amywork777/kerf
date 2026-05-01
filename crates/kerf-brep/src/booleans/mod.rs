@@ -1,5 +1,6 @@
 //! Boolean operations on B-rep solids.
 
+pub mod classify;
 pub mod clip;
 pub mod edge_lookup;
 pub mod face_polygon;
@@ -7,6 +8,7 @@ pub mod intersect;
 pub mod splice;
 pub mod split;
 
+pub use classify::{classify_face, face_centroid, FaceClassification};
 pub use clip::{ClipResult, clip_line_to_convex_polygon};
 pub use edge_lookup::{PointLocation, locate_point_on_face};
 pub use face_polygon::face_polygon;
