@@ -18,15 +18,21 @@ pub struct EndpointVertices {
 }
 
 /// Result of splitting both solids at all intersection endpoints.
+///
+/// `endpoints[i]` is `None` if intersection `i` had any Interior endpoint that
+/// needs phase B (interior-endpoint resolution via mev tails).
 #[derive(Clone, Debug)]
 pub struct SplitOutcome {
-    /// `endpoints[i].0` is the start of `intersections[i]`; `.1` is the end.
-    pub endpoints: Vec<(EndpointVertices, EndpointVertices)>,
+    /// `endpoints[i] = Some((start, end))` if both endpoints of intersection `i`
+    /// resolved cleanly to a boundary vertex (OnVertex or OnEdge after split).
+    /// `endpoints[i] = None` if any endpoint of intersection `i` was Interior
+    /// in either solid — those are deferred to phase B.
+    pub endpoints: Vec<Option<(EndpointVertices, EndpointVertices)>>,
 }
 
 /// Mutate both solids in place, splitting edges as needed so that every
-/// FaceIntersection endpoint lies exactly on a vertex of each solid.
-/// Returns the vertex IDs corresponding to each (intersection, endpoint, solid).
+/// FaceIntersection endpoint that lies on a boundary edge becomes a vertex.
+/// Endpoints in face interior are deferred (recorded as `None`) for phase B.
 pub fn split_solids_at_intersections(
     a: &mut Solid,
     b: &mut Solid,
@@ -38,7 +44,10 @@ pub fn split_solids_at_intersections(
     for inter in intersections {
         let start = endpoint_to_vertices(a, b, inter, true, tol);
         let end = endpoint_to_vertices(a, b, inter, false, tol);
-        endpoints.push((start, end));
+        match (start, end) {
+            (Some(s), Some(e)) => endpoints.push(Some((s, e))),
+            _ => endpoints.push(None),
+        }
     }
 
     SplitOutcome { endpoints }
@@ -50,24 +59,25 @@ fn endpoint_to_vertices(
     inter: &FaceIntersection,
     is_start: bool,
     tol: &Tolerance,
-) -> EndpointVertices {
+) -> Option<EndpointVertices> {
     let p = if is_start { inter.start } else { inter.end };
 
-    let vertex_a = ensure_vertex_at(a, inter.face_a, p, tol);
-    let vertex_b = ensure_vertex_at(b, inter.face_b, p, tol);
-    EndpointVertices { vertex_a, vertex_b }
+    let vertex_a = ensure_vertex_at(a, inter.face_a, p, tol)?;
+    let vertex_b = ensure_vertex_at(b, inter.face_b, p, tol)?;
+    Some(EndpointVertices { vertex_a, vertex_b })
 }
 
 /// If `p` is on a face vertex, return that vertex. If on an edge, split the
-/// edge and return the new vertex. If interior, panic — v1 doesn't support that.
-fn ensure_vertex_at(
+/// edge and return the new vertex. If interior, return None — phase B
+/// (interior.rs) will handle it via an mev tail.
+pub(crate) fn ensure_vertex_at(
     solid: &mut Solid,
     face: kerf_topo::FaceId,
     p: kerf_geom::Point3,
     tol: &Tolerance,
-) -> VertexId {
+) -> Option<VertexId> {
     match locate_point_on_face(solid, face, p, tol) {
-        PointLocation::OnVertex(v) => v,
+        PointLocation::OnVertex(v) => Some(v),
         PointLocation::OnEdge { edge, t: _ } => {
             let split = solid.topo.split_edge(edge);
             solid.vertex_geom.insert(split.new_vertex, p);
@@ -75,11 +85,9 @@ fn ensure_vertex_at(
             // segment becomes two segments; for v1 box-box every edge is a
             // line, so reconstruct the line segments from the endpoint Point3s.
             update_edge_geom_after_split(solid, edge, split.new_edge);
-            split.new_vertex
+            Some(split.new_vertex)
         }
-        PointLocation::Interior => {
-            panic!("v1 does not support intersection endpoints in face interior");
-        }
+        PointLocation::Interior => None,
     }
 }
 

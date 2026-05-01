@@ -69,7 +69,12 @@ pub fn add_intersection_edges(
 ) -> Vec<AddedEdge> {
     let mut added = Vec::new();
     for (i, inter) in intersections.iter().enumerate() {
-        let (start_v, end_v) = split_outcome.endpoints[i];
+        let (start_v, end_v) = match split_outcome.endpoints[i] {
+            Some(pair) => pair,
+            // Skip — this intersection had an Interior endpoint and is handled
+            // by phase B (interior.rs) ahead of this call.
+            None => continue,
+        };
 
         // Solid A: split face_a if endpoints aren't already connected.
         if !vertices_connected(a, start_v.vertex_a, end_v.vertex_a)
