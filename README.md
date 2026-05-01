@@ -14,7 +14,8 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [ ] M3b/M3c — Remaining surface pairs + numerical curve-surface and surface-surface fallback.
 - [x] M4 — Half-edge topology + core Euler operators (mvfs, mev/kev, mef/kef) + validator. Ring operators (kemr/kfmrh) deferred to M4b.
 - [ ] M4b — Ring operators (kemr/mekr, kfmrh/mfkrh) for solids with holes.
-- [ ] M5 — Primitives, extrude, revolve.
+- [x] M5 — `kerf-brep::Solid` (topology + geometry) and `box_` primitive constructor.
+- [ ] M5b — Remaining primitives (cylinder, sphere, cone, torus) + extrude/revolve.
 - [ ] M6 — Booleans.
 - [ ] M7 — Tessellation and STL.
 
