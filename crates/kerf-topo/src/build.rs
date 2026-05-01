@@ -48,6 +48,12 @@ impl Solid {
         self.shells[shell].faces.push(face);
     }
 
+    /// Patch a face's shell pointer. Use when the shell assignment is only
+    /// known after connected-component analysis (e.g. multi-shell stitch).
+    pub fn build_set_face_shell(&mut self, face: FaceId, shell: ShellId) {
+        self.faces[face].shell = shell;
+    }
+
     /// Insert a placeholder loop (no half-edge, face id is `default()`/null).
     /// Caller patches the face afterward via [`Self::build_set_loop_face`].
     pub fn build_insert_loop_placeholder(&mut self) -> LoopId {

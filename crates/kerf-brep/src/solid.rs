@@ -102,14 +102,16 @@ mod method_tests {
     }
 
     #[test]
-    #[ignore = "M8 stitch single-shell limitation: difference of nested boxes produces a \
-                two-shell hollow result that stitch cannot handle; revisit when multi-shell \
-                stitching is implemented"]
     fn solid_difference_method_works() {
         let a = box_(Vec3::new(10.0, 10.0, 10.0));
         let b = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(4.0, 4.0, 4.0));
         let result = a.difference(&b);
-        let _ = result;
+        // Two disconnected shells: 16V, 24E, 12F, 2S.
+        assert_eq!(result.vertex_count(), 16, "expected 16 vertices (8 outer + 8 inner)");
+        assert_eq!(result.edge_count(), 24, "expected 24 edges (12 per shell)");
+        assert_eq!(result.face_count(), 12, "expected 12 faces (6 per shell)");
+        assert_eq!(result.shell_count(), 2, "expected 2 disconnected shells");
+        validate(&result.topo).unwrap();
     }
 
     #[test]

@@ -54,16 +54,20 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
         new_solid.vertex_geom.insert(vids[i], *p);
     }
 
-    // Stage 3: shell + solid bookkeeping.
+    // Stage 3: solid bookkeeping (shells allocated after component analysis).
     let solid_id = new_solid.topo.build_insert_solid();
     new_solid.topo.build_set_active_solid(Some(solid_id));
-    let shell_id = new_solid.topo.build_insert_shell(solid_id);
 
     // Stage 4: per-face — create face/loop, then half-edges per polygon edge.
+    // We use a temporary placeholder shell (index 0) for now; it is patched
+    // after connected-component analysis in Stage 5b.
+    let placeholder_shell = new_solid.topo.build_insert_shell(solid_id);
+
     struct HalfEdgeRecord {
         id: kerf_topo::HalfEdgeId,
         v_start: usize,
         v_end: usize,
+        face_idx: usize,
     }
     let mut half_edge_records: Vec<HalfEdgeRecord> = Vec::new();
     let mut edge_pairs: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
@@ -74,9 +78,11 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
         debug_assert!(n >= 3, "face polygon must have at least 3 vertices");
 
         let loop_id = new_solid.topo.build_insert_loop_placeholder();
-        let face_id = new_solid.topo.build_insert_face(loop_id, shell_id);
+        // Use placeholder_shell temporarily; corrected in Stage 5b.
+        let face_id = new_solid
+            .topo
+            .build_insert_face(loop_id, placeholder_shell);
         new_solid.topo.build_set_loop_face(loop_id, face_id);
-        new_solid.topo.build_push_shell_face(shell_id, face_id);
         new_solid.face_geom.insert(face_id, kf.surface.clone());
         face_ids.push(face_id);
 
@@ -93,6 +99,7 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
                 id: he_id,
                 v_start: v_start_idx,
                 v_end: v_end_idx,
+                face_idx,
             });
             let key = canonical_edge_key(v_start_idx, v_end_idx);
             edge_pairs
@@ -141,6 +148,60 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
         let length = (p1 - p0).norm();
         let seg = CurveSegment::line(line, 0.0, length);
         new_solid.edge_geom.insert(edge_id, seg);
+    }
+
+    // Stage 5b: connected-component analysis → allocate one Shell per component.
+    //
+    // Build a face-adjacency list: two faces are adjacent iff they share a
+    // canonical edge (i.e., appear together in some `edge_pairs` entry).
+    let n_faces = kept.len();
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n_faces];
+    for indices in edge_pairs.values() {
+        // indices has exactly 2 entries (validated above).
+        let fi = half_edge_records[indices[0]].face_idx;
+        let fj = half_edge_records[indices[1]].face_idx;
+        if fi != fj {
+            adj[fi].push(fj);
+            adj[fj].push(fi);
+        }
+    }
+
+    // BFS to assign component IDs.
+    let mut component: Vec<Option<usize>> = vec![None; n_faces];
+    let mut n_components: usize = 0;
+    for start in 0..n_faces {
+        if component[start].is_some() {
+            continue;
+        }
+        let comp_id = n_components;
+        n_components += 1;
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(start);
+        component[start] = Some(comp_id);
+        while let Some(fi) = queue.pop_front() {
+            for &fj in &adj[fi] {
+                if component[fj].is_none() {
+                    component[fj] = Some(comp_id);
+                    queue.push_back(fj);
+                }
+            }
+        }
+    }
+
+    // Allocate shells: the placeholder_shell is reused as component 0.
+    // Additional components get fresh shells.
+    let mut shell_ids: Vec<kerf_topo::ShellId> = Vec::with_capacity(n_components);
+    shell_ids.push(placeholder_shell); // component 0 → placeholder_shell
+    for _ in 1..n_components {
+        shell_ids.push(new_solid.topo.build_insert_shell(solid_id));
+    }
+
+    // Assign each face to its component's shell.
+    for (face_idx, face_id) in face_ids.iter().enumerate() {
+        let comp_id = component[face_idx].expect("every face must belong to a component");
+        let shell_id = shell_ids[comp_id];
+        new_solid.topo.build_set_face_shell(*face_id, shell_id);
+        new_solid.topo.build_push_shell_face(shell_id, *face_id);
     }
 
     // Stage 6: vertex outgoing references — first half-edge whose origin is
