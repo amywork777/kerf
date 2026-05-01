@@ -11,7 +11,7 @@ pub mod tessellate;
 
 pub use geometry::{CurveKind, CurveSegment, Sense, SurfaceKind};
 pub use obj::write_obj;
-pub use primitives::{box_, box_at, cone, cylinder, extrude_polygon, frustum, sphere, torus};
+pub use primitives::{box_, box_at, cone, cylinder, extrude_polygon, frustum, revolve_polyline, sphere, torus};
 pub use solid::Solid;
 pub use step::write_step;
 pub use stl::{write_ascii, write_binary};

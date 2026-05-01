@@ -36,6 +36,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M18 — Primitive zoo capstone: every primitive (box, prism, cylinder, cone, sphere, torus, frustum) tessellated and emitted to a single STL.
 - [x] M19a — Wavefront OBJ output (mesh export with vertex dedup).
 - [x] M19b — STEP (ISO 10303-21 / AP214) B-rep export. Preserves exact geometry (planes, cylinders, spheres, cones, tori, lines, circles, ellipses) as native CAD entities. Real CAD interchange.
+- [x] M20 — `revolve_polyline(profile)` constructor for axisymmetric solids. Revolves an open polyline in the xz-plane around the z-axis. Profile must have ≥ 3 points with both endpoints on the z-axis and all interior points at x > 0. Produces N vertices, (2N-3) edges, and (N-1) faces — first and last faces are Cone surfaces (apex cones), middle faces are Cylinder (vertical segment) or Cone (tilted segment). Euler V-E+F = 2 verified at construction.
 
 ## Crates
 
