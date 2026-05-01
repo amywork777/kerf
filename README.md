@@ -32,6 +32,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M14 — cone primitive (apex + base topology, 2V/2E/2F) + tessellator fan triangulation.
 - [x] M15 — sphere primitive (1V/0E/1F, empty-loop topology) + lat-long tessellator with polar triangle fan and equatorial quad strip.
 - [x] M16 — torus primitive (1V/2E/1F, genus-1 topology with self-loop edges) + validator extended to accept any non-negative integer genus via Euler-Poincaré; toroidal quad-strip tessellator.
+- [x] M17 — frustum primitive (truncated cone, 2V/3E/3F, cylinder topology) with lateral Cone surface; apex computed from seam-line / z-axis intersection. Generalises cylinder (equal radii rejected) and cone (top_r → 0 rejected).
 
 ## Crates
 
