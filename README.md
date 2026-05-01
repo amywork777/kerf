@@ -26,6 +26,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M8 — Stitched B-rep boolean output: `boolean_solid(a, b, op)` returns a connected Solid; recursive booleans now work.
 - [x] M9 — CSG demo example: extrude → recursive boolean → STL output, validating full kernel.
 - [x] M10 — API polish: `box_at(extents, origin)` constructor + `Solid::{union,intersection,difference}` method API.
+- [x] M11 — Interior endpoint support: corner-cut Difference now works via mev-tail interior vertex insertion; per-face two-pass algorithm splits boundary endpoints in phase A, grows interior vertices in phase B, splices remaining chords in phase C.
 
 ## Crates
 
