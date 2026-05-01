@@ -4,6 +4,6 @@ pub mod clip;
 pub mod face_polygon;
 pub mod intersect;
 
-pub use clip::{clip_line_to_convex_polygon, ClipResult};
+pub use clip::{ClipResult, clip_line_to_convex_polygon};
 pub use face_polygon::face_polygon;
-pub use intersect::{face_intersections, FaceIntersection};
+pub use intersect::{FaceIntersection, face_intersections};

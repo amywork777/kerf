@@ -14,9 +14,12 @@ pub fn clip_line_to_convex_polygon(
     frame: &Frame,
     tol: &Tolerance,
 ) -> ClipResult {
-    if poly.len() < 3 { return ClipResult::Empty; }
+    if poly.len() < 3 {
+        return ClipResult::Empty;
+    }
 
-    let poly2d: Vec<(f64, f64)> = poly.iter()
+    let poly2d: Vec<(f64, f64)> = poly
+        .iter()
         .map(|p| {
             let (u, v, _) = frame.local_of(*p);
             (u, v)
@@ -107,13 +110,18 @@ mod tests {
     #[test]
     fn line_through_corner_yields_short_range() {
         let (poly, frame) = unit_square_xy();
-        let line = Line::from_origin_dir(Point3::new(-1.0, -1.0, 0.0), Vec3::new(1.0, 1.0, 0.0)).unwrap();
+        let line =
+            Line::from_origin_dir(Point3::new(-1.0, -1.0, 0.0), Vec3::new(1.0, 1.0, 0.0)).unwrap();
         let result = clip_line_to_convex_polygon(&line, &poly, &frame, &Tolerance::default());
         match result {
             ClipResult::Range(t_min, t_max) => {
                 let s2 = std::f64::consts::SQRT_2;
                 assert!((t_min - s2).abs() < 1e-9, "t_min = {t_min}, expected {s2}");
-                assert!((t_max - 2.0 * s2).abs() < 1e-9, "t_max = {t_max}, expected {}", 2.0 * s2);
+                assert!(
+                    (t_max - 2.0 * s2).abs() < 1e-9,
+                    "t_max = {t_max}, expected {}",
+                    2.0 * s2
+                );
             }
             other => panic!("{other:?}"),
         }

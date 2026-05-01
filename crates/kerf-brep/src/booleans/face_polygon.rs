@@ -18,7 +18,9 @@ pub fn face_polygon(solid: &Solid, face: FaceId) -> Option<Vec<Point3>> {
         let v = he.origin();
         polygon.push(*solid.vertex_geom.get(v)?);
         cur = he.next();
-        if cur == start { break; }
+        if cur == start {
+            break;
+        }
     }
     Some(polygon)
 }
@@ -54,7 +56,10 @@ mod tests {
                 xs.iter().all(|&x| (x - xs[0]).abs() < 1e-12),
                 ys.iter().all(|&y| (y - ys[0]).abs() < 1e-12),
                 zs.iter().all(|&z| (z - zs[0]).abs() < 1e-12),
-            ].iter().filter(|&&b| b).count();
+            ]
+            .iter()
+            .filter(|&&b| b)
+            .count();
             assert_eq!(const_count, 1, "face must have exactly one constant axis");
         }
     }

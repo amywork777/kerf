@@ -16,7 +16,11 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [ ] M4b — Ring operators (kemr/mekr, kfmrh/mfkrh) for solids with holes.
 - [x] M5 — `kerf-brep::Solid` (topology + geometry) and `box_` primitive constructor.
 - [ ] M5b — Remaining primitives (cylinder, sphere, cone, torus) + extrude/revolve.
-- [ ] M6 — Booleans.
+- [x] M6a — Face-face intersection: per face-pair, compute clipped 3D segments. Foundation for full booleans.
+- [ ] M6b — Edge splitting along intersection segments.
+- [ ] M6c — Face splitting (re-trace loops with new edges).
+- [ ] M6d — Inside/outside classification.
+- [ ] M6e — Stitching (assemble result solid).
 - [ ] M7 — Tessellation and STL.
 
 ## Crates
