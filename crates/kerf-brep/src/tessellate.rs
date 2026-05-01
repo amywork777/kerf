@@ -122,6 +122,36 @@ pub fn tessellate(solid: &Solid, lateral_segments: usize) -> FaceSoup {
                     }
                 }
             }
+            SurfaceKind::Sphere(sph) => {
+                use std::f64::consts::PI;
+                let polar_segs = (lateral_segments / 2).max(2);
+                let dlat = PI / polar_segs as f64;
+                let dlon = TAU / lateral_segments as f64;
+                for j in 0..polar_segs {
+                    let v0 = j as f64 * dlat;
+                    let v1 = (j + 1) as f64 * dlat;
+                    let north = j == 0;
+                    let south = j == polar_segs - 1;
+                    for i in 0..lateral_segments {
+                        let u0 = i as f64 * dlon;
+                        let u1 = ((i + 1) % lateral_segments) as f64 * dlon;
+                        let p00 = sph.point_at(u0, v0);
+                        let p10 = sph.point_at(u1, v0);
+                        let p11 = sph.point_at(u1, v1);
+                        let p01 = sph.point_at(u0, v1);
+                        if north {
+                            // p00 == p10 (both north pole). Single triangle: pole, p11, p01.
+                            soup.triangles.push([p00, p11, p01]);
+                        } else if south {
+                            // p11 == p01 (both south pole). Single triangle: p00, p10, p01.
+                            soup.triangles.push([p00, p10, p01]);
+                        } else {
+                            soup.triangles.push([p00, p10, p11]);
+                            soup.triangles.push([p00, p11, p01]);
+                        }
+                    }
+                }
+            }
             _ => {
                 // Other surface kinds not yet supported.
             }
@@ -215,7 +245,7 @@ fn collect_face_edges(solid: &Solid, face_id: FaceId) -> Vec<EdgeId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primitives::{cone, cylinder};
+    use crate::primitives::{cone, cylinder, sphere};
 
     #[test]
     fn cone_tessellation_has_expected_triangle_count() {
@@ -242,5 +272,27 @@ mod tests {
         crate::write_binary(&soup, "cylinder", &mut buf).unwrap();
         // 12 segments → 12+12+24 = 48 triangles. 80+4+50*48 = 2484 bytes.
         assert_eq!(buf.len(), 80 + 4 + 50 * 48);
+    }
+
+    #[test]
+    fn sphere_tessellation_has_expected_triangle_count() {
+        // 16 lateral × 8 polar:
+        //   north row: 16 triangles (1 per longitude)
+        //   middle 6 rows: 16 * 6 * 2 = 192 triangles
+        //   south row: 16 triangles
+        //   total: 16 + 192 + 16 = 224
+        let s = sphere(1.0);
+        let soup = tessellate(&s, 16);
+        assert_eq!(soup.triangles.len(), 224);
+    }
+
+    #[test]
+    fn sphere_tessellation_produces_valid_stl() {
+        let s = sphere(1.0);
+        let soup = tessellate(&s, 12);
+        let mut buf = Vec::new();
+        crate::write_binary(&soup, "sphere", &mut buf).unwrap();
+        // 12 segs, 6 polar: 12 + 12*4*2 + 12 = 12 + 96 + 12 = 120 tris
+        assert_eq!(buf.len(), 80 + 4 + 50 * 120);
     }
 }

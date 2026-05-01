@@ -30,6 +30,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M12 — Multi-shell stitch: nested-Difference produces hollow Solids with 2 disconnected shells.
 - [x] M13 — cylinder primitive (with seam topology) + tessellator. STL output for curved solids.
 - [x] M14 — cone primitive (apex + base topology, 2V/2E/2F) + tessellator fan triangulation.
+- [x] M15 — sphere primitive (1V/0E/1F, empty-loop topology) + lat-long tessellator with polar triangle fan and equatorial quad strip.
 
 ## Crates
 

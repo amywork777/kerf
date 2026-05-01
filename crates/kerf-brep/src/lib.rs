@@ -8,7 +8,7 @@ pub mod stl;
 pub mod tessellate;
 
 pub use geometry::{CurveKind, CurveSegment, Sense, SurfaceKind};
-pub use primitives::{box_, box_at, cone, cylinder, extrude_polygon};
+pub use primitives::{box_, box_at, cone, cylinder, extrude_polygon, sphere};
 pub use solid::Solid;
 pub use stl::{write_ascii, write_binary};
 pub use tessellate::tessellate;
