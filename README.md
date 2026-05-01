@@ -20,7 +20,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M6b — Edge splitting along intersection segment endpoints. Both solids gain vertices at intersection points.
 - [x] M6c — Face splitting: add intersection chords as edges via mef. Faces sub-divide where boundaries cross.
 - [x] M6d — Face classification: per-face inside/outside/on-boundary against the other solid via centroid ray-casting.
-- [ ] M6e — Stitching (assemble result solid).
+- [x] M6e — Boolean selection + triangulated output. `boolean(a, b, op)` returns a triangle soup. Stitched B-rep output is a follow-up.
 - [ ] M7 — Tessellation and STL.
 
 ## Crates
