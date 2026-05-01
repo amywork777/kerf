@@ -80,6 +80,11 @@ impl Solid {
     pub fn face_ids(&self) -> impl Iterator<Item = FaceId> + '_ {
         self.faces.iter().map(|(id, _)| id)
     }
+
+    /// Iterate over (edge_id, &Edge) pairs.
+    pub fn edges_iter(&self) -> impl Iterator<Item = (EdgeId, &crate::entity::Edge)> + '_ {
+        self.edges.iter()
+    }
 }
 
 pub struct LoopWalker<'a> {
