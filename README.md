@@ -35,6 +35,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M17 — frustum primitive (truncated cone, 2V/3E/3F, cylinder topology) with lateral Cone surface; apex computed from seam-line / z-axis intersection. Generalises cylinder (equal radii rejected) and cone (top_r → 0 rejected).
 - [x] M18 — Primitive zoo capstone: every primitive (box, prism, cylinder, cone, sphere, torus, frustum) tessellated and emitted to a single STL.
 - [x] M19a — Wavefront OBJ output (mesh export with vertex dedup).
+- [x] M19b — STEP (ISO 10303-21 / AP214) B-rep export. Preserves exact geometry (planes, cylinders, spheres, cones, tori, lines, circles, ellipses) as native CAD entities. Real CAD interchange.
 
 ## Crates
 
