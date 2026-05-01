@@ -152,8 +152,25 @@ pub fn tessellate(solid: &Solid, lateral_segments: usize) -> FaceSoup {
                     }
                 }
             }
-            _ => {
-                // Other surface kinds not yet supported.
+            SurfaceKind::Torus(tor) => {
+                let major_segs = lateral_segments;
+                let minor_segs = (lateral_segments / 2).max(2);
+                let du = TAU / major_segs as f64;
+                let dv = TAU / minor_segs as f64;
+                for i in 0..major_segs {
+                    let u0 = i as f64 * du;
+                    let u1 = ((i + 1) % major_segs) as f64 * du;
+                    for j in 0..minor_segs {
+                        let v0 = j as f64 * dv;
+                        let v1 = ((j + 1) % minor_segs) as f64 * dv;
+                        let p00 = tor.point_at(u0, v0);
+                        let p10 = tor.point_at(u1, v0);
+                        let p11 = tor.point_at(u1, v1);
+                        let p01 = tor.point_at(u0, v1);
+                        soup.triangles.push([p00, p10, p11]);
+                        soup.triangles.push([p00, p11, p01]);
+                    }
+                }
             }
         }
     }
@@ -245,7 +262,7 @@ fn collect_face_edges(solid: &Solid, face_id: FaceId) -> Vec<EdgeId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primitives::{cone, cylinder, sphere};
+    use crate::primitives::{cone, cylinder, sphere, torus};
 
     #[test]
     fn cone_tessellation_has_expected_triangle_count() {
@@ -294,5 +311,13 @@ mod tests {
         crate::write_binary(&soup, "sphere", &mut buf).unwrap();
         // 12 segs, 6 polar: 12 + 12*4*2 + 12 = 12 + 96 + 12 = 120 tris
         assert_eq!(buf.len(), 80 + 4 + 50 * 120);
+    }
+
+    #[test]
+    fn torus_tessellation_has_expected_triangle_count() {
+        // 16 major × 8 minor: 16 * 8 * 2 = 256 triangles.
+        let s = torus(3.0, 1.0);
+        let soup = tessellate(&s, 16);
+        assert_eq!(soup.triangles.len(), 256);
     }
 }
