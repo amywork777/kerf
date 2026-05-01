@@ -2,12 +2,12 @@
 
 use kerf_geom::{Point3, Tolerance};
 
-use crate::booleans::{
-    add_intersection_edges, classify_face, face_intersections, face_polygon,
-    fan_triangulate, fan_triangulate_reversed, flip_b_face, keep_a_face, keep_b_face,
-    split_solids_at_intersections, BooleanOp, SelectedFaces,
-};
 use crate::Solid;
+use crate::booleans::{
+    BooleanOp, SelectedFaces, add_intersection_edges, classify_face, face_intersections,
+    face_polygon, fan_triangulate, fan_triangulate_reversed, flip_b_face, keep_a_face, keep_b_face,
+    split_solids_at_intersections,
+};
 
 /// A face soup: triangles representing the boolean result. Not a stitched B-rep
 /// solid — that's a separate project.
@@ -27,14 +27,22 @@ pub fn boolean(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> FaceSoup
     let _added = add_intersection_edges(&mut a, &mut b, &intersections, &outcome, tol);
 
     // Phase 4: classify every face of both solids.
-    let mut selected = SelectedFaces { a: Vec::new(), b: Vec::new(), b_flipped: flip_b_face(op) };
+    let mut selected = SelectedFaces {
+        a: Vec::new(),
+        b: Vec::new(),
+        b_flipped: flip_b_face(op),
+    };
     for face_id in a.topo.face_ids() {
         let cls = classify_face(&a, face_id, &b, tol);
-        if keep_a_face(cls, op) { selected.a.push(face_id); }
+        if keep_a_face(cls, op) {
+            selected.a.push(face_id);
+        }
     }
     for face_id in b.topo.face_ids() {
         let cls = classify_face(&b, face_id, &a, tol);
-        if keep_b_face(cls, op) { selected.b.push(face_id); }
+        if keep_b_face(cls, op) {
+            selected.b.push(face_id);
+        }
     }
 
     // Phase 5 (lite): triangulate kept faces.
@@ -56,6 +64,48 @@ pub fn boolean(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> FaceSoup
     }
 
     soup
+}
+
+/// End-to-end boolean returning a connected Solid (not just a triangle soup).
+/// Recursive booleans are now possible:
+/// `boolean_solid(boolean_solid(a, b, op), c, op2)`.
+pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> Solid {
+    use crate::booleans::stitch::{KeptFace, stitch};
+
+    let mut a = a.clone();
+    let mut b = b.clone();
+    let intersections = face_intersections(&a, &b, tol);
+    let outcome = split_solids_at_intersections(&mut a, &mut b, &intersections, tol);
+    let _added = add_intersection_edges(&mut a, &mut b, &intersections, &outcome, tol);
+
+    let mut kept: Vec<KeptFace> = Vec::new();
+    for face_id in a.topo.face_ids() {
+        let cls = classify_face(&a, face_id, &b, tol);
+        if keep_a_face(cls, op)
+            && let Some(polygon) = face_polygon(&a, face_id)
+        {
+            let surface = a.face_geom.get(face_id).cloned().unwrap();
+            kept.push(KeptFace { polygon, surface });
+        }
+    }
+    let flip_b = flip_b_face(op);
+    for face_id in b.topo.face_ids() {
+        let cls = classify_face(&b, face_id, &a, tol);
+        if keep_b_face(cls, op)
+            && let Some(mut polygon) = face_polygon(&b, face_id)
+        {
+            let surface = b.face_geom.get(face_id).cloned().unwrap();
+            if flip_b {
+                // Reverse polygon winding so the face's outward normal flips.
+                // (We leave SurfaceKind::Plane unchanged; in the stitched solid
+                // the polygon order alone defines face orientation.)
+                polygon.reverse();
+            }
+            kept.push(KeptFace { polygon, surface });
+        }
+    }
+
+    stitch(&kept, tol)
 }
 
 #[cfg(test)]
@@ -90,7 +140,12 @@ mod tests {
         let a = box_(Vec3::new(1.0, 1.0, 1.0));
         let b = make_box_at(Vec3::new(1.0, 1.0, 1.0), Vec3::new(5.0, 0.0, 0.0));
         let soup = boolean(&a, &b, BooleanOp::Union, &Tolerance::default());
-        assert_eq!(soup.triangles.len(), 24, "expected 24 triangles, got {}", soup.triangles.len());
+        assert_eq!(
+            soup.triangles.len(),
+            24,
+            "expected 24 triangles, got {}",
+            soup.triangles.len()
+        );
     }
 
     #[test]
@@ -127,5 +182,39 @@ mod tests {
         let small = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
         let soup = boolean(&big, &small, BooleanOp::Difference, &Tolerance::default());
         assert_eq!(soup.triangles.len(), 24);
+    }
+
+    #[test]
+    fn boolean_solid_intersection_of_nested_yields_smaller_box_topology() {
+        let big = box_(Vec3::new(10.0, 10.0, 10.0));
+        let small = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
+        let result = boolean_solid(&big, &small, BooleanOp::Intersection, &Tolerance::default());
+        assert_eq!(result.vertex_count(), 8);
+        assert_eq!(result.edge_count(), 12);
+        assert_eq!(result.face_count(), 6);
+        kerf_topo::validate(&result.topo).unwrap();
+    }
+
+    #[test]
+    fn boolean_solid_union_of_nested_yields_big_box_topology() {
+        let big = box_(Vec3::new(10.0, 10.0, 10.0));
+        let small = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
+        let result = boolean_solid(&big, &small, BooleanOp::Union, &Tolerance::default());
+        assert_eq!(result.vertex_count(), 8);
+        assert_eq!(result.face_count(), 6);
+        kerf_topo::validate(&result.topo).unwrap();
+    }
+
+    #[test]
+    fn recursive_boolean_three_box_intersection() {
+        // (A ∩ B) ∩ C — verifies recursion works.
+        let a = box_(Vec3::new(10.0, 10.0, 10.0));
+        let b = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
+        let c = make_box_at(Vec3::new(2.0, 2.0, 2.0), Vec3::new(4.0, 4.0, 4.0));
+        let ab = boolean_solid(&a, &b, BooleanOp::Intersection, &Tolerance::default());
+        let abc = boolean_solid(&ab, &c, BooleanOp::Intersection, &Tolerance::default());
+        // ab is "small" (inside big); abc = small ∩ small = small.
+        assert_eq!(abc.face_count(), 6);
+        kerf_topo::validate(&abc.topo).unwrap();
     }
 }

@@ -5,7 +5,9 @@ use kerf_geom::Point3;
 /// Fan-triangulate a convex polygon. Returns a list of triangles.
 /// For a polygon with n vertices, returns n-2 triangles.
 pub fn fan_triangulate(poly: &[Point3]) -> Vec<[Point3; 3]> {
-    if poly.len() < 3 { return Vec::new(); }
+    if poly.len() < 3 {
+        return Vec::new();
+    }
     let v0 = poly[0];
     let mut tris = Vec::with_capacity(poly.len() - 2);
     for i in 1..(poly.len() - 1) {
@@ -16,7 +18,9 @@ pub fn fan_triangulate(poly: &[Point3]) -> Vec<[Point3; 3]> {
 
 /// Fan-triangulate with reversed orientation (for flipped output).
 pub fn fan_triangulate_reversed(poly: &[Point3]) -> Vec<[Point3; 3]> {
-    if poly.len() < 3 { return Vec::new(); }
+    if poly.len() < 3 {
+        return Vec::new();
+    }
     let v0 = poly[0];
     let mut tris = Vec::with_capacity(poly.len() - 2);
     for i in 1..(poly.len() - 1) {

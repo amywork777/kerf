@@ -16,14 +16,14 @@ pub fn keep_a_face(cls: FaceClassification, op: BooleanOp) -> bool {
     use BooleanOp::*;
     use FaceClassification::*;
     match (op, cls) {
-        (Union, Outside)        => true,
-        (Union, Inside)         => false,
-        (Union, OnBoundary)     => true, // include one copy from A
+        (Union, Outside) => true,
+        (Union, Inside) => false,
+        (Union, OnBoundary) => true, // include one copy from A
         (Intersection, Outside) => false,
-        (Intersection, Inside)  => true,
+        (Intersection, Inside) => true,
         (Intersection, OnBoundary) => true,
-        (Difference, Outside)   => true,
-        (Difference, Inside)    => false,
+        (Difference, Outside) => true,
+        (Difference, Inside) => false,
         (Difference, OnBoundary) => true,
     }
 }
@@ -34,14 +34,14 @@ pub fn keep_b_face(cls: FaceClassification, op: BooleanOp) -> bool {
     use BooleanOp::*;
     use FaceClassification::*;
     match (op, cls) {
-        (Union, Outside)        => true,
-        (Union, Inside)         => false,
-        (Union, OnBoundary)     => false, // A already contributed it
+        (Union, Outside) => true,
+        (Union, Inside) => false,
+        (Union, OnBoundary) => false, // A already contributed it
         (Intersection, Outside) => false,
-        (Intersection, Inside)  => true,
+        (Intersection, Inside) => true,
         (Intersection, OnBoundary) => false,
-        (Difference, Outside)   => false,
-        (Difference, Inside)    => true,    // flipped at output time
+        (Difference, Outside) => false,
+        (Difference, Inside) => true, // flipped at output time
         (Difference, OnBoundary) => false,
     }
 }

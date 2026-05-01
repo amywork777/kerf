@@ -4,9 +4,9 @@
 use kerf_geom::{Line, Point3, Tolerance, Vec3};
 use kerf_topo::FaceId;
 
+use crate::Solid;
 use crate::booleans::face_polygon;
 use crate::geometry::SurfaceKind;
-use crate::Solid;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FaceClassification {
@@ -18,7 +18,9 @@ pub enum FaceClassification {
 /// Compute the centroid of a face (mean of outer-loop vertices).
 pub fn face_centroid(solid: &Solid, face: FaceId) -> Option<Point3> {
     let poly = face_polygon(solid, face)?;
-    if poly.is_empty() { return None; }
+    if poly.is_empty() {
+        return None;
+    }
     let n = poly.len() as f64;
     let sum: Vec3 = poly.iter().map(|p| p.coords).sum();
     Some(Point3::from(sum / n))
@@ -26,19 +28,26 @@ pub fn face_centroid(solid: &Solid, face: FaceId) -> Option<Point3> {
 
 /// Test whether a point lies on the boundary of `solid` (i.e., on any face plane
 /// AND inside that face's polygon, within tolerance).
-pub fn point_on_solid_boundary(
-    solid: &Solid,
-    p: Point3,
-    tol: &Tolerance,
-) -> Option<FaceId> {
+pub fn point_on_solid_boundary(solid: &Solid, p: Point3, tol: &Tolerance) -> Option<FaceId> {
     for face_id in solid.topo.face_ids() {
-        let SurfaceKind::Plane(plane) = solid.face_geom.get(face_id)? else { continue };
+        let SurfaceKind::Plane(plane) = solid.face_geom.get(face_id)? else {
+            continue;
+        };
         // Distance from p to face plane.
         let d = (p - plane.frame.origin).dot(&plane.frame.z);
-        if d.abs() > tol.point_eq { continue; }
+        if d.abs() > tol.point_eq {
+            continue;
+        }
         // p is on plane; check it's inside polygon.
         let poly = face_polygon(solid, face_id)?;
-        if point_in_convex_polygon_2d(p, &poly, &plane.frame.x, &plane.frame.y, &plane.frame.origin, tol) {
+        if point_in_convex_polygon_2d(
+            p,
+            &poly,
+            &plane.frame.x,
+            &plane.frame.y,
+            &plane.frame.origin,
+            tol,
+        ) {
             return Some(face_id);
         }
     }
@@ -46,8 +55,11 @@ pub fn point_on_solid_boundary(
 }
 
 fn point_in_convex_polygon_2d(
-    p: Point3, poly: &[Point3],
-    fx: &Vec3, fy: &Vec3, origin: &Point3,
+    p: Point3,
+    poly: &[Point3],
+    fx: &Vec3,
+    fy: &Vec3,
+    origin: &Point3,
     tol: &Tolerance,
 ) -> bool {
     let to_2d = |q: Point3| -> (f64, f64) {
@@ -62,10 +74,16 @@ fn point_in_convex_polygon_2d(
         let (bx, by) = to_2d(poly[(i + 1) % n]);
         // Cross product (b - a) x (p - a).
         let cross = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
-        if cross.abs() < tol.point_eq { continue; }
+        if cross.abs() < tol.point_eq {
+            continue;
+        }
         match sign {
             None => sign = Some(cross.signum()),
-            Some(s) => if cross.signum() != s { return false; }
+            Some(s) => {
+                if cross.signum() != s {
+                    return false;
+                }
+            }
         }
     }
     true
@@ -83,22 +101,42 @@ pub fn ray_solid_crossings(
     let line = Line::from_origin_dir(origin, dir).unwrap();
     let mut count = 0;
     for face_id in solid.topo.face_ids() {
-        let SurfaceKind::Plane(plane) = solid.face_geom.get(face_id)? else { continue };
+        let SurfaceKind::Plane(plane) = solid.face_geom.get(face_id)? else {
+            continue;
+        };
         let dn = dir.dot(&plane.frame.z);
-        if dn.abs() < tol.angle_eq { continue; } // ray parallel to face plane
+        if dn.abs() < tol.angle_eq {
+            continue;
+        } // ray parallel to face plane
 
         // t at which line crosses face plane.
         let to_origin = plane.frame.origin - origin;
         let t = to_origin.dot(&plane.frame.z) / dn;
-        if t < tol.point_eq { continue; } // crossing behind origin (or at it)
+        if t < tol.point_eq {
+            continue;
+        } // crossing behind origin (or at it)
 
         // Point of crossing.
         let cross = origin + t * dir;
         let poly = face_polygon(solid, face_id)?;
         // 2D polygon containment using the same helper.
-        if point_in_convex_polygon_2d(cross, &poly, &plane.frame.x, &plane.frame.y, &plane.frame.origin, tol) {
+        if point_in_convex_polygon_2d(
+            cross,
+            &poly,
+            &plane.frame.x,
+            &plane.frame.y,
+            &plane.frame.origin,
+            tol,
+        ) {
             // Reject if crossing exactly through polygon vertex or edge → return None for retry.
-            if on_polygon_boundary(cross, &poly, &plane.frame.x, &plane.frame.y, &plane.frame.origin, tol) {
+            if on_polygon_boundary(
+                cross,
+                &poly,
+                &plane.frame.x,
+                &plane.frame.y,
+                &plane.frame.origin,
+                tol,
+            ) {
                 return None;
             }
             count += 1;
@@ -109,8 +147,11 @@ pub fn ray_solid_crossings(
 }
 
 fn on_polygon_boundary(
-    p: Point3, poly: &[Point3],
-    fx: &Vec3, fy: &Vec3, origin: &Point3,
+    p: Point3,
+    poly: &[Point3],
+    fx: &Vec3,
+    fy: &Vec3,
+    origin: &Point3,
     tol: &Tolerance,
 ) -> bool {
     let to_2d = |q: Point3| -> (f64, f64) {
@@ -126,24 +167,26 @@ fn on_polygon_boundary(
         let ex = bx - ax;
         let ey = by - ay;
         let len2 = ex * ex + ey * ey;
-        if len2 < tol.point_eq * tol.point_eq { continue; }
+        if len2 < tol.point_eq * tol.point_eq {
+            continue;
+        }
         let s = ((px - ax) * ex + (py - ay) * ey) / len2;
-        if !(0.0..=1.0).contains(&s) { continue; }
+        if !(0.0..=1.0).contains(&s) {
+            continue;
+        }
         let foot_x = ax + s * ex;
         let foot_y = ay + s * ey;
         let d2 = (px - foot_x).powi(2) + (py - foot_y).powi(2);
-        if d2 < tol.point_eq * tol.point_eq { return true; }
+        if d2 < tol.point_eq * tol.point_eq {
+            return true;
+        }
     }
     false
 }
 
 /// Classify `face_a` (in `a`) against `b`: pick a centroid, ray-cast through `b`,
 /// count crossings. If centroid is on b's boundary (within tol), report OnBoundary.
-pub fn classify_face(
-    a: &Solid, face_a: FaceId,
-    b: &Solid,
-    tol: &Tolerance,
-) -> FaceClassification {
+pub fn classify_face(a: &Solid, face_a: FaceId, b: &Solid, tol: &Tolerance) -> FaceClassification {
     let centroid = match face_centroid(a, face_a) {
         Some(c) => c,
         None => return FaceClassification::Outside,
@@ -164,7 +207,11 @@ pub fn classify_face(
     ];
     for &dir in &dirs {
         if let Some(count) = ray_solid_crossings(b, centroid, dir, tol) {
-            return if count % 2 == 1 { FaceClassification::Inside } else { FaceClassification::Outside };
+            return if count % 2 == 1 {
+                FaceClassification::Inside
+            } else {
+                FaceClassification::Outside
+            };
         }
     }
     // All rays were degenerate — extreme rare case. Default to Outside.
@@ -205,7 +252,11 @@ mod tests {
         let tol = Tolerance::default();
         for face_id in small.topo.face_ids() {
             let cls = classify_face(&small, face_id, &big, &tol);
-            assert_eq!(cls, FaceClassification::Inside, "face {face_id:?} expected Inside, got {cls:?}");
+            assert_eq!(
+                cls,
+                FaceClassification::Inside,
+                "face {face_id:?} expected Inside, got {cls:?}"
+            );
         }
     }
 
@@ -229,7 +280,11 @@ mod tests {
         let tol = Tolerance::default();
         for face_id in big.topo.face_ids() {
             let cls = classify_face(&big, face_id, &small, &tol);
-            assert_eq!(cls, FaceClassification::Outside, "big's faces should be outside small");
+            assert_eq!(
+                cls,
+                FaceClassification::Outside,
+                "big's faces should be outside small"
+            );
         }
     }
 }
