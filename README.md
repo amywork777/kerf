@@ -37,6 +37,28 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M19a — Wavefront OBJ output (mesh export with vertex dedup).
 - [x] M19b — STEP (ISO 10303-21 / AP214) B-rep export. Preserves exact geometry (planes, cylinders, spheres, cones, tori, lines, circles, ellipses) as native CAD entities. Real CAD interchange.
 - [x] M20 — `revolve_polyline(profile)` constructor for axisymmetric solids. Revolves an open polyline in the xz-plane around the z-axis. Profile must have ≥ 3 points with both endpoints on the z-axis and all interior points at x > 0. Produces N vertices, (2N-3) edges, and (N-1) faces — first and last faces are Cone surfaces (apex cones), middle faces are Cylinder (vertical segment) or Cone (tilted segment). Euler V-E+F = 2 verified at construction.
+- [x] M21 — Visual gallery: `cad_gallery` example renders 13 STLs covering every primitive + every working boolean. Tessellator fix for `Cone` faces with 2 boundary circles (frustum / revolve middle faces) — previously fan-from-apex which left the lateral surface invisible. Screenshots in `screenshots/`.
+
+## Visual gallery
+
+| Capability | Render |
+| --- | --- |
+| Primitive zoo (M18) | `screenshots/00_primitive_zoo.png` |
+| Box (M5) | `screenshots/01_box.png` |
+| Triangular prism via extrude (M5b) | `screenshots/02_prism.png` |
+| Cylinder (M13) | `screenshots/03_cylinder.png` |
+| Cone (M14) | `screenshots/04_cone.png` |
+| Sphere (M15) | `screenshots/05_sphere.png` |
+| Torus (M16, genus-1) | `screenshots/06_torus.png` |
+| Frustum (M17) | `screenshots/07_frustum.png` |
+| Revolve polyline — vase (M20) | `screenshots/08_revolve_vase.png` |
+| Union of overlapping boxes | `screenshots/10_union_two_boxes.png` |
+| Intersection of overlapping boxes | `screenshots/11_intersection_two_boxes.png` |
+| Corner-cut Difference (M11) | `screenshots/12_corner_cut_step.png` |
+| Hollow nested Difference (M12) | `screenshots/13_hollow_box.png` |
+| Recursive boolean (M8) | `screenshots/14_recursive_intersection.png` |
+
+Build the STL files with `cargo run --example cad_gallery`. Render to PNG with the `scripts/render_stl.py` helper (requires `numpy-stl` + `matplotlib`).
 
 ## Crates
 

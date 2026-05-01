@@ -96,29 +96,46 @@ pub fn tessellate(solid: &Solid, lateral_segments: usize) -> FaceSoup {
                 }
             }
             SurfaceKind::Cone(_cone_surf) => {
-                // Fan triangulation: apex → base-circle samples.
-                // Walk the face loop to find the base circle and apex position.
+                // Walk face loop. Count circle edges:
+                //   1 circle → true cone (apex on solid). Fan from apex.
+                //   2 circles → frustum (apex off solid). Quad-strip between circles.
                 let edges = collect_face_edges(solid, face_id);
-                // Find the Circle edge (bot_circle) and extract center + radius.
-                let circle_seg = edges
+                let circles: Vec<&kerf_geom::Circle> = edges
                     .iter()
                     .filter_map(|eid| solid.edge_geom.get(*eid))
-                    .find(|seg| matches!(&seg.curve, CurveKind::Circle(_)));
-                if let Some(seg) = circle_seg {
-                    if let CurveKind::Circle(c) = &seg.curve {
-                        // Apex: find the Line edge endpoint that is not on the base circle.
-                        // Apex position comes from vertex_geom of the apex vertex (v_apex).
-                        // Walk the loop to find a half-edge whose origin is the apex.
-                        let apex = find_apex_in_face(solid, face_id);
-                        let dt = TAU / lateral_segments as f64;
-                        for i in 0..lateral_segments {
-                            let t0 = i as f64 * dt;
-                            let t1 = ((i + 1) % lateral_segments) as f64 * dt;
-                            let p0 = c.point_at(t0);
-                            let p1 = c.point_at(t1);
-                            // Outward-normal CCW from outside: apex, p0, p1.
-                            soup.triangles.push([apex, p0, p1]);
-                        }
+                    .filter_map(|seg| match &seg.curve {
+                        CurveKind::Circle(c) => Some(c),
+                        _ => None,
+                    })
+                    .collect();
+
+                let dt = TAU / lateral_segments as f64;
+                if circles.len() == 1 {
+                    let c = circles[0];
+                    let apex = find_apex_in_face(solid, face_id);
+                    for i in 0..lateral_segments {
+                        let t0 = i as f64 * dt;
+                        let t1 = ((i + 1) % lateral_segments) as f64 * dt;
+                        let p0 = c.point_at(t0);
+                        let p1 = c.point_at(t1);
+                        soup.triangles.push([apex, p0, p1]);
+                    }
+                } else if circles.len() >= 2 {
+                    // Frustum: top and bottom circles. Sort by z so winding is correct.
+                    let mut c_top = circles[0];
+                    let mut c_bot = circles[1];
+                    if c_top.frame.origin.z < c_bot.frame.origin.z {
+                        std::mem::swap(&mut c_top, &mut c_bot);
+                    }
+                    for i in 0..lateral_segments {
+                        let t0 = i as f64 * dt;
+                        let t1 = ((i + 1) % lateral_segments) as f64 * dt;
+                        let p0_bot = c_bot.point_at(t0);
+                        let p1_bot = c_bot.point_at(t1);
+                        let p0_top = c_top.point_at(t0);
+                        let p1_top = c_top.point_at(t1);
+                        soup.triangles.push([p0_bot, p1_bot, p1_top]);
+                        soup.triangles.push([p0_bot, p1_top, p0_top]);
                     }
                 }
             }
