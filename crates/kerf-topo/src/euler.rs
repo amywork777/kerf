@@ -62,8 +62,12 @@ impl Solid {
     /// "sticker" edge (the new edge plus its tip vertex) immediately AFTER
     /// `anchor` in the loop traversal. The new edge's twin pair becomes a
     /// degenerate 2-cycle inside the existing loop.
+    ///
+    /// `anchor` is the half-edge ENDING AT the growth vertex (its destination
+    /// is `v_old`, the vertex from which the new sticker edge sprouts). This
+    /// is required to preserve the manifold invariant `h.next.origin == h.twin.origin`.
     pub fn mev(&mut self, loop_id: LoopId, anchor: HalfEdgeId) -> MevResult {
-        let v_old = self.half_edges[anchor].origin;
+        let v_old = self.half_edges[self.half_edges[anchor].twin].origin;
         let v_new = self.vertices.insert(Vertex { outgoing: None });
 
         let e = self.edges.insert(Edge {
@@ -338,6 +342,7 @@ impl Solid {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::validate::validate;
 
     #[test]
     fn mvfs_creates_one_of_each_top_level_entity() {
@@ -401,7 +406,9 @@ mod tests {
         let mut s = Solid::new();
         let r = s.mvfs();
         let m1 = s.mev_at_lone_vertex(r.loop_, r.vertex);
-        let m2 = s.mev(r.loop_, m1.half_edges.1);
+        // mev anchor is the half-edge ending at the growth vertex; he_a (m1.half_edges.0)
+        // has dest = v1 (the latest tip), so we anchor on it.
+        let m2 = s.mev(r.loop_, m1.half_edges.0);
         // After m1, m2: we have 3 vertices, 2 edges (each a sticker), 1 face, 1 loop with 4 half-edges total.
         // Let's pick two distinct half-edges in this loop with distinct origins.
         let h_a = m1.half_edges.0; // origin = root vertex (r.vertex)
@@ -411,6 +418,7 @@ mod tests {
         assert_eq!(s.face_count(), 2);
         assert_eq!(s.loop_count(), 2);
         assert_eq!(s.edge_count(), 3);
+        validate(&s).unwrap();
         let _ = mef_r;
     }
 
@@ -419,7 +427,7 @@ mod tests {
         let mut s = Solid::new();
         let r = s.mvfs();
         let m1 = s.mev_at_lone_vertex(r.loop_, r.vertex);
-        let m2 = s.mev(r.loop_, m1.half_edges.1);
+        let m2 = s.mev(r.loop_, m1.half_edges.0);
         let h_a = m1.half_edges.0;
         let h_b = m2.half_edges.1;
         let mef_r = s.mef(h_a, h_b);

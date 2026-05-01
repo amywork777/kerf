@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-use crate::id::HalfEdgeId;
+use crate::id::{HalfEdgeId, VertexId};
 use crate::solid::Solid;
 
 #[derive(Debug, Error, PartialEq)]
@@ -13,6 +13,14 @@ pub enum ValidationError {
     NextPrevMismatch(HalfEdgeId),
     #[error("loop walk did not close within {0} steps")]
     LoopWalkOpen(usize),
+    #[error(
+        "manifold violation at half-edge {half_edge:?}: next.origin={got_origin:?}, expected {expected_origin:?}"
+    )]
+    ManifoldViolation {
+        half_edge: HalfEdgeId,
+        expected_origin: VertexId,
+        got_origin: VertexId,
+    },
     #[error(
         "euler invariant violated: V={v} E={e} F={f} R={r} S={s}; expected {expected}, got {got}"
     )]
@@ -46,6 +54,24 @@ pub fn validate(solid: &Solid) -> Result<(), ValidationError> {
             .ok_or(ValidationError::NextPrevMismatch(id))?;
         if next_he.prev != id {
             return Err(ValidationError::NextPrevMismatch(id));
+        }
+    }
+    // 2.5 Manifold invariant: for each half-edge h, h.next.origin == h.twin.origin.
+    for (id, he) in &solid.half_edges {
+        let twin = solid
+            .half_edges
+            .get(he.twin)
+            .ok_or(ValidationError::AsymmetricTwin(id))?;
+        let next = solid
+            .half_edges
+            .get(he.next)
+            .ok_or(ValidationError::NextPrevMismatch(id))?;
+        if next.origin != twin.origin {
+            return Err(ValidationError::ManifoldViolation {
+                half_edge: id,
+                expected_origin: twin.origin,
+                got_origin: next.origin,
+            });
         }
     }
     // 3. Loop closure.
@@ -123,7 +149,7 @@ mod tests {
         let mut s = Solid::new();
         let r = s.mvfs();
         let m1 = s.mev_at_lone_vertex(r.loop_, r.vertex);
-        let m2 = s.mev(r.loop_, m1.half_edges.1);
+        let m2 = s.mev(r.loop_, m1.half_edges.0);
         let h_a = m1.half_edges.0;
         let h_b = m2.half_edges.1;
         let _mef = s.mef(h_a, h_b);

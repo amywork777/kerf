@@ -16,7 +16,7 @@ proptest! {
                 None => s.mev_at_lone_vertex(r.loop_, last_vertex),
             };
             last_vertex = m.vertex;
-            last_he = Some(m.half_edges.1);
+            last_he = Some(m.half_edges.0);
         }
         validate(&s).unwrap();
     }
