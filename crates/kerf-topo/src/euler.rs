@@ -399,7 +399,10 @@ impl Solid {
         // v_new's outgoing.
         self.vertices[v_new].outgoing = Some(new_he_a2);
 
-        SplitEdgeResult { new_edge, new_vertex: v_new }
+        SplitEdgeResult {
+            new_edge,
+            new_vertex: v_new,
+        }
     }
 }
 

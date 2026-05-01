@@ -3,11 +3,11 @@
 use kerf_geom::Tolerance;
 use kerf_topo::VertexId;
 
+use crate::Solid;
 use crate::booleans::{
-    edge_lookup::{locate_point_on_face, PointLocation},
+    edge_lookup::{PointLocation, locate_point_on_face},
     intersect::FaceIntersection,
 };
-use crate::Solid;
 
 /// For one FaceIntersection endpoint: which vertex it now corresponds to in
 /// each solid (after any necessary edge splits).
