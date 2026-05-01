@@ -8,6 +8,7 @@ pub mod intersect;
 pub mod select;
 pub mod splice;
 pub mod split;
+pub mod triangulate;
 
 pub use classify::{classify_face, face_centroid, FaceClassification};
 pub use clip::{ClipResult, clip_line_to_convex_polygon};
@@ -19,3 +20,4 @@ pub use splice::{
     AddedEdge, SolidIndex, add_intersection_edges, find_he_in_loop, vertices_connected,
 };
 pub use split::{EndpointVertices, SplitOutcome, split_solids_at_intersections};
+pub use triangulate::{fan_triangulate, fan_triangulate_reversed};
