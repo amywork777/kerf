@@ -1,5 +1,6 @@
 //! Half-edge topology for the Kerf B-rep kernel.
 
+pub mod build;
 pub mod entity;
 pub mod euler;
 pub mod id;
