@@ -28,6 +28,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M10 — API polish: `box_at(extents, origin)` constructor + `Solid::{union,intersection,difference}` method API.
 - [x] M11 — Interior endpoint support: corner-cut Difference now works via mev-tail interior vertex insertion; per-face two-pass algorithm splits boundary endpoints in phase A, grows interior vertices in phase B, splices remaining chords in phase C.
 - [x] M12 — Multi-shell stitch: nested-Difference produces hollow Solids with 2 disconnected shells.
+- [x] M13 — cylinder primitive (with seam topology) + tessellator. STL output for curved solids.
 
 ## Crates
 
