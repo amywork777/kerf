@@ -95,12 +95,90 @@ pub fn tessellate(solid: &Solid, lateral_segments: usize) -> FaceSoup {
                     soup.triangles.push([p0_bot, p1_top, p0_top]);
                 }
             }
+            SurfaceKind::Cone(_cone_surf) => {
+                // Fan triangulation: apex → base-circle samples.
+                // Walk the face loop to find the base circle and apex position.
+                let edges = collect_face_edges(solid, face_id);
+                // Find the Circle edge (bot_circle) and extract center + radius.
+                let circle_seg = edges
+                    .iter()
+                    .filter_map(|eid| solid.edge_geom.get(*eid))
+                    .find(|seg| matches!(&seg.curve, CurveKind::Circle(_)));
+                if let Some(seg) = circle_seg {
+                    if let CurveKind::Circle(c) = &seg.curve {
+                        // Apex: find the Line edge endpoint that is not on the base circle.
+                        // Apex position comes from vertex_geom of the apex vertex (v_apex).
+                        // Walk the loop to find a half-edge whose origin is the apex.
+                        let apex = find_apex_in_face(solid, face_id);
+                        let dt = TAU / lateral_segments as f64;
+                        for i in 0..lateral_segments {
+                            let t0 = i as f64 * dt;
+                            let t1 = ((i + 1) % lateral_segments) as f64 * dt;
+                            let p0 = c.point_at(t0);
+                            let p1 = c.point_at(t1);
+                            // Outward-normal CCW from outside: apex, p0, p1.
+                            soup.triangles.push([apex, p0, p1]);
+                        }
+                    }
+                }
+            }
             _ => {
                 // Other surface kinds not yet supported.
             }
         }
     }
     soup
+}
+
+/// Walk a cone face's outer loop to find the apex vertex position.
+/// The apex is the origin of the seam half-edge that points to a non-self-loop vertex
+/// (i.e., the half-edge whose origin is the apex vertex, not on the base circle).
+fn find_apex_in_face(solid: &Solid, face_id: FaceId) -> kerf_geom::Point3 {
+    use kerf_geom::Point3;
+    let Some(face) = solid.topo.face(face_id) else {
+        return Point3::origin();
+    };
+    let Some(loop_) = solid.topo.loop_(face.outer_loop()) else {
+        return Point3::origin();
+    };
+    let Some(start) = loop_.half_edge() else {
+        return Point3::origin();
+    };
+    let mut cur = start;
+    loop {
+        let Some(he) = solid.topo.half_edge(cur) else {
+            break;
+        };
+        // The apex half-edge has a Line curve on its edge.
+        let eid = he.edge();
+        if let Some(seg) = solid.edge_geom.get(eid) {
+            if matches!(&seg.curve, CurveKind::Line(_)) {
+                // origin of this half-edge: if the line goes apex→bot, origin is apex.
+                // apex is the vertex that is NOT on the base circle (z == height, not 0).
+                let origin_vid = he.origin();
+                if let Some(pos) = solid.vertex_geom.get(origin_vid) {
+                    // The apex is at z = height > 0; base is at z = 0.
+                    // Return whichever endpoint is not on the base (z ≠ 0).
+                    if pos.z.abs() > 1e-10 {
+                        return *pos;
+                    }
+                    // Otherwise the twin endpoint is apex; get dest vertex via twin.
+                    let twin_id = he.twin();
+                    if let Some(twin) = solid.topo.half_edge(twin_id) {
+                        let dest_vid = twin.origin();
+                        if let Some(dest_pos) = solid.vertex_geom.get(dest_vid) {
+                            return *dest_pos;
+                        }
+                    }
+                }
+            }
+        }
+        cur = he.next();
+        if cur == start {
+            break;
+        }
+    }
+    Point3::origin()
 }
 
 /// Walk a face's outer loop and collect the distinct edge IDs (de-duplicated
@@ -137,7 +215,15 @@ fn collect_face_edges(solid: &Solid, face_id: FaceId) -> Vec<EdgeId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primitives::cylinder;
+    use crate::primitives::{cone, cylinder};
+
+    #[test]
+    fn cone_tessellation_has_expected_triangle_count() {
+        // 16 segments: bot fan = 16 tris, lateral fan = 16 tris. Total = 32.
+        let s = cone(1.0, 2.0);
+        let soup = tessellate(&s, 16);
+        assert_eq!(soup.triangles.len(), 32);
+    }
 
     #[test]
     fn cylinder_tessellation_has_expected_triangle_count() {
