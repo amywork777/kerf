@@ -403,27 +403,26 @@ mod tests {
     }
 
     #[test]
-    fn corner_cut_intersections_dump() {
-        // Diagnostic: print all intersections and their endpoint locations.
+    fn corner_cut_marks_some_chords_already_added() {
+        // The corner-cut box has 6 face intersections; phase B should mark
+        // half of each face's chords as already added (mev tails).
         let block = box_(Vec3::new(10.0, 10.0, 10.0));
         let cutter = box_at(Vec3::new(4.0, 4.0, 4.0), Point3::new(8.0, 8.0, 8.0));
-        let a = block.clone();
-        let b = cutter.clone();
+        let mut a = block.clone();
+        let mut b = cutter.clone();
         let tol = Tolerance::default();
         let intersections = face_intersections(&a, &b, &tol);
-        eprintln!("==== {} intersections ====", intersections.len());
-        for (i, inter) in intersections.iter().enumerate() {
-            let loc_a_start = locate_point_on_face(&a, inter.face_a, inter.start, &tol);
-            let loc_a_end = locate_point_on_face(&a, inter.face_a, inter.end, &tol);
-            let loc_b_start = locate_point_on_face(&b, inter.face_b, inter.start, &tol);
-            let loc_b_end = locate_point_on_face(&b, inter.face_b, inter.end, &tol);
-            eprintln!(
-                "[{i}] face_a={:?} face_b={:?} start={:?} end={:?}",
-                inter.face_a, inter.face_b, inter.start, inter.end
-            );
-            eprintln!(
-                "      A.start={loc_a_start:?} A.end={loc_a_end:?} B.start={loc_b_start:?} B.end={loc_b_end:?}"
-            );
-        }
+        let outcome = split_solids_at_intersections(&mut a, &mut b, &intersections, &tol);
+        let interior =
+            resolve_interior_endpoints(&mut a, &mut b, &intersections, &outcome, &tol);
+
+        // Across both solids, at least three chords should be added by the mev
+        // tail (one per face that has a shared interior point).
+        let added_a = interior.chord_already_added_a.iter().filter(|x| **x).count();
+        let added_b = interior.chord_already_added_b.iter().filter(|x| **x).count();
+        assert!(
+            added_a >= 3 && added_b >= 3,
+            "expected >=3 mev-tail chords per side, got A={added_a} B={added_b}"
+        );
     }
 }

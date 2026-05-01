@@ -6,7 +6,7 @@ use crate::Solid;
 use crate::booleans::{
     BooleanOp, SelectedFaces, add_intersection_edges, classify_face, face_intersections,
     face_polygon, fan_triangulate, fan_triangulate_reversed, flip_b_face, keep_a_face, keep_b_face,
-    split_solids_at_intersections,
+    resolve_interior_endpoints, split_solids_at_intersections,
 };
 
 /// A face soup: triangles representing the boolean result. Not a stitched B-rep
@@ -19,12 +19,13 @@ pub struct FaceSoup {
 /// End-to-end boolean. Mutates clones of the inputs internally; returns the
 /// kept faces' triangulation.
 pub fn boolean(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> FaceSoup {
-    // Phase 1-3: clone, intersect, split edges, split faces.
+    // Phase 1-3: clone, intersect, split edges, resolve interior endpoints, split faces.
     let mut a = a.clone();
     let mut b = b.clone();
     let intersections = face_intersections(&a, &b, tol);
     let outcome = split_solids_at_intersections(&mut a, &mut b, &intersections, tol);
-    let _added = add_intersection_edges(&mut a, &mut b, &intersections, &outcome, tol);
+    let interior = resolve_interior_endpoints(&mut a, &mut b, &intersections, &outcome, tol);
+    let _added = add_intersection_edges(&mut a, &mut b, &intersections, &interior, tol);
 
     // Phase 4: classify every face of both solids.
     let mut selected = SelectedFaces {
@@ -76,7 +77,8 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
     let mut b = b.clone();
     let intersections = face_intersections(&a, &b, tol);
     let outcome = split_solids_at_intersections(&mut a, &mut b, &intersections, tol);
-    let _added = add_intersection_edges(&mut a, &mut b, &intersections, &outcome, tol);
+    let interior = resolve_interior_endpoints(&mut a, &mut b, &intersections, &outcome, tol);
+    let _added = add_intersection_edges(&mut a, &mut b, &intersections, &interior, tol);
 
     let mut kept: Vec<KeptFace> = Vec::new();
     for face_id in a.topo.face_ids() {
@@ -183,6 +185,22 @@ mod tests {
         let result = boolean_solid(&big, &small, BooleanOp::Union, &Tolerance::default());
         assert_eq!(result.vertex_count(), 8);
         assert_eq!(result.face_count(), 6);
+        kerf_topo::validate(&result.topo).unwrap();
+    }
+
+    #[test]
+    fn corner_cut_difference_via_solid_method_works() {
+        // Block A = [0,10]^3, cutter B = [8,12]^3 — corner cut.
+        // Result is a stepped block with at least 7 faces (the original 3
+        // un-touched, plus 3 stepped surfaces, plus the modified ones).
+        let block = box_(Vec3::new(10.0, 10.0, 10.0));
+        let cutter = box_at(Vec3::new(4.0, 4.0, 4.0), Point3::new(8.0, 8.0, 8.0));
+        let result = block.difference(&cutter);
+        assert!(
+            result.face_count() >= 7,
+            "stepped block should have >=7 faces, got {}",
+            result.face_count()
+        );
         kerf_topo::validate(&result.topo).unwrap();
     }
 

@@ -4,8 +4,8 @@ use kerf_geom::{Line, Tolerance};
 use kerf_topo::{FaceId, HalfEdgeId, LoopId, VertexId};
 
 use crate::Solid;
+use crate::booleans::interior::InteriorResolution;
 use crate::booleans::intersect::FaceIntersection;
-use crate::booleans::split::SplitOutcome;
 use crate::geometry::{CurveSegment, SurfaceKind};
 
 /// Find a half-edge in `loop_id` whose origin is `target_vertex`. Returns None if absent.
@@ -60,24 +60,29 @@ pub struct AddedEdge {
 /// For each FaceIntersection, attempt to add an edge in solid A's `face_a` (if not
 /// already present) and in solid B's `face_b` (if not already present). Each new
 /// edge is a chord splitting the relevant face via mef.
+///
+/// Takes the post-phase-B `InteriorResolution`, which has fully resolved endpoint
+/// vertex IDs for every intersection AND records which intersections' chords
+/// were already added by phase B's mev tail (those are skipped here).
 pub fn add_intersection_edges(
     a: &mut Solid,
     b: &mut Solid,
     intersections: &[FaceIntersection],
-    split_outcome: &SplitOutcome,
+    interior: &InteriorResolution,
     _tol: &Tolerance,
 ) -> Vec<AddedEdge> {
     let mut added = Vec::new();
     for (i, inter) in intersections.iter().enumerate() {
-        let (start_v, end_v) = match split_outcome.endpoints[i] {
+        let (start_v, end_v) = match interior.endpoints[i] {
             Some(pair) => pair,
-            // Skip — this intersection had an Interior endpoint and is handled
-            // by phase B (interior.rs) ahead of this call.
+            // No resolution at all — skip (shouldn't happen in well-formed input).
             None => continue,
         };
 
-        // Solid A: split face_a if endpoints aren't already connected.
-        if !vertices_connected(a, start_v.vertex_a, end_v.vertex_a)
+        // Solid A: split face_a if endpoints aren't already connected and
+        // phase B didn't already add this chord via an mev tail.
+        if !interior.chord_already_added_a[i]
+            && !vertices_connected(a, start_v.vertex_a, end_v.vertex_a)
             && let Some(edge_info) = add_chord(
                 a,
                 inter.face_a,
@@ -95,7 +100,8 @@ pub fn add_intersection_edges(
         }
 
         // Solid B: split face_b similarly.
-        if !vertices_connected(b, start_v.vertex_b, end_v.vertex_b)
+        if !interior.chord_already_added_b[i]
+            && !vertices_connected(b, start_v.vertex_b, end_v.vertex_b)
             && let Some(edge_info) = add_chord(
                 b,
                 inter.face_b,
@@ -160,7 +166,9 @@ mod tests {
     use super::*;
     use kerf_geom::{Point3, Vec3};
 
-    use crate::booleans::{face_intersections, split_solids_at_intersections};
+    use crate::booleans::{
+        face_intersections, resolve_interior_endpoints, split_solids_at_intersections,
+    };
     use crate::primitives::{box_, box_at};
 
     #[test]
@@ -173,12 +181,19 @@ mod tests {
         let intersections = face_intersections(&a, &b, &Tolerance::default());
         let outcome =
             split_solids_at_intersections(&mut a, &mut b, &intersections, &Tolerance::default());
+        let interior = resolve_interior_endpoints(
+            &mut a,
+            &mut b,
+            &intersections,
+            &outcome,
+            &Tolerance::default(),
+        );
 
         let added = add_intersection_edges(
             &mut a,
             &mut b,
             &intersections,
-            &outcome,
+            &interior,
             &Tolerance::default(),
         );
 
@@ -209,11 +224,18 @@ mod tests {
             &intersections,
             &Tolerance::default(),
         );
-        let added = add_intersection_edges(
+        let interior = resolve_interior_endpoints(
             &mut big,
             &mut small,
             &intersections,
             &outcome,
+            &Tolerance::default(),
+        );
+        let added = add_intersection_edges(
+            &mut big,
+            &mut small,
+            &intersections,
+            &interior,
             &Tolerance::default(),
         );
 
