@@ -15,7 +15,8 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M4 — Half-edge topology + core Euler operators (mvfs, mev/kev, mef/kef) + validator. Ring operators (kemr/kfmrh) deferred to M4b.
 - [ ] M4b — Ring operators (kemr/mekr, kfmrh/mfkrh) for solids with holes.
 - [x] M5 — `kerf-brep::Solid` (topology + geometry) and `box_` primitive constructor.
-- [ ] M5b — Remaining primitives (cylinder, sphere, cone, torus) + extrude/revolve.
+- [x] M5b — `extrude_polygon(profile, direction)` for arbitrary convex N-gon prisms. Curved primitives (cylinder/sphere/cone/torus) and revolve are still deferred.
+- [ ] M5c — Curved primitives + revolve.
 - [x] M6a — Face-face intersection: per face-pair, compute clipped 3D segments. Foundation for full booleans.
 - [x] M6b — Edge splitting along intersection segment endpoints. Both solids gain vertices at intersection points.
 - [x] M6c — Face splitting: add intersection chords as edges via mef. Faces sub-divide where boundaries cross.
