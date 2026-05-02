@@ -140,14 +140,19 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
         new_solid.topo.build_set_half_edge_edge(he_b, edge_id);
 
         // Edge geometry: line between the two endpoints (in he_a's order).
+        // If the two endpoints coincide (zero-length edge — usually a vase
+        // apex or coincident-vertex artifact in degenerate input), skip
+        // assigning edge geometry; the topology stays valid (twin pointers
+        // wired) and downstream tessellation degenerates gracefully.
         let v_idx_a = half_edge_records[he_a_record_idx].v_start;
         let v_idx_b = half_edge_records[he_a_record_idx].v_end;
         let p0 = positions[v_idx_a];
         let p1 = positions[v_idx_b];
-        let line = Line::through(p0, p1).expect("zero-length edge in stitched solid");
-        let length = (p1 - p0).norm();
-        let seg = CurveSegment::line(line, 0.0, length);
-        new_solid.edge_geom.insert(edge_id, seg);
+        if let Some(line) = Line::through(p0, p1) {
+            let length = (p1 - p0).norm();
+            let seg = CurveSegment::line(line, 0.0, length);
+            new_solid.edge_geom.insert(edge_id, seg);
+        }
     }
 
     // Stage 5b: connected-component analysis → allocate one Shell per component.

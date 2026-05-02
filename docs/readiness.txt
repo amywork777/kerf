@@ -1,0 +1,238 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `target/debug/examples/readiness_matrix`
+op         A            B            result
+------------------------------------------------------------------------------
+union     box[2³]      box-shift    OK (16V/28E/14F)
+
+union     box[2³]      box-corner   ERR  non-manifold input to stitch: edge key (11, 12) has 1 half-edges (expected 2)
+union     box[2³]      box-nested   OK (8V/12E/6F)
+union     box[2³]      tri-prism    OK (10V/16E/8F)
+
+union     box[2³]      cyl_n12      ERR  M11 phase B: interior endpoint at [0.579555495773441, 0.15529142706151244, 0.0] on face Fa…
+
+union     box[2³]      cyl_n4       ERR  non-manifold input to stitch: edge key (10, 11) has 1 half-edges (expected 2)
+union     box[2³]      vase         OK (8V/12E/6F)
+union     box-shift    box[2³]      OK (16V/28E/14F)
+
+union     box-shift    box-corner   ERR  non-manifold input to stitch: edge key (5, 15) has 1 half-edges (expected 2)
+
+union     box-shift    box-nested   ERR  M11 phase B: interior endpoint at [1.0, 1.2999999999999998, 0.7] on face FaceId(4v1) (side…
+union     box-shift    tri-prism    OK (14V/25E/13F)
+union     box-shift    cyl_n12      OK (32V/48E/20F)
+union     box-shift    cyl_n4       OK (16V/24E/12F)
+union     box-shift    vase         OK (12V/17E/9F)
+
+union     box-corner   box[2³]      ERR  non-manifold input to stitch: edge key (7, 8) has 1 half-edges (expected 2)
+
+union     box-corner   box-shift    ERR  non-manifold input to stitch: edge key (2, 3) has 1 half-edges (expected 2)
+
+union     box-corner   box-nested   ERR  non-manifold input to stitch: edge key (17, 18) has 1 half-edges (expected 2)
+union     box-corner   tri-prism    OK (17V/26E/11F)
+union     box-corner   cyl_n12      OK (32V/48E/20F)
+union     box-corner   cyl_n4       OK (16V/24E/12F)
+union     box-corner   vase         OK (12V/17E/9F)
+union     box-nested   box[2³]      OK (8V/12E/6F)
+
+union     box-nested   box-shift    ERR  M11 phase B: interior endpoint at [1.0, 0.7, 0.7] on face FaceId(4v1) (side B) has no sibl…
+union     box-nested   box-corner   OK (20V/30E/12F)
+
+union     box-nested   tri-prism    ERR  M11 phase B: interior endpoint at [1.1333333333333335, 1.2999999999999998, 0.7] on face Fa…
+union     box-nested   cyl_n12      OK (32V/48E/20F)
+union     box-nested   cyl_n4       OK (16V/24E/12F)
+union     box-nested   vase         OK (12V/17E/9F)
+
+union     tri-prism    box[2³]      ERR  non-manifold input to stitch: edge key (4, 5) has 1 half-edges (expected 2)
+union     tri-prism    box-shift    OK (14V/25E/13F)
+union     tri-prism    box-corner   OK (17V/26E/11F)
+
+union     tri-prism    box-nested   ERR  M11 phase B: interior endpoint at [1.2999999999999998, 1.0500000000000003, 0.7] on face Fa…
+
+union     tri-prism    cyl_n12      ERR  M11 phase B: interior endpoint at [0.579555495773441, 0.15529142706151244, 0.0] on face Fa…
+
+union     tri-prism    cyl_n4       ERR  non-manifold input to stitch: edge key (3, 16) has 1 half-edges (expected 2)
+union     tri-prism    vase         OK (6V/9E/5F)
+
+union     cyl_n12      box[2³]      ERR  M11 phase B: interior endpoint at [0.579555495773441, 0.15529142706151244, 0.0] on face Fa…
+union     cyl_n12      box-shift    OK (32V/48E/20F)
+union     cyl_n12      box-corner   OK (32V/48E/20F)
+union     cyl_n12      box-nested   OK (32V/48E/20F)
+
+union     cyl_n12      tri-prism    ERR  M11 phase B: interior endpoint at [0.579555495773441, 0.15529142706151244, 0.0] on face Fa…
+
+union     cyl_n12      cyl_n4       ERR  non-manifold input to stitch: edge key (33, 34) has 1 half-edges (expected 2)
+
+union     cyl_n12      vase         ERR  non-manifold input to stitch: edge key (24, 24) has 1 half-edges (expected 2)
+union     cyl_n4       box[2³]      OK (20V/32E/14F)
+union     cyl_n4       box-shift    OK (16V/24E/12F)
+union     cyl_n4       box-corner   OK (16V/24E/12F)
+union     cyl_n4       box-nested   OK (16V/24E/12F)
+union     cyl_n4       tri-prism    OK (18V/29E/13F)
+
+union     cyl_n4       cyl_n12      ERR  non-manifold input to stitch: edge key (48, 49) has 1 half-edges (expected 2)
+
+union     cyl_n4       vase         ERR  non-manifold input to stitch: edge key (9, 9) has 1 half-edges (expected 2)
+union     vase         box[2³]      OK (10V/17E/9F)
+union     vase         box-shift    OK (12V/17E/9F)
+union     vase         box-corner   OK (12V/17E/9F)
+union     vase         box-nested   OK (12V/17E/9F)
+union     vase         tri-prism    OK (8V/14E/8F)
+
+union     vase         cyl_n12      ERR  non-manifold input to stitch: edge key (1, 1) has 1 half-edges (expected 2)
+
+union     vase         cyl_n4       ERR  non-manifold input to stitch: edge key (0, 0) has 1 half-edges (expected 2)
+intersect  box[2³]      box-shift    OK (8V/12E/6F)
+
+intersect  box[2³]      box-corner   ERR  non-manifold input to stitch: edge key (7, 11) has 1 half-edges (expected 2)
+intersect  box[2³]      box-nested   OK (8V/12E/6F)
+
+intersect  box[2³]      tri-prism    ERR  non-manifold input to stitch: edge key (2, 6) has 1 half-edges (expected 2)
+
+intersect  box[2³]      cyl_n12      ERR  M11 phase B: interior endpoint at [0.579555495773441, 0.15529142706151244, 0.0] on face Fa…
+intersect  box[2³]      cyl_n4       OK (8V/12E/6F)
+intersect  box[2³]      vase         OK (0V/0E/0F)
+intersect  box-shift    box[2³]      OK (8V/12E/6F)
+
+intersect  box-shift    box-corner   ERR  non-manifold input to stitch: edge key (6, 11) has 1 half-edges (expected 2)
+
+intersect  box-shift    box-nested   ERR  M11 phase B: interior endpoint at [1.0, 1.2999999999999998, 0.7] on face FaceId(4v1) (side…
+intersect  box-shift    tri-prism    OK (6V/9E/5F)
+intersect  box-shift    cyl_n12      OK (0V/0E/0F)
+intersect  box-shift    cyl_n4       OK (0V/0E/0F)
+intersect  box-shift    vase         OK (0V/0E/0F)
+
+intersect  box-corner   box[2³]      ERR  non-manifold input to stitch: edge key (10, 11) has 1 half-edges (expected 2)
+
+intersect  box-corner   box-shift    ERR  non-manifold input to stitch: edge key (6, 7) has 3 half-edges (expected 2)
+intersect  box-corner   box-nested   OK (8V/12E/6F)
+intersect  box-corner   tri-prism    OK (6V/9E/5F)
+intersect  box-corner   cyl_n12      OK (0V/0E/0F)
+intersect  box-corner   cyl_n4       OK (0V/0E/0F)
+intersect  box-corner   vase         OK (0V/0E/0F)
+intersect  box-nested   box[2³]      OK (8V/12E/6F)
+
+intersect  box-nested   box-shift    ERR  M11 phase B: interior endpoint at [1.0, 0.7, 0.7] on face FaceId(4v1) (side B) has no sibl…
+
+intersect  box-nested   box-corner   ERR  non-manifold input to stitch: edge key (0, 1) has 3 half-edges (expected 2)
+
+intersect  box-nested   tri-prism    ERR  M11 phase B: interior endpoint at [1.1333333333333335, 1.2999999999999998, 0.7] on face Fa…
+intersect  box-nested   cyl_n12      OK (0V/0E/0F)
+intersect  box-nested   cyl_n4       OK (0V/0E/0F)
+intersect  box-nested   vase         OK (0V/0E/0F)
+intersect  tri-prism    box[2³]      OK (6V/9E/5F)
+intersect  tri-prism    box-shift    OK (6V/9E/5F)
+intersect  tri-prism    box-corner   OK (6V/9E/5F)
+
+intersect  tri-prism    box-nested   ERR  M11 phase B: interior endpoint at [1.2999999999999998, 1.0500000000000003, 0.7] on face Fa…
+
+intersect  tri-prism    cyl_n12      ERR  M11 phase B: interior endpoint at [0.579555495773441, 0.15529142706151244, 0.0] on face Fa…
+intersect  tri-prism    cyl_n4       OK (8V/12E/6F)
+intersect  tri-prism    vase         OK (0V/0E/0F)
+
+intersect  cyl_n12      box[2³]      ERR  M11 phase B: interior endpoint at [0.579555495773441, 0.15529142706151244, 0.0] on face Fa…
+intersect  cyl_n12      box-shift    OK (0V/0E/0F)
+intersect  cyl_n12      box-corner   OK (0V/0E/0F)
+intersect  cyl_n12      box-nested   OK (0V/0E/0F)
+
+intersect  cyl_n12      tri-prism    ERR  M11 phase B: interior endpoint at [0.579555495773441, 0.15529142706151244, 0.0] on face Fa…
+
+intersect  cyl_n12      cyl_n4       ERR  non-manifold input to stitch: edge key (13, 15) has 1 half-edges (expected 2)
+
+intersect  cyl_n12      vase         ERR  non-manifold input to stitch: edge key (2, 2) has 1 half-edges (expected 2)
+
+intersect  cyl_n4       box[2³]      ERR  non-manifold input to stitch: edge key (4, 11) has 1 half-edges (expected 2)
+intersect  cyl_n4       box-shift    OK (0V/0E/0F)
+intersect  cyl_n4       box-corner   OK (0V/0E/0F)
+intersect  cyl_n4       box-nested   OK (0V/0E/0F)
+
+intersect  cyl_n4       tri-prism    ERR  non-manifold input to stitch: edge key (11, 12) has 1 half-edges (expected 2)
+intersect  cyl_n4       cyl_n12      OK (24V/36E/14F)
+
+intersect  cyl_n4       vase         ERR  non-manifold input to stitch: edge key (2, 2) has 1 half-edges (expected 2)
+intersect  vase         box[2³]      OK (4V/5E/3F)
+intersect  vase         box-shift    OK (0V/0E/0F)
+intersect  vase         box-corner   OK (0V/0E/0F)
+intersect  vase         box-nested   OK (0V/0E/0F)
+intersect  vase         tri-prism    OK (4V/5E/3F)
+
+intersect  vase         cyl_n12      ERR  non-manifold input to stitch: edge key (2, 2) has 1 half-edges (expected 2)
+
+intersect  vase         cyl_n4       ERR  non-manifold input to stitch: edge key (1, 1) has 1 half-edges (expected 2)
+diff      box[2³]      box-shift    OK (8V/12E/6F)
+
+diff      box[2³]      box-corner   ERR  non-manifold input to stitch: edge key (9, 10) has 1 half-edges (expected 2)
+diff      box[2³]      box-nested   OK (16V/24E/12F)
+
+diff      box[2³]      tri-prism    ERR  non-manifold input to stitch: edge key (5, 8) has 1 half-edges (expected 2)
+
+diff      box[2³]      cyl_n12      ERR  M11 phase B: interior endpoint at [0.579555495773441, 0.15529142706151244, 0.0] on face Fa…
+diff      box[2³]      cyl_n4       OK (12V/18E/8F)
+diff      box[2³]      vase         OK (8V/12E/6F)
+diff      box-shift    box[2³]      OK (8V/12E/6F)
+
+diff      box-shift    box-corner   ERR  non-manifold input to stitch: edge key (2, 9) has 1 half-edges (expected 2)
+
+diff      box-shift    box-nested   ERR  M11 phase B: interior endpoint at [1.0, 1.2999999999999998, 0.7] on face FaceId(4v1) (side…
+diff      box-shift    tri-prism    OK (10V/15E/7F)
+diff      box-shift    cyl_n12      OK (8V/12E/6F)
+diff      box-shift    cyl_n4       OK (8V/12E/6F)
+diff      box-shift    vase         OK (8V/12E/6F)
+
+diff      box-corner   box[2³]      ERR  non-manifold input to stitch: edge key (11, 12) has 1 half-edges (expected 2)
+
+diff      box-corner   box-shift    ERR  non-manifold input to stitch: edge key (4, 6) has 1 half-edges (expected 2)
+diff      box-corner   box-nested   OK (14V/21E/9F)
+diff      box-corner   tri-prism    OK (12V/18E/8F)
+diff      box-corner   cyl_n12      OK (8V/12E/6F)
+diff      box-corner   cyl_n4       OK (8V/12E/6F)
+diff      box-corner   vase         OK (8V/12E/6F)
+diff      box-nested   box[2³]      OK (0V/0E/0F)
+
+diff      box-nested   box-shift    ERR  M11 phase B: interior endpoint at [1.0, 0.7, 0.7] on face FaceId(4v1) (side B) has no sibl…
+
+diff      box-nested   box-corner   ERR  non-manifold input to stitch: edge key (9, 10) has 1 half-edges (expected 2)
+
+diff      box-nested   tri-prism    ERR  M11 phase B: interior endpoint at [1.1333333333333335, 1.2999999999999998, 0.7] on face Fa…
+diff      box-nested   cyl_n12      OK (8V/12E/6F)
+diff      box-nested   cyl_n4       OK (8V/12E/6F)
+diff      box-nested   vase         OK (8V/12E/6F)
+diff      tri-prism    box[2³]      OK (0V/0E/0F)
+diff      tri-prism    box-shift    OK (6V/9E/5F)
+diff      tri-prism    box-corner   OK (11V/17E/8F)
+
+diff      tri-prism    box-nested   ERR  M11 phase B: interior endpoint at [1.2999999999999998, 1.0500000000000003, 0.7] on face Fa…
+
+diff      tri-prism    cyl_n12      ERR  M11 phase B: interior endpoint at [0.579555495773441, 0.15529142706151244, 0.0] on face Fa…
+diff      tri-prism    cyl_n4       OK (10V/15E/7F)
+diff      tri-prism    vase         OK (6V/9E/5F)
+
+diff      cyl_n12      box[2³]      ERR  M11 phase B: interior endpoint at [0.579555495773441, 0.15529142706151244, 0.0] on face Fa…
+diff      cyl_n12      box-shift    OK (24V/36E/14F)
+diff      cyl_n12      box-corner   OK (24V/36E/14F)
+diff      cyl_n12      box-nested   OK (24V/36E/14F)
+
+diff      cyl_n12      tri-prism    ERR  M11 phase B: interior endpoint at [0.579555495773441, 0.15529142706151244, 0.0] on face Fa…
+
+diff      cyl_n12      cyl_n4       ERR  non-manifold input to stitch: edge key (4, 36) has 1 half-edges (expected 2)
+
+diff      cyl_n12      vase         ERR  non-manifold input to stitch: edge key (24, 24) has 1 half-edges (expected 2)
+
+diff      cyl_n4       box[2³]      ERR  non-manifold input to stitch: edge key (4, 8) has 1 half-edges (expected 2)
+diff      cyl_n4       box-shift    OK (8V/12E/6F)
+diff      cyl_n4       box-corner   OK (8V/12E/6F)
+diff      cyl_n4       box-nested   OK (8V/12E/6F)
+
+diff      cyl_n4       tri-prism    ERR  non-manifold input to stitch: edge key (6, 10) has 1 half-edges (expected 2)
+diff      cyl_n4       cyl_n12      OK (32V/48E/24F)
+
+diff      cyl_n4       vase         ERR  non-manifold input to stitch: edge key (11, 11) has 1 half-edges (expected 2)
+diff      vase         box[2³]      OK (0V/0E/0F)
+diff      vase         box-shift    OK (4V/5E/3F)
+diff      vase         box-corner   OK (4V/5E/3F)
+diff      vase         box-nested   OK (4V/5E/3F)
+diff      vase         tri-prism    OK (0V/0E/0F)
+
+diff      vase         cyl_n12      ERR  non-manifold input to stitch: edge key (1, 1) has 1 half-edges (expected 2)
+
+diff      vase         cyl_n4       ERR  non-manifold input to stitch: edge key (1, 1) has 1 half-edges (expected 2)
+------------------------------------------------------------------------------
+readiness: 104/168 (62%)
