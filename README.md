@@ -41,7 +41,8 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M22a — Real CAD example models: chess pawn via `revolve_polyline` (7-point profile, 32 segments, 320 triangles), stair-step Mayan ziggurat (5 boxes, FaceSoup-merge fallback for face-to-face touching geometry), and L-bracket with chamfered corner (`union` + `difference`). Three new STLs + rendered PNGs in `screenshots/`.
 - [x] M22b — Native serde format. `Solid` round-trips through JSON via `serde_io::{write_json, read_json}` with `serde::{Serialize, Deserialize}` derives across geom/topo/brep types and `nalgebra/serde-serialize`. Slotmap parity-invariant gotcha fixed: `solids: SlotMap<SolidId, ()>` → `SlotMap<SolidId, bool>` so occupied slots no longer serialize to `null` (which slotmap's deserializer reads as vacant).
 - [x] M22c — Software-rasterized shaded renderer (`scripts/render_shaded.py`): pure-Python/numpy Z-buffer + two-light Lambertian shading replaces matplotlib wireframe. Corner cuts, hollow shells, and curved surfaces (sphere, torus) render with proper occlusion. 17 screenshots re-rendered in ~14 s total via vectorized numpy rasterizer.
-- [x] M23 — `cylinder_faceted(r, h, n)` n-gon prism approximation. All-planar topology, so STL is exact and the planar boolean pipeline applies wherever intersection segments meet on shared edges. Probed the curved-boolean limit (`box ∪ cylinder` panics in M11 phase B with interior-only intersection endpoints on the box top face) — full curved face-pair clipping deferred to M24. Resolution-sweep example (n=4 → cube, n=32 → smooth) at `screenshots/cylinder_resolution.png`.
+- [x] M23 — `cylinder_faceted(r, h, n)` n-gon prism approximation. All-planar topology, so STL is exact and the planar boolean pipeline applies wherever intersection segments meet on shared edges. Probed the curved-boolean limit (`box ∪ cylinder` panics in M11 phase B with interior-only intersection endpoints on the box top face) — full curved face-pair clipping deferred. Resolution-sweep example (n=4 → cube, n=32 → smooth) at `screenshots/cylinder_resolution.png`.
+- [x] M24 — Three new revolve_polyline CAD models: bowling pin (8-pt profile, 384 tri), wineglass / goblet (9-pt profile, 672 tri), stepped lighthouse tower (12-pt profile, 11 lateral faces, 640 tri). All-revolve so they sidestep the curved-boolean limit; demonstrate revolve_polyline's expressivity for axisymmetric shapes.
 
 ## Visual gallery
 
@@ -64,6 +65,10 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 | Chess pawn — revolve_polyline 7-pt profile (M22a) | `screenshots/cad_pawn.png` |
 | Stair-step pyramid — 5-layer ziggurat (M22a) | `screenshots/cad_pyramid.png` |
 | L-bracket — union + chamfer difference (M22a) | `screenshots/cad_bracket.png` |
+| cylinder_faceted resolution sweep (M23) | `screenshots/cylinder_resolution.png` |
+| Bowling pin (M24) | `screenshots/cad_bowling_pin.png` |
+| Wineglass / goblet (M24) | `screenshots/cad_goblet.png` |
+| Lighthouse tower (M24) | `screenshots/cad_lighthouse.png` |
 
 Build the STL files with `cargo run --example cad_gallery`. Render to PNG with `scripts/render_captioned.py` (requires `numpy-stl` + `matplotlib` + `numpy`). Uses the Z-buffered shaded renderer (`scripts/render_shaded.py`, M22c).
 
