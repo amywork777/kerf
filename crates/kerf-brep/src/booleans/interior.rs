@@ -357,23 +357,9 @@ fn find_sibling_with_boundary(
 
         // The sibling's OTHER endpoint must be on the boundary of `face` (in `solid`).
         let other_p = if sib_start_matches { sib.end } else { sib.start };
-        match locate_point_on_face(solid, face, other_p, tol) {
-            PointLocation::OnVertex(v) => {
-                // Verify sibling's split_outcome resolved successfully (so it's
-                // safe to use as anchor).
-                if split_outcome.endpoints[j].is_some() {
-                    return Some((j, v));
-                }
-                // Even if the sibling's other side has an interior, this side
-                // is fully boundary-resolvable, which is fine for our use.
-                return Some((j, v));
-            }
-            _ => {
-                // Sibling's other endpoint isn't directly OnVertex. It might be
-                // OnEdge — but phase A would have split that already, so it
-                // should be OnVertex now. If not, skip.
-                continue;
-            }
+        if let PointLocation::OnVertex(v) = locate_point_on_face(solid, face, other_p, tol) {
+            let _ = split_outcome.endpoints[j];
+            return Some((j, v));
         }
     }
     None

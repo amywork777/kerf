@@ -15,42 +15,31 @@ pub enum FaceClassification {
     OnBoundary,
 }
 
-/// Compute the centroid of a face (mean of outer-loop vertices).
+/// Compute the centroid of a face (signed-area-weighted, fjord-safe).
 pub fn face_centroid(solid: &Solid, face: FaceId) -> Option<Point3> {
     let poly = face_polygon(solid, face)?;
     if poly.is_empty() {
         return None;
     }
-    // Dedup spike-anchor duplicates (M36 stinger fjords visit one vertex
-    // twice per spike). Without this, fan-triangulation triangles around the
-    // duplicate are degenerate.
-    let mut unique: Vec<Point3> = Vec::with_capacity(poly.len());
-    for p in &poly {
-        if !unique.iter().any(|q| (*p - *q).norm() < 1e-9) {
-            unique.push(*p);
-        }
-    }
-    if unique.len() < 3 {
-        // Fall back to vertex average for degenerate input.
-        let n = unique.len() as f64;
-        let sum: Vec3 = unique.iter().map(|p| p.coords).sum();
+    if poly.len() < 3 {
+        let n = poly.len() as f64;
+        let sum: Vec3 = poly.iter().map(|p| p.coords).sum();
         return Some(Point3::from(sum / n));
     }
 
-    // M39 / M39i: pick a 2D classification point for the face.
+    // M40: use the standard polygon-centroid formula (sum over directed edges)
+    // on the UN-DEDUPED polygon walk. This formula handles fjord polygons
+    // correctly: a stinger that goes out and returns along the same vertices
+    // contributes zero net signed area (and zero centroid contribution), so
+    // the result reflects the polygon's actual enclosed shape — including
+    // annulus topology where an inner-ring fjord subtracts the hole's area
+    // from the outer perimeter.
     //
-    // (1) Compute the signed-area-weighted centroid via fan triangulation —
-    //     correctly handles convex and simple-concave polygons.
-    // (2) Verify that point lies INSIDE the polygon (point-in-polygon via
-    //     crossing-number ray cast). For "outer-ring" polygons traversed
-    //     via M36 stinger fjords (outer perimeter + spike to a chord
-    //     vertex inside an inner ring), the area-weighted centroid often
-    //     lands at the spike's anchor — geometrically inside the inner
-    //     ring's hole, NOT inside the L-shape's body — yielding wrong
-    //     classification.
-    // (3) If outside, fall back to the first non-degenerate fan triangle's
-    //     centroid; that point is guaranteed to lie inside its own
-    //     triangle, which lies inside the polygon body.
+    // Earlier (M39i) used dedup + fan-triangulation, which for annulus + stinger
+    // fjord made the polygon non-simple after dedup (jumps across the deleted
+    // duplicates) and produced a centroid that landed in the hole — yielding
+    // mis-classification when the centroid is supposed to land on the annulus
+    // body.
     if let Some(plane) = solid.face_geom.get(face)
         && let SurfaceKind::Plane(plane) = plane
     {
@@ -61,41 +50,58 @@ pub fn face_centroid(solid: &Solid, face: FaceId) -> Option<Point3> {
             let d = p - origin;
             (d.dot(&fx), d.dot(&fy))
         };
-        let p0 = unique[0];
-        let (p0x, p0y) = to_2d(p0);
-        let mut weighted_x = 0.0f64;
-        let mut weighted_y = 0.0f64;
-        let mut total_area = 0.0f64;
-        let mut first_good_centroid: Option<(f64, f64)> = None;
-        for i in 1..unique.len() - 1 {
-            let (pix, piy) = to_2d(unique[i]);
-            let (pjx, pjy) = to_2d(unique[i + 1]);
-            let area = 0.5 * ((pix - p0x) * (pjy - p0y) - (piy - p0y) * (pjx - p0x));
-            let cx = (p0x + pix + pjx) / 3.0;
-            let cy = (p0y + piy + pjy) / 3.0;
-            weighted_x += area * cx;
-            weighted_y += area * cy;
-            total_area += area;
-            if first_good_centroid.is_none() && area.abs() > 1e-9 {
-                first_good_centroid = Some((cx, cy));
-            }
+        let pts: Vec<(f64, f64)> = poly.iter().map(|p| to_2d(*p)).collect();
+        let n = pts.len();
+        let mut signed_area_x2 = 0.0f64;
+        let mut cx = 0.0f64;
+        let mut cy = 0.0f64;
+        for i in 0..n {
+            let (xi, yi) = pts[i];
+            let (xj, yj) = pts[(i + 1) % n];
+            let cross = xi * yj - xj * yi;
+            signed_area_x2 += cross;
+            cx += (xi + xj) * cross;
+            cy += (yi + yj) * cross;
         }
-        if total_area.abs() > 1e-12 {
-            let area_cx = weighted_x / total_area;
-            let area_cy = weighted_y / total_area;
-            let poly_2d: Vec<(f64, f64)> = unique.iter().map(|p| to_2d(*p)).collect();
-            if point_in_polygon_2d(area_cx, area_cy, &poly_2d) {
+        let signed_area = 0.5 * signed_area_x2;
+        if signed_area.abs() > 1e-12 {
+            let area6 = 6.0 * signed_area;
+            let area_cx = cx / area6;
+            let area_cy = cy / area6;
+            // Verify centroid lands inside the polygon. For fjord polygons the
+            // standard formula may still place the centroid on a stinger axis
+            // (zero-width region) when the polygon's "body" is heavily
+            // asymmetric — fall back in that case to the centroid of the
+            // largest fan triangle, which is guaranteed to be inside.
+            if point_in_polygon_2d(area_cx, area_cy, &pts) {
                 return Some(origin + area_cx * fx + area_cy * fy);
             }
-            if let Some((cx, cy)) = first_good_centroid {
-                return Some(origin + cx * fx + cy * fy);
+            // Fallback: pick the largest |area| triangle in the fan; its
+            // centroid is interior to that triangle, so interior to polygon
+            // (assuming the triangle is inside the polygon body — true for
+            // a fan from the largest non-fjord vertex).
+            let p0 = pts[0];
+            let mut best: Option<(f64, f64, f64)> = None;
+            for i in 1..n - 1 {
+                let pi = pts[i];
+                let pj = pts[i + 1];
+                let area = 0.5
+                    * ((pi.0 - p0.0) * (pj.1 - p0.1) - (pi.1 - p0.1) * (pj.0 - p0.0));
+                let centroid_x = (p0.0 + pi.0 + pj.0) / 3.0;
+                let centroid_y = (p0.1 + pi.1 + pj.1) / 3.0;
+                if best.map_or(true, |(_, _, a)| area.abs() > a.abs()) {
+                    best = Some((centroid_x, centroid_y, area));
+                }
+            }
+            if let Some((bx, by, _)) = best {
+                return Some(origin + bx * fx + by * fy);
             }
         }
     }
 
-    // Fallback: vertex average (planar geom missing or degenerate area).
-    let n = unique.len() as f64;
-    let sum: Vec3 = unique.iter().map(|p| p.coords).sum();
+    // Fallback: vertex average.
+    let n = poly.len() as f64;
+    let sum: Vec3 = poly.iter().map(|p| p.coords).sum();
     Some(Point3::from(sum / n))
 }
 
