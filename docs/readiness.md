@@ -77,6 +77,40 @@ their pre-split form so the artificial chord disappears.
 This is a real classifier-splitter contract change, not a one-liner. Tracked
 as M38.
 
+### M38 attempt 1 — over-merging (reverted)
+
+Implemented `chord_merge_kept_with_dropped` in `clip.rs`: for each kept face F,
+find a coplanar dropped face D sharing an edge, merge F's polygon with D's
+by walking around D's outer perimeter and skipping the chord. **Worked on the
+target case** (the union/box-corner) but **over-merged on already-working
+configurations** — readiness dropped from 117 → 80, broke 5 existing tests.
+
+Root cause of over-merge: any local polygon modification (merge or
+collinear-vertex cleanup) breaks adjacency. When you remove vertex V or edge
+E from face F's polygon, every neighboring face that ALSO contains V or E
+must have the same modification — otherwise stitch sees a 1-half-edge again
+on the SAME edge (now coming from a still-split neighbor instead of the
+merged-away dropped sibling).
+
+### Path to M38 attempt 2 (deferred)
+
+The fix needs **transitive consistency**: when a chord is identified as
+"spurious" (perpendicular faces also dropped), it must be removed from EVERY
+kept face that contains it, simultaneously. Implementation outline:
+
+1. Track split-introduced vertices by snapshotting original face polygons
+   before `split_solids_at_intersections` and diffing.
+2. For each split-introduced vertex V, compute its "perpendicular face vote"
+   — count how many incident faces survive the kept/dropped filter.
+3. If all perpendicular incident faces are dropped, V is spurious.
+4. Remove V from every kept face polygon that contains it. The remaining
+   polygons are simpler (fewer collinear vertices) and still consistent.
+5. Stitch.
+
+Realistic estimate: half-day of careful work touching `pipeline.rs`,
+`split.rs`, `splice.rs`, plus a new `provenance.rs` module. Worth doing
+in a focused session — would jump readiness past 90%.
+
 ## Driving toward 100%
 
 Per-bucket fix order, easiest first:

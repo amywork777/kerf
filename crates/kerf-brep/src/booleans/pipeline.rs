@@ -80,32 +80,43 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
     let interior = resolve_interior_endpoints(&mut a, &mut b, &intersections, &outcome, tol);
     let _added = add_intersection_edges(&mut a, &mut b, &intersections, &interior, tol);
 
+    // Collect both kept and dropped face polygons up front. Dropped polygons
+    // are needed by the M38 chord-merge pass.
     let mut kept: Vec<KeptFace> = Vec::new();
+    let mut dropped: Vec<KeptFace> = Vec::new();
     for face_id in a.topo.face_ids() {
         let cls = classify_face(&a, face_id, &b, tol);
-        if keep_a_face(cls, op)
-            && let Some(polygon) = face_polygon(&a, face_id)
-        {
-            let surface = a.face_geom.get(face_id).cloned().unwrap();
-            kept.push(KeptFace { polygon, surface });
+        let Some(polygon) = face_polygon(&a, face_id) else {
+            continue;
+        };
+        let surface = a.face_geom.get(face_id).cloned().unwrap();
+        let face = KeptFace { polygon, surface };
+        if keep_a_face(cls, op) {
+            kept.push(face);
+        } else {
+            dropped.push(face);
         }
     }
     let flip_b = flip_b_face(op);
     for face_id in b.topo.face_ids() {
         let cls = classify_face(&b, face_id, &a, tol);
-        if keep_b_face(cls, op)
-            && let Some(mut polygon) = face_polygon(&b, face_id)
-        {
-            let surface = b.face_geom.get(face_id).cloned().unwrap();
-            if flip_b {
-                // Reverse polygon winding so the face's outward normal flips.
-                // (We leave SurfaceKind::Plane unchanged; in the stitched solid
-                // the polygon order alone defines face orientation.)
-                polygon.reverse();
-            }
-            kept.push(KeptFace { polygon, surface });
+        let Some(mut polygon) = face_polygon(&b, face_id) else {
+            continue;
+        };
+        let surface = b.face_geom.get(face_id).cloned().unwrap();
+        let face_kept = keep_b_face(cls, op);
+        if face_kept && flip_b {
+            polygon.reverse();
+        }
+        let face = KeptFace { polygon, surface };
+        if face_kept {
+            kept.push(face);
+        } else {
+            dropped.push(face);
         }
     }
+
+    let _ = &dropped; // M38 placeholder — see docs/readiness.md for design.
 
     stitch(&kept, tol)
 }
