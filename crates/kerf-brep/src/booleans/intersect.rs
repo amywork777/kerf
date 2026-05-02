@@ -131,19 +131,66 @@ fn is_chord_interior(
 ) -> bool {
     let cls_a = classify_face(a, inter.face_a, b, tol);
     let cls_b = classify_face(b, inter.face_b, a, tol);
-    chord_interior_by_classification(cls_a, cls_b, op)
+    if !chord_interior_by_classification(cls_a, cls_b, op) {
+        return false;
+    }
+    // M39g: don't trust centroid-only Inside-Inside if the face has any
+    // vertex OUTSIDE the other solid. The pre-split centroid can land
+    // inside even when most of the face is outside (e.g., box-shift.x=1
+    // is a 2×2 square centered on (1,1,1) — its center is inside the
+    // box-nested cube [0.7,1.3]³, but its corners and most of its area
+    // are outside). Skipping the chord then drops the whole face when
+    // really only the interior crossing region should be dropped.
+    if !face_fully_inside(a, inter.face_a, b, tol)
+        || !face_fully_inside(b, inter.face_b, a, tol)
+    {
+        return false;
+    }
+    true
+}
+
+/// True when every vertex of `face` (in `solid`) lies inside `other` via a
+/// ray-cast classification. Single OnBoundary or Outside vertex disqualifies
+/// the face from being treated as fully interior.
+fn face_fully_inside(solid: &Solid, face: FaceId, other: &Solid, tol: &Tolerance) -> bool {
+    let Some(poly) = face_polygon(solid, face) else {
+        return false;
+    };
+    if poly.is_empty() {
+        return false;
+    }
+    use crate::booleans::classify::{point_on_solid_boundary, ray_solid_crossings};
+    use kerf_geom::Vec3;
+    let dirs = [
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        Vec3::new(0.0, 0.0, 1.0),
+    ];
+    for &p in &poly {
+        if point_on_solid_boundary(other, p, tol).is_some() {
+            return false; // OnBoundary vertex — ambiguous
+        }
+        let mut decided = false;
+        for &dir in &dirs {
+            if let Some(count) = ray_solid_crossings(other, p, dir, tol) {
+                if count % 2 == 0 {
+                    return false; // vertex Outside
+                }
+                decided = true;
+                break;
+            }
+        }
+        if !decided {
+            return false; // ray cast couldn't decide
+        }
+    }
+    true
 }
 
 /// Centralized M39 criterion: skip mef only when both hosts classify as
 /// strictly `Inside` against the other solid AND would be dropped under op.
-/// `Inside` (vs `OnBoundary`) means the centroid is unambiguously interior;
-/// these chords' splits produce dropped-only pieces that confuse stitch.
-///
-/// Empirically: aggressive variants ("both dropped including OnBoundary")
-/// over-skip and break half-overlap cases. The Inside/Inside gate is the
-/// safe ceiling — the bulk of the M39 win comes from the area-weighted
-/// centroid in `face_centroid` (which the gate complements without
-/// overriding).
+/// Now combined with `face_fully_inside` (M39g) to guard against the
+/// misleading-centroid case (face's center is inside but corners are not).
 fn chord_interior_by_classification(
     cls_a: FaceClassification,
     cls_b: FaceClassification,

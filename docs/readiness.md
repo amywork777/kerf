@@ -30,7 +30,7 @@ Failures fall into four root-cause buckets:
 ## Latest run
 
 ```
-readiness: 146/168 (87%)
+readiness: 148/168 (88%)
 ```
 
 See `readiness.txt` for the full per-row table — regenerated alongside this
@@ -52,6 +52,7 @@ file via `cargo run --example readiness_matrix -p kerf-brep`.
 | 2026-05-02 | m39c | 132/168 (79%) | Pre-stitch dedup of orphan-contributor faces. When a canonical edge has 3+ half-edge contributions, `pick_twin_pair` drops the orphans without unwiring their twin pointers — `validate()` catches them as `AsymmetricTwin`. New iterative pass identifies most-conflicting faces and drops them until no edge has 3+ contributions. No matrix delta (orphan failures convert to non-manifold 1-half-edge errors instead) but eliminates corrupt-topology stitch outputs. |
 | 2026-05-02 | m39e | 134/168 (80%) | Sibling-face fallback in `add_chord`. The mef target was previously fixed to the pre-split host face, which after earlier mefs may not contain both endpoints (one moved into a sibling piece). Now searches all same-ancestor faces for a loop containing both endpoints. Unblocks 4 cyl_n12↔cyl_n4 union/diff cases where the cyl ring intersection produces multi-chord-per-face configurations. Two box-nested↔tri-prism cases regress (closed-loop chord configurations on the BC face would need ring-loop / kfmrh support to produce correct topology — the previous output was wrong-but-stitched at 16V/28E/14F when the correct wedge has ~6 faces). Net +2 matrix, +4 real wins vs 1 vacuous regression and 1 wrong-but-stitched regression. Floor bumped to 134. |
 | 2026-05-02 | m39f | 146/168 (87%) | Self-loop half-edge handling in stitch. Vase apex polygons collapse multiple coincident apex vertices to one position after global vertex dedup, producing polygon edges where v_start == v_end. The old `pick_twin_pair` couldn't pair self-loop entries (direction is ambiguous when both endpoints are the same vertex), panicking with "1 half-edge" on canonical key (i, i). Now: detect self-loop half-edges in stage 4, route them around `edge_pairs`, and self-twin them after stage 5 with their own degenerate edge. Validate's twin.twin == self check passes; Euler-Poincaré accommodates the resulting degenerate face as a torus-like component (genus reading without geometric realism). +12 cases — every vase × cyl combination now passes (union/intersect/diff in both directions). Zero regressions. Floor bumped to 146. |
+| 2026-05-02 | m39g | 148/168 (88%) | Tighten chord-skip M39 gate with `face_fully_inside` check. The Inside-Inside criterion was over-firing for cases where the pre-split face's centroid happens to land in the small interior overlap region while most of the face is outside — e.g., box-shift.x=1 (a 2×2 square at x=1) has centroid (1,1,1) inside box-nested [0.7,1.3]³ even though most of its area is outside. Skipping the chord then dropped the whole face. Now requires every polygon vertex to be Inside (via ray-cast) before treating the chord as interior. +2 union(box-nested, box-shift) cases. Zero regressions. Floor bumped to 148. |
 
 ## What M39 actually fixed (vs. what was sketched)
 
