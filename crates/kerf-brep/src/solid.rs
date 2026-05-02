@@ -220,17 +220,16 @@ mod method_tests {
     use kerf_topo::validate;
 
     #[test]
-    fn try_union_returns_err_cleanly_on_remaining_unsupported_case() {
-        // After M36's stinger fix, M11 phase B no longer panics. The cylinder
-        // ∪ box case now flows through to the stitch stage, where the
-        // kept-face graph still has unmatched half-edges (a downstream
-        // classifier gap). The point of this test is that the failure is
-        // *cleanly recoverable* via try_*, not that this specific config
-        // works — that's docs/readiness.md territory.
+    fn try_union_returns_ok_for_curved_piercing() {
+        // M40: cylinder piercing a box — the chord ring case that motivated
+        // most of M40's work. Previously failed with "non-manifold input to
+        // stitch" or fell through to a panic-recovered Err. Now produces a
+        // clean closed manifold via Phase B fixpoint + closest-anchor stinger
+        // + winding-normalization in face_polygon.
         let block = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(-1.0, -1.0, -1.0));
         let cyl = cylinder_faceted(0.6, 3.0, 12);
         let r = block.try_union(&cyl);
-        assert!(r.is_err(), "expected curved-piercing union to fail cleanly");
+        assert!(r.is_ok(), "curved piercing should now produce a valid solid");
     }
 
     #[test]

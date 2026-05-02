@@ -76,25 +76,40 @@ pub fn face_centroid(solid: &Solid, face: FaceId) -> Option<Point3> {
             if point_in_polygon_2d(area_cx, area_cy, &pts) {
                 return Some(origin + area_cx * fx + area_cy * fy);
             }
-            // Fallback: pick the largest |area| triangle in the fan; its
-            // centroid is interior to that triangle, so interior to polygon
-            // (assuming the triangle is inside the polygon body — true for
-            // a fan from the largest non-fjord vertex).
-            let p0 = pts[0];
-            let mut best: Option<(f64, f64, f64)> = None;
-            for i in 1..n - 1 {
-                let pi = pts[i];
-                let pj = pts[i + 1];
-                let area = 0.5
-                    * ((pi.0 - p0.0) * (pj.1 - p0.1) - (pi.1 - p0.1) * (pj.0 - p0.0));
-                let centroid_x = (p0.0 + pi.0 + pj.0) / 3.0;
-                let centroid_y = (p0.1 + pi.1 + pj.1) / 3.0;
-                if best.map_or(true, |(_, _, a)| area.abs() > a.abs()) {
-                    best = Some((centroid_x, centroid_y, area));
+            // Fallback: try every fan triangle's centroid; pick the largest
+            // whose centroid is verified inside the polygon body. For
+            // L-shaped polygons (e.g., a rectangle with a triangular notch),
+            // a fan triangle that straddles the notch may have its centroid
+            // inside the notch (= outside the polygon body) — so we filter
+            // by point-in-polygon.
+            //
+            // Try all polygon vertices as fan-origin until one yields a
+            // valid in-body centroid. With ≥1 fan triangle inside the body
+            // (which always exists for a non-degenerate polygon), at least
+            // one base vertex's fan must produce an in-body centroid.
+            for base in 0..n {
+                let p0 = pts[base];
+                let mut best: Option<(f64, f64, f64)> = None;
+                for k in 1..n - 1 {
+                    let i = (base + k) % n;
+                    let j = (base + k + 1) % n;
+                    let pi = pts[i];
+                    let pj = pts[j];
+                    let area = 0.5
+                        * ((pi.0 - p0.0) * (pj.1 - p0.1)
+                            - (pi.1 - p0.1) * (pj.0 - p0.0));
+                    let centroid_x = (p0.0 + pi.0 + pj.0) / 3.0;
+                    let centroid_y = (p0.1 + pi.1 + pj.1) / 3.0;
+                    if !point_in_polygon_2d(centroid_x, centroid_y, &pts) {
+                        continue;
+                    }
+                    if best.map_or(true, |(_, _, a)| area.abs() > a.abs()) {
+                        best = Some((centroid_x, centroid_y, area));
+                    }
                 }
-            }
-            if let Some((bx, by, _)) = best {
-                return Some(origin + bx * fx + by * fy);
+                if let Some((bx, by, _)) = best {
+                    return Some(origin + bx * fx + by * fy);
+                }
             }
         }
     }

@@ -174,3 +174,55 @@ Per-bucket fix order, easiest first:
 4. **#1 interior endpoints.** Implement stinger-edge phase for closed
    intersection polygons. Substantial — likely needs ring operators in
    the topo crate first.
+
+
+## M40 — 100% readiness\! (89% → 100%)
+
+After 7 cycles between M39 and M40, the readiness matrix is **168/168 (100%)**.
+
+### What M40 fixed
+
+1. **Phase B fixpoint iteration with deferred stingers** (89% → 93%, M40a).
+   Previously, Phase B did one pass and stinger-anchored every no-sibling
+   case immediately, producing many short disconnected sticker chains
+   for closed chord rings. Phase C then mef'd each chord separately,
+   producing N+1 wedges instead of clean annulus + disk.
+   Fix: try sibling-only first; only stinger when no progress can be made.
+
+2. **Self-as-sibling + closest-anchor stinger + winding normalization** (93% → 94%, M40b).
+   Three coordinated changes that produce clean annulus + disk topology
+   when a chord ring is fully interior to a face. Self-sibling lets the
+   second endpoint of a chord use the just-stingered first endpoint as
+   anchor (avoiding a redundant stinger that may pass through other
+   chord vertices). Closest-anchor minimizes stinger length to dodge
+   geometric coincidences. Winding normalization in face_polygon
+   ensures CCW-from-outward regardless of how mef left the loop.
+
+3. **Crossing-number ray-cast for non-convex polygons** (94% → 99%, M40c).
+   ray_solid_crossings used a convex-only test for the ray-plane hit
+   point. After Phase B/C splits, face polygons become non-convex (fjord
+   patterns) — the convex test rejected ray crossings inside their
+   bodies, classify_face defaulted to Outside for any face whose centroid
+   ray hit a non-convex face. Switch to the standard crossing-number test.
+
+4. **Standard polygon-centroid + smart fan-triangle fallback** (99% → 100%, M40d).
+   face_centroid now uses the standard polygon-centroid formula on the
+   un-deduped walk (handles fjords correctly — a stinger that goes out
+   and back contributes zero net area). When that centroid lands outside
+   the polygon body (annulus / L-shape with hole or notch), iterate fan
+   triangles from every base vertex to find one whose centroid is
+   verified inside the body via point-in-polygon test.
+
+### What didn't make it
+
+- A proper kfmrh Euler operator in kerf-topo. The mef-based annulus + disk
+  result that Phase B + C produces is topologically equivalent (chord
+  ring as a fjord, instead of a true inner_loop) and the stitch handles
+  it correctly after winding normalization, so the kernel work was
+  unnecessary for the matrix. inner_loops support remains unused
+  scaffolding for a hypothetical future pure-kfmrh path.
+
+- A separate `KeptFace.inner_polygons` field. The fjord representation in
+  the existing single-polygon walk + new centroid algorithm covers the
+  matrix.
+
