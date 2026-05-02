@@ -47,6 +47,27 @@ file via `cargo run --example readiness_matrix -p kerf-brep`.
 | 2026-05-01 | m37  | 117/168 (70%) | Argument-swap retry: for commutative ops (Union, Intersection), if (a, b) trips a classifier asymmetry, retry with (b, a). 9 cases unblocked — confirms the OnBoundary classifier is genuinely order-dependent. Floor bumped to 117. |
 | 2026-05-01 | m38a | 119/168 (71%) | Centroid dedup before averaging. M36's stinger fjords add duplicate spike-anchor vertices to face polygons; the polygon-average centroid then lands inside the cylinder hole instead of on the actual face, mis-classifying the outer face as Inside. Dedup makes classification correct. +2 cases. Chord-merge module integrated (same-source, Inside-only) but doesn't unblock new cases yet — the cyl∪box family still trips downstream. Floor bumped to 119. |
 | 2026-05-01 | m38b | 119/168 (71%) | Threaded `face_provenance: SecondaryMap<FaceId, FaceId>` through `add_chord` (`mef`) so chord-merge can gate on same-ancestor pairs. No matrix improvement — the corner-overlap-union failures are caused by topology issues downstream of the merges that DO happen, not by the merges that DON'T. Architecture is in place for future work; provenance is a strict refinement of the same-source + coplanar gate. |
+| 2026-05-01 | m38c | 119/168 (71%) | Added T-junction healing pass in stitch (Stage 1b): when a polygon's edge passes through a unique vertex from another polygon, insert that vertex collinearly. No matrix delta on current failing set — chord vertices in our boolean output land at chord endpoints not mid-edge, so T-junctions don't arise here. Defensive against imported-mesh inputs (typical CAD interchange T-junctions). |
+
+## Why the remaining 49 cases haven't budged
+
+Multiple substantial attempts (gated chord-merge, ancestor-tagged chord-merge,
+T-junction healing) all sit at 119/168. The bottleneck isn't a single missing
+heuristic — it's a structural mismatch: when boolean splits a face along a
+chord that ends up interior to the result, the kept-face graph needs the chord
+removed FROM ALL FACES that share its vertices, atomically. Geometric merges
+on individual face pairs always produce inconsistencies somewhere because
+neighbouring faces' chords aren't synchronized.
+
+The real fix is a **chord-classifier pass**: before splitter mef, compute
+per-chord "interiorness" by checking the perpendicular-face fates in BOTH
+solids. Skip the mef for interior chords entirely — the face never gets
+split, no inconsistency arises, no merge is needed.
+
+That's a topology pre-pass that requires hooking into both `face_intersections`
+(to identify chords) and `add_intersection_edges` (to selectively skip mef
+calls). Estimated 4–6 hours of careful work plus regression sweep on the
+matrix. Tracked as M39.
 
 ## Bucket #2 root cause (analysis pending fix)
 
