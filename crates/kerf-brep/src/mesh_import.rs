@@ -254,6 +254,50 @@ mod tests {
     }
 
     #[test]
+    fn two_imported_boxes_intersection() {
+        // Round-trip two boxes through STL, then intersect them. This is the
+        // pure-imported path: every face on both inputs is a triangulated
+        // Plane, and the boolean pipeline must handle them like native faces.
+        let a_native = box_(Vec3::new(2.0, 2.0, 2.0));
+        let b_native = crate::primitives::box_at(
+            Vec3::new(2.0, 2.0, 2.0),
+            kerf_geom::Point3::new(1.0, 0.0, 0.0),
+        );
+        let mut a_buf = Vec::new();
+        let mut b_buf = Vec::new();
+        write_binary(&tessellate(&a_native, 8), "a", &mut a_buf).unwrap();
+        write_binary(&tessellate(&b_native, 8), "b", &mut b_buf).unwrap();
+        let a = read_stl_binary_to_solid(&mut a_buf.as_slice()).unwrap();
+        let b = read_stl_binary_to_solid(&mut b_buf.as_slice()).unwrap();
+
+        let r = a.intersection(&b);
+        assert!(r.face_count() > 0);
+        kerf_topo::validate(&r.topo).unwrap();
+    }
+
+    #[test]
+    fn imported_box_supports_union_with_native_box() {
+        // Round-trip box A through STL → Solid. Then union with a native box B
+        // shifted in x. Verifies that the imported B-rep plays nicely with
+        // the boolean pipeline.
+        let a_native = box_(Vec3::new(2.0, 2.0, 2.0));
+        let soup = tessellate(&a_native, 8);
+        let mut buf = Vec::new();
+        write_binary(&soup, "round_trip", &mut buf).unwrap();
+        let a_imported = read_stl_binary_to_solid(&mut buf.as_slice()).unwrap();
+
+        let b = crate::primitives::box_at(
+            Vec3::new(2.0, 2.0, 2.0),
+            kerf_geom::Point3::new(1.0, 0.0, 0.0),
+        );
+        let u = a_imported.union(&b);
+        // Result should be a connected solid; precise face/vertex counts depend
+        // on triangulation, but the topology must validate.
+        assert!(u.face_count() > 0);
+        kerf_topo::validate(&u.topo).unwrap();
+    }
+
+    #[test]
     fn from_triangles_tetrahedron_validates() {
         // A regular tet: 4 vertices, 6 edges, 4 triangular faces. V-E+F = 2 ✓.
         let v = [
