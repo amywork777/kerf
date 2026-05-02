@@ -133,6 +133,14 @@ pub fn add_intersection_edges(
 /// Add a chord edge from `v_start` to `v_end` on the face's outer loop, splitting
 /// the face via mef. Returns (EdgeId, new FaceId) on success, None if either
 /// vertex is not found in the outer loop or if the half-edges have the same origin.
+///
+/// M39e: when the hint face's outer loop doesn't contain both endpoints
+/// (because a previous mef on this same ancestor moved one endpoint into a
+/// sibling piece), search siblings (faces with the same ancestor) for a loop
+/// containing both endpoints. Without this, multi-chord faces with shared
+/// endpoints produce only the first 1-2 mef calls — leaving the face
+/// under-split and losing the inner piece (e.g., box-shift.x=1 cut by 4
+/// chords forming a ring around the box-nested cross-section).
 fn add_chord(
     solid: &mut Solid,
     face: FaceId,
@@ -141,37 +149,62 @@ fn add_chord(
     p_start: kerf_geom::Point3,
     p_end: kerf_geom::Point3,
 ) -> Option<(kerf_topo::EdgeId, FaceId)> {
-    let outer_loop = solid.topo.face(face)?.outer_loop();
+    let (host_face, h_start, h_end) = locate_mef_target(solid, face, v_start, v_end)?;
 
-    let h_start = find_he_in_loop(solid, outer_loop, v_start)?;
-    let h_end = find_he_in_loop(solid, outer_loop, v_end)?;
-
-    // mef requires distinct half-edges (different origins).
     if h_start == h_end {
         return None;
     }
 
     let mef = solid.topo.mef(h_start, h_end);
 
-    // Attach geometry: line edge.
     if let Some(line) = Line::through(p_start, p_end) {
         let length = (p_end - p_start).norm();
         let seg = CurveSegment::line(line, 0.0, length);
         solid.edge_geom.insert(mef.edge, seg);
     }
 
-    // New face inherits the parent's plane.
-    if let Some(parent_surface) = solid.face_geom.get(face).cloned()
+    if let Some(parent_surface) = solid.face_geom.get(host_face).cloned()
         && let SurfaceKind::Plane(_) = &parent_surface
     {
         solid.face_geom.insert(mef.face, parent_surface);
     }
 
-    // M38b: new face inherits ancestor — the original face this came from.
-    let ancestor = solid.face_ancestor(face);
+    let ancestor = solid.face_ancestor(host_face);
     solid.face_provenance.insert(mef.face, ancestor);
 
     Some((mef.edge, mef.face))
+}
+
+fn locate_mef_target(
+    solid: &Solid,
+    hint: FaceId,
+    v_start: VertexId,
+    v_end: VertexId,
+) -> Option<(FaceId, HalfEdgeId, HalfEdgeId)> {
+    if let Some(outer) = solid.topo.face(hint).map(|f| f.outer_loop())
+        && let (Some(hs), Some(he)) = (
+            find_he_in_loop(solid, outer, v_start),
+            find_he_in_loop(solid, outer, v_end),
+        )
+    {
+        return Some((hint, hs, he));
+    }
+    let hint_ancestor = solid.face_ancestor(hint);
+    for fid in solid.topo.face_ids() {
+        if fid == hint || solid.face_ancestor(fid) != hint_ancestor {
+            continue;
+        }
+        let Some(outer) = solid.topo.face(fid).map(|f| f.outer_loop()) else {
+            continue;
+        };
+        if let (Some(hs), Some(he)) = (
+            find_he_in_loop(solid, outer, v_start),
+            find_he_in_loop(solid, outer, v_end),
+        ) {
+            return Some((fid, hs, he));
+        }
+    }
+    None
 }
 
 #[cfg(test)]

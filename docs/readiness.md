@@ -30,7 +30,7 @@ Failures fall into four root-cause buckets:
 ## Latest run
 
 ```
-readiness: 132/168 (79%)
+readiness: 134/168 (80%)
 ```
 
 See `readiness.txt` for the full per-row table — regenerated alongside this
@@ -49,6 +49,8 @@ file via `cargo run --example readiness_matrix -p kerf-brep`.
 | 2026-05-01 | m38b | 119/168 (71%) | Threaded `face_provenance: SecondaryMap<FaceId, FaceId>` through `add_chord` (`mef`) so chord-merge can gate on same-ancestor pairs. No matrix improvement — the corner-overlap-union failures are caused by topology issues downstream of the merges that DO happen, not by the merges that DON'T. Architecture is in place for future work; provenance is a strict refinement of the same-source + coplanar gate. |
 | 2026-05-01 | m38c | 119/168 (71%) | Added T-junction healing pass in stitch (Stage 1b): when a polygon's edge passes through a unique vertex from another polygon, insert that vertex collinearly. No matrix delta on current failing set — chord vertices in our boolean output land at chord endpoints not mid-edge, so T-junctions don't arise here. Defensive against imported-mesh inputs (typical CAD interchange T-junctions). |
 | 2026-05-02 | m39  | 132/168 (79%) | **Two-part fix.** (1) `face_centroid` now uses signed-area-weighted centroid via fan triangulation instead of vertex-average. Fixes the "L-shape concavity lands on other solid's edge" mis-classification that drove most corner-overlap union/intersection failures: B's L-shape on x=1 has vertex-avg centroid (1,2,2) which lies on A's edge (OnBoundary→drop) but the area-weighted centroid lands strictly inside the L (Outside→keep). (2) Per-chord interiorness gate in `add_intersection_edges`: pre-split classify both host faces; skip mef when both are strictly Inside AND would be dropped under op. The conservative gate is a near no-op on the current matrix but prevents regressions for the few Inside-Inside chord cases. +13 cases — every box×box-corner union and intersection now passes. Floor bumped to 132. |
+| 2026-05-02 | m39c | 132/168 (79%) | Pre-stitch dedup of orphan-contributor faces. When a canonical edge has 3+ half-edge contributions, `pick_twin_pair` drops the orphans without unwiring their twin pointers — `validate()` catches them as `AsymmetricTwin`. New iterative pass identifies most-conflicting faces and drops them until no edge has 3+ contributions. No matrix delta (orphan failures convert to non-manifold 1-half-edge errors instead) but eliminates corrupt-topology stitch outputs. |
+| 2026-05-02 | m39e | 134/168 (80%) | Sibling-face fallback in `add_chord`. The mef target was previously fixed to the pre-split host face, which after earlier mefs may not contain both endpoints (one moved into a sibling piece). Now searches all same-ancestor faces for a loop containing both endpoints. Unblocks 4 cyl_n12↔cyl_n4 union/diff cases where the cyl ring intersection produces multi-chord-per-face configurations. Two box-nested↔tri-prism cases regress (closed-loop chord configurations on the BC face would need ring-loop / kfmrh support to produce correct topology — the previous output was wrong-but-stitched at 16V/28E/14F when the correct wedge has ~6 faces). Net +2 matrix, +4 real wins vs 1 vacuous regression and 1 wrong-but-stitched regression. Floor bumped to 134. |
 
 ## What M39 actually fixed (vs. what was sketched)
 
