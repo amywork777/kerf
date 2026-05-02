@@ -24,7 +24,12 @@ pub fn keep_a_face(cls: FaceClassification, op: BooleanOp) -> bool {
         (Intersection, OnBoundary) => true,
         (Difference, Outside) => true,
         (Difference, Inside) => false,
-        (Difference, OnBoundary) => true,
+        // OnBoundary faces from A are shared with B (coplanar-coincident).
+        // For A - B, the shared boundary face is interior to B's enclosed
+        // region (when normals agree) or on the cavity wall (opposite). The
+        // pragma here drops it on the A side and re-emits it via B's flipped
+        // face when needed — matches half-overlap difference geometry.
+        (Difference, OnBoundary) => false,
     }
 }
 

@@ -205,6 +205,19 @@ mod tests {
     }
 
     #[test]
+    fn half_overlap_difference_yields_sub_box() {
+        // A = [0,2]^3, B = [1,3] x [0,2]^2. A - B = [0,1] x [0,2]^2 — a 1x2x2
+        // sub-box. Pre-M28 this panicked in the stitcher because A's [1,2]
+        // half-faces classified as OnBoundary and were kept, leaving open edges
+        // when B's coincident faces were dropped.
+        let a = box_(Vec3::new(2.0, 2.0, 2.0));
+        let b = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(1.0, 0.0, 0.0));
+        let r = boolean_solid(&a, &b, BooleanOp::Difference, &Tolerance::default());
+        kerf_topo::validate(&r.topo).unwrap();
+        assert!(r.face_count() >= 6, "result must have at least 6 faces");
+    }
+
+    #[test]
     fn recursive_boolean_three_box_intersection() {
         // (A ∩ B) ∩ C — verifies recursion works.
         let a = box_(Vec3::new(10.0, 10.0, 10.0));
