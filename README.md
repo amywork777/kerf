@@ -51,6 +51,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M30 — `kerf` installable + pipeable. `cargo install --path crates/kerf-brep --bin kerf` produces a 625 KB release binary. `-` for any path reads stdin / writes stdout, so booleans chain via shell pipes: `kerf union a.stl b.stl - | kerf difference - c.stl out.stl`.
 - [x] M31 — Wavefront OBJ importer. `read_obj` parses `v` and `f` lines, triangulates quads / n-gons via fan, supports `i/uv/n` slash-form face tokens and negative (relative) indices, ignores `vt` / `vn` / `g` / materials. `read_obj_to_solid` is the end-to-end importer. Box round-trips through OBJ losslessly (8V/18E/12F).
 - [x] M32 — CLI extension-based format detection. `kerf union a.stl b.obj merged.stl` works — input/output formats are picked from the file extension (`.stl`, `.obj`); for stdin, the leading bytes are sniffed for `v ` / `f ` / `solid ` to pick OBJ vs STL.
+- [x] M33 — Recoverable boolean errors. `Solid::try_{union,intersection,difference}` and `try_boolean_solid` wrap the boolean pipeline in `catch_unwind` and convert any internal panic (M11 phase B interior limit, non-manifold stitch input, etc.) into a `BooleanError`. CLI uses these so it exits 1 with a diagnostic instead of crashing on unsupported configurations like `cylinder ∪ box`. Original panicking variants kept for invariant testing.
 
 ## Visual gallery
 

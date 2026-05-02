@@ -67,12 +67,23 @@ fn main() -> ExitCode {
     );
 
     let result = match op_arg {
-        "union" => a.union(&b),
-        "intersection" => a.intersection(&b),
-        "difference" => a.difference(&b),
+        "union" => a.try_union(&b),
+        "intersection" => a.try_intersection(&b),
+        "difference" => a.try_difference(&b),
         other => {
             eprintln!("kerf: unknown op {other:?} (expected union, intersection, or difference)");
             return ExitCode::from(2);
+        }
+    };
+    let result = match result {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("kerf: {e}");
+            eprintln!(
+                "kerf: this configuration hits an unimplemented boolean case. \
+                 See README for known limits."
+            );
+            return ExitCode::from(1);
         }
     };
     eprintln!(

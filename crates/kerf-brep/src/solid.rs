@@ -71,6 +71,64 @@ impl Solid {
             &kerf_geom::Tolerance::default(),
         )
     }
+
+    /// Non-panicking variant of [`Self::union`]. Returns `Err` if the boolean
+    /// pipeline hits an unsupported configuration (e.g. interior endpoints
+    /// without a boundary anchor, non-manifold stitch input, etc.) instead of
+    /// crashing the caller.
+    pub fn try_union(&self, other: &Solid) -> Result<Solid, BooleanError> {
+        try_boolean_solid(self, other, crate::booleans::BooleanOp::Union)
+    }
+
+    /// Non-panicking variant of [`Self::intersection`].
+    pub fn try_intersection(&self, other: &Solid) -> Result<Solid, BooleanError> {
+        try_boolean_solid(self, other, crate::booleans::BooleanOp::Intersection)
+    }
+
+    /// Non-panicking variant of [`Self::difference`].
+    pub fn try_difference(&self, other: &Solid) -> Result<Solid, BooleanError> {
+        try_boolean_solid(self, other, crate::booleans::BooleanOp::Difference)
+    }
+}
+
+/// Error returned by the non-panicking boolean variants. Carries the panic
+/// payload as a string so callers can log a meaningful diagnostic without
+/// caring about which specific invariant tripped.
+#[derive(Debug)]
+pub struct BooleanError {
+    pub message: String,
+}
+
+impl std::fmt::Display for BooleanError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "boolean failed: {}", self.message)
+    }
+}
+
+impl std::error::Error for BooleanError {}
+
+/// Run `boolean_solid` inside `catch_unwind` and convert any panic into a
+/// `BooleanError`. The kernel's internal panics are invariant violations from
+/// the boolean pipeline (e.g. M11 phase B interior-endpoint limits) — none
+/// corrupt heap state, so unwinding is safe.
+pub fn try_boolean_solid(
+    a: &Solid,
+    b: &Solid,
+    op: crate::booleans::BooleanOp,
+) -> Result<Solid, BooleanError> {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::booleans::boolean_solid(a, b, op, &kerf_geom::Tolerance::default())
+    }));
+    result.map_err(|payload| {
+        let message = if let Some(s) = payload.downcast_ref::<String>() {
+            s.clone()
+        } else if let Some(s) = payload.downcast_ref::<&'static str>() {
+            (*s).to_string()
+        } else {
+            "unknown panic in boolean pipeline".to_string()
+        };
+        BooleanError { message }
+    })
 }
 
 #[cfg(test)]
@@ -88,9 +146,34 @@ mod tests {
 
 #[cfg(test)]
 mod method_tests {
-    use crate::primitives::{box_, box_at};
+    use crate::primitives::{box_, box_at, cylinder_faceted};
     use kerf_geom::{Point3, Vec3};
     use kerf_topo::validate;
+
+    #[test]
+    fn try_union_returns_err_for_unsupported_curved_case() {
+        // Cylinder piercing through a box face hits the M11 phase-B interior
+        // endpoint limit. With panic-based booleans this would crash; with
+        // try_union we get a structured error.
+        let block = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(-1.0, -1.0, -1.0));
+        let cyl = cylinder_faceted(0.6, 3.0, 12);
+        let r = block.try_union(&cyl);
+        assert!(r.is_err(), "expected curved-piercing union to fail cleanly");
+        let err = r.unwrap_err();
+        assert!(
+            err.message.contains("interior endpoint"),
+            "panic message should mention interior endpoint: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn try_union_returns_ok_for_supported_case() {
+        let a = box_(Vec3::new(2.0, 2.0, 2.0));
+        let b = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(1.0, 0.0, 0.0));
+        let r = a.try_union(&b);
+        assert!(r.is_ok(), "supported case should not error");
+    }
 
     #[test]
     fn solid_union_method_works() {
