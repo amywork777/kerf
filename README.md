@@ -48,6 +48,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M27 — `kerf` CLI binary. `cargo run --bin kerf -- <union|intersection|difference> a.stl b.stl out.stl` runs an end-to-end boolean on any binary STL inputs the importer accepts. Screenshots: `screenshots/cli_union.png`, `screenshots/cli_intersection.png`.
 - [x] M28 — Half-overlap difference fix. Two boxes shifted in x panicked in the stitcher because A's coincident-with-B face classified as OnBoundary and was kept, leaving the kept-face graph with an unmatched half-edge. Changed `keep_a_face(OnBoundary, Difference)` from `true` to `false`: the shared boundary is re-emitted via B's flipped face when needed. Adds `half_overlap_difference_yields_sub_box` regression test. CLI screenshot: `screenshots/cli_difference.png`.
 - [x] M29 — ASCII STL reader + auto-sniff. `read_ascii` parses the `vertex x y z` lines (recomputing normals on import); `read_stl_auto` sniffs the first 5 bytes and dispatches to ASCII or binary, with a fallback for binary STLs that happen to start with the literal "solid" prefix. CLI uses `read_stl_to_solid` so `kerf union ascii.stl binary.stl out.stl` works regardless of input format.
+- [x] M30 — `kerf` installable + pipeable. `cargo install --path crates/kerf-brep --bin kerf` produces a 625 KB release binary. `-` for any path reads stdin / writes stdout, so booleans chain via shell pipes: `kerf union a.stl b.stl - | kerf difference - c.stl out.stl`.
 
 ## Visual gallery
 
@@ -82,3 +83,20 @@ Build the STL files with `cargo run --example cad_gallery`. Render to PNG with `
 - `kerf-geom` — exact analytic curves and surfaces, intersection routines.
 - `kerf-topo` — half-edge topology and Euler operators.
 - `kerf-brep` — the kernel (geometry + topology + booleans + constructors).
+
+## CLI
+
+```bash
+cargo install --path crates/kerf-brep --bin kerf
+kerf union a.stl b.stl out.stl
+kerf intersection a.stl b.stl out.stl
+kerf difference a.stl b.stl out.stl
+```
+
+Inputs may be ASCII or binary STL; output is always binary STL. Use `-` for any
+path to read stdin or write stdout, so ops can chain through pipes:
+
+```bash
+kerf union a.stl b.stl - | kerf difference - c.stl out.stl
+cat scan.stl | kerf intersection - cutter.stl out.stl
+```

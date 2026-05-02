@@ -1,14 +1,18 @@
-//! `kerf` CLI: binary STL boolean operations.
+//! `kerf` CLI: STL boolean operations.
 //!
 //! Usage:
 //!   kerf <union|intersection|difference> <a.stl> <b.stl> <out.stl>
 //!
-//! Both inputs must be binary STL representing closed orientable manifolds
-//! (anything kerf-brep::read_stl_binary_to_solid accepts). The output is
+//! Pass `-` for stdin / stdout. Inputs may be ASCII or binary STL; output is
 //! always binary STL.
+//!
+//! Examples:
+//!   kerf union a.stl b.stl out.stl
+//!   kerf union a.stl b.stl - | kerf difference - c.stl out.stl
+//!   cat a.stl | kerf intersection - b.stl out.stl
 
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::process::ExitCode;
 
 use kerf_brep::tessellate::tessellate;
@@ -70,24 +74,35 @@ fn main() -> ExitCode {
     );
 
     let soup = tessellate(&result, 8);
-    let f = match File::create(out_path) {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("kerf: failed to create {out_path}: {e}");
-            return ExitCode::from(1);
+    let mut w: Box<dyn Write> = if out_path == "-" {
+        Box::new(BufWriter::new(io::stdout().lock()))
+    } else {
+        match File::create(out_path) {
+            Ok(f) => Box::new(BufWriter::new(f)),
+            Err(e) => {
+                eprintln!("kerf: failed to create {out_path}: {e}");
+                return ExitCode::from(1);
+            }
         }
     };
-    let mut w = BufWriter::new(f);
     if let Err(e) = write_binary(&soup, "kerf_cli_output", &mut w) {
         eprintln!("kerf: write failed: {e}");
         return ExitCode::from(1);
     }
-    eprintln!("kerf: wrote {} triangles → {out_path}", soup.triangles.len());
+    if out_path == "-" {
+        eprintln!("kerf: wrote {} triangles → stdout", soup.triangles.len());
+    } else {
+        eprintln!("kerf: wrote {} triangles → {out_path}", soup.triangles.len());
+    }
     ExitCode::SUCCESS
 }
 
 fn load_stl(path: &str) -> Result<Solid, String> {
-    let f = File::open(path).map_err(|e| e.to_string())?;
-    let mut r = BufReader::new(f);
+    let mut r: Box<dyn Read> = if path == "-" {
+        Box::new(BufReader::new(io::stdin().lock()))
+    } else {
+        let f = File::open(path).map_err(|e| e.to_string())?;
+        Box::new(BufReader::new(f))
+    };
     read_stl_to_solid(&mut r).map_err(|e| e.to_string())
 }
