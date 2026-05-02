@@ -244,49 +244,77 @@ fn resolve_one_endpoint(
         split_outcome,
     );
 
-    let (sibling_idx, boundary_vertex) = match sibling {
-        Some(x) => x,
-        None => panic!(
-            "M11 phase B: interior endpoint at {p:?} on face {face:?} (side {side:?}) has no \
-             sibling intersection with a resolved boundary endpoint at that face. This case is \
-             beyond v1's scope. Intersection idx = {intersection_idx} ({endpoint_side:?})."
-        ),
-    };
-
-    // Find a half-edge in face's outer loop whose DESTINATION is boundary_vertex.
-    // mev's anchor convention: anchor's destination becomes the growth vertex.
-    // (See euler.rs::mev — `v_old = self.half_edges[anchor].twin.origin`.)
+    // Find face's outer loop once — needed by both the sibling and stinger paths.
     let outer_loop = solid
         .topo
         .face(face)
         .expect("face exists")
         .outer_loop();
-    let anchor = find_he_ending_at(solid, outer_loop, boundary_vertex).unwrap_or_else(|| {
-        panic!(
-            "M11 phase B: face {face:?} outer loop has no half-edge ending at boundary vertex \
-             {boundary_vertex:?}. (interior point {p:?})"
-        )
-    });
 
-    // mev: grows a sticker edge from boundary_vertex into face interior.
+    let (sibling_idx, boundary_vertex_opt) = match sibling {
+        Some((i, b)) => (Some(i), Some(b)),
+        None => (None, None),
+    };
+
+    // Pick a mev anchor:
+    //   - If we have a sibling with a boundary endpoint, anchor on that vertex
+    //     (so the mev tail IS the sibling's chord).
+    //   - Otherwise (M36 stinger path), use ANY half-edge in the outer loop;
+    //     the mev tail becomes a non-chord stinger edge from a boundary vertex
+    //     to the orphan interior point. This handles closed-polygon
+    //     intersections (cylinder ∪ box family) where no chord touches the
+    //     boundary. The face's outer loop ends up with a fjord — topologically
+    //     valid, geometrically a spike.
+    let anchor = if let Some(b) = boundary_vertex_opt {
+        find_he_ending_at(solid, outer_loop, b).unwrap_or_else(|| {
+            panic!(
+                "M11 phase B: face {face:?} outer loop has no half-edge ending at boundary vertex \
+                 {b:?}. (interior point {p:?})"
+            )
+        })
+    } else {
+        // Stinger path: pick the loop's representative half-edge.
+        let lp = solid
+            .topo
+            .loop_(outer_loop)
+            .expect("face's outer loop exists");
+        lp.half_edge()
+            .expect("outer loop has at least one half-edge")
+    };
+
+    // mev: grows a sticker edge from anchor.dest to a new vertex at p.
     let mev = solid.topo.mev(outer_loop, anchor);
     solid.vertex_geom.insert(mev.vertex, p);
 
-    // Edge geometry: line from boundary_vertex to interior point.
-    let p_boundary = *solid
+    // Edge geometry: line from anchor.dest to interior point.
+    // anchor.dest is the destination vertex of the anchor half-edge, which is
+    // the same as the twin's origin.
+    let anchor_he = solid
+        .topo
+        .half_edge(anchor)
+        .expect("anchor half-edge exists");
+    let v_dest = solid
+        .topo
+        .half_edge(anchor_he.twin())
+        .expect("twin exists")
+        .origin();
+    let p_dest = *solid
         .vertex_geom
-        .get(boundary_vertex)
-        .expect("boundary vertex has a position");
-    if let Some(line) = Line::through(p_boundary, p) {
-        let length = (p - p_boundary).norm();
+        .get(v_dest)
+        .expect("anchor destination has a position");
+    if let Some(line) = Line::through(p_dest, p) {
+        let length = (p - p_dest).norm();
         let seg = CurveSegment::line(line, 0.0, length);
         solid.edge_geom.insert(mev.edge, seg);
     }
 
     interior_map.insert(key, mev.vertex);
 
-    // The mev tail IS the sibling's chord on this face → mark it.
-    chord_already_added[sibling_idx] = true;
+    // If the mev tail IS a sibling's chord, mark it as added so phase C skips.
+    // For the stinger path, the tail is artificial (not a chord) — don't mark.
+    if let Some(sib) = sibling_idx {
+        chord_already_added[sib] = true;
+    }
 
     mev.vertex
 }

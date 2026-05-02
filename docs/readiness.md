@@ -43,6 +43,7 @@ file via `cargo run --example readiness_matrix -p kerf-brep`.
 | 2026-05-01 | m33  | 91/168 (54%) | converted panics to recoverable errors; baseline |
 | 2026-05-01 | m34  | 104/168 (62%) | stitch tolerates zero-length edges; +13 cases  |
 | 2026-05-01 | m35  | 104/168 (62%) | stitch picks twin pair from N≥3; canonical-cycle dedup. No new cases unblocked: bucket-#3 failures all have 3 half-edges in the SAME direction, which is a coplanar-face classification problem, not a stitch problem. |
+| 2026-05-01 | m36  | 108/168 (64%) | M11 phase B no longer panics on orphan interior endpoints — when no boundary-anchored sibling exists, mev a "stinger" edge from any face boundary vertex to the interior point. Most M11 failures now flow downstream and trip the bucket-#2 stitch single-half-edge gap (recoverable via try_*); 4 cases now succeed end-to-end. Added tests/readiness_floor.rs that asserts ok ≥ 108/168 so future regressions get caught. |
 
 ## Driving toward 100%
 

@@ -151,20 +151,17 @@ mod method_tests {
     use kerf_topo::validate;
 
     #[test]
-    fn try_union_returns_err_for_unsupported_curved_case() {
-        // Cylinder piercing through a box face hits the M11 phase-B interior
-        // endpoint limit. With panic-based booleans this would crash; with
-        // try_union we get a structured error.
+    fn try_union_returns_err_cleanly_on_remaining_unsupported_case() {
+        // After M36's stinger fix, M11 phase B no longer panics. The cylinder
+        // ∪ box case now flows through to the stitch stage, where the
+        // kept-face graph still has unmatched half-edges (a downstream
+        // classifier gap). The point of this test is that the failure is
+        // *cleanly recoverable* via try_*, not that this specific config
+        // works — that's docs/readiness.md territory.
         let block = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(-1.0, -1.0, -1.0));
         let cyl = cylinder_faceted(0.6, 3.0, 12);
         let r = block.try_union(&cyl);
         assert!(r.is_err(), "expected curved-piercing union to fail cleanly");
-        let err = r.unwrap_err();
-        assert!(
-            err.message.contains("interior endpoint"),
-            "panic message should mention interior endpoint: {}",
-            err.message
-        );
     }
 
     #[test]
