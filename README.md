@@ -49,6 +49,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M28 — Half-overlap difference fix. Two boxes shifted in x panicked in the stitcher because A's coincident-with-B face classified as OnBoundary and was kept, leaving the kept-face graph with an unmatched half-edge. Changed `keep_a_face(OnBoundary, Difference)` from `true` to `false`: the shared boundary is re-emitted via B's flipped face when needed. Adds `half_overlap_difference_yields_sub_box` regression test. CLI screenshot: `screenshots/cli_difference.png`.
 - [x] M29 — ASCII STL reader + auto-sniff. `read_ascii` parses the `vertex x y z` lines (recomputing normals on import); `read_stl_auto` sniffs the first 5 bytes and dispatches to ASCII or binary, with a fallback for binary STLs that happen to start with the literal "solid" prefix. CLI uses `read_stl_to_solid` so `kerf union ascii.stl binary.stl out.stl` works regardless of input format.
 - [x] M30 — `kerf` installable + pipeable. `cargo install --path crates/kerf-brep --bin kerf` produces a 625 KB release binary. `-` for any path reads stdin / writes stdout, so booleans chain via shell pipes: `kerf union a.stl b.stl - | kerf difference - c.stl out.stl`.
+- [x] M31 — Wavefront OBJ importer. `read_obj` parses `v` and `f` lines, triangulates quads / n-gons via fan, supports `i/uv/n` slash-form face tokens and negative (relative) indices, ignores `vt` / `vn` / `g` / materials. `read_obj_to_solid` is the end-to-end importer. Box round-trips through OBJ losslessly (8V/18E/12F).
 
 ## Visual gallery
 
