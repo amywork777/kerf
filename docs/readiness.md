@@ -46,6 +46,37 @@ file via `cargo run --example readiness_matrix -p kerf-brep`.
 | 2026-05-01 | m36  | 108/168 (64%) | M11 phase B no longer panics on orphan interior endpoints — when no boundary-anchored sibling exists, mev a "stinger" edge from any face boundary vertex to the interior point. Most M11 failures now flow downstream and trip the bucket-#2 stitch single-half-edge gap (recoverable via try_*); 4 cases now succeed end-to-end. Added tests/readiness_floor.rs that asserts ok ≥ 108/168 so future regressions get caught. |
 | 2026-05-01 | m37  | 117/168 (70%) | Argument-swap retry: for commutative ops (Union, Intersection), if (a, b) trips a classifier asymmetry, retry with (b, a). 9 cases unblocked — confirms the OnBoundary classifier is genuinely order-dependent. Floor bumped to 117. |
 
+## Bucket #2 root cause (analysis pending fix)
+
+Surfaced via `examples/debug_union_corner.rs` for the `union(box[2³], box-corner)`
+case. Two cubes overlap at a corner: `A = [0,2]³`, `B = [1,3]³`. After the
+splitter cuts each face along intersection chords, A's right face (x=2)
+becomes two pieces:
+
+- **L-shape** (outside B): kept (Outside) ✓
+- **Inner square** (inside B): dropped (Inside) ✓
+
+The L-shape's inner border is a chord at y=1 / z=1 connecting it to the inner
+square. For the manifold output, this chord needs exactly two incident faces.
+But:
+
+- L-shape is kept (1 half-edge contribution).
+- Inner square is dropped — would have been the 2nd half-edge.
+- The face on B's plane (y=1) at this chord is `B's front face split piece`
+  (inside A), classified Inside → also dropped for union.
+
+So the chord ends up with 1 half-edge → stitch panics.
+
+**The chord is geometrically interior to the union solid.** Both of its
+"perpendicular neighbors" (on B's bottom plane and B's front plane) are
+union-interior, so the chord *shouldn't exist* in the output. The proper fix
+is a **post-classify chord-merge pass**: detect kept faces whose split-chord
+boundaries lead to an entirely-interior region, merge those faces back to
+their pre-split form so the artificial chord disappears.
+
+This is a real classifier-splitter contract change, not a one-liner. Tracked
+as M38.
+
 ## Driving toward 100%
 
 Per-bucket fix order, easiest first:
