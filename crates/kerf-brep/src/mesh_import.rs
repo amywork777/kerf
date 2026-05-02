@@ -11,7 +11,7 @@
 //! more than two triangles) returns an error.
 
 use std::collections::HashMap;
-use std::io::{self, Read};
+use std::io::{self, BufRead, BufReader, Read};
 
 use kerf_geom::{Frame, Plane, Point3};
 use kerf_topo::validate;
@@ -32,6 +32,8 @@ pub enum MeshImportError {
     DegenerateTriangle(usize),
     /// Topology validation rejected the assembled solid.
     InvalidTopology(String),
+    /// ASCII STL parse failed at this line / token.
+    AsciiParse(String),
     /// I/O error while reading the input stream.
     Io(io::Error),
 }
@@ -53,6 +55,7 @@ impl std::fmt::Display for MeshImportError {
             }
             Self::DegenerateTriangle(i) => write!(f, "triangle {i} has zero area"),
             Self::InvalidTopology(s) => write!(f, "invalid topology: {s}"),
+            Self::AsciiParse(s) => write!(f, "ascii parse error: {s}"),
             Self::Io(e) => write!(f, "io error: {e}"),
         }
     }
@@ -176,6 +179,65 @@ pub fn from_triangles(tris: &[[Point3; 3]]) -> Result<Solid, MeshImportError> {
     Ok(s)
 }
 
+/// Read an ASCII STL stream and return a `FaceSoup`.
+///
+/// Only the `vertex x y z` lines are parsed — `facet normal` is recomputed
+/// from the triangle corners on import. Whitespace-tolerant; rejects files
+/// with non-3-vertex loops.
+pub fn read_ascii(r: &mut impl Read) -> Result<FaceSoup, MeshImportError> {
+    let reader = BufReader::new(r);
+    let mut tris: Vec<[Point3; 3]> = Vec::new();
+    let mut current: Vec<Point3> = Vec::with_capacity(3);
+    for line in reader.lines() {
+        let line = line?;
+        let trimmed = line.trim();
+        if trimmed.starts_with("vertex") {
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.len() != 4 {
+                return Err(MeshImportError::AsciiParse(format!(
+                    "vertex line needs 3 floats, got {trimmed:?}"
+                )));
+            }
+            let parse_f = |s: &str| {
+                s.parse::<f64>()
+                    .map_err(|_| MeshImportError::AsciiParse(format!("bad float {s:?}")))
+            };
+            let x = parse_f(parts[1])?;
+            let y = parse_f(parts[2])?;
+            let z = parse_f(parts[3])?;
+            current.push(Point3::new(x, y, z));
+        } else if trimmed.starts_with("endloop") {
+            if current.len() != 3 {
+                return Err(MeshImportError::AsciiParse(format!(
+                    "facet has {} vertices (expected 3)",
+                    current.len()
+                )));
+            }
+            tris.push([current[0], current[1], current[2]]);
+            current.clear();
+        }
+    }
+    Ok(FaceSoup { triangles: tris })
+}
+
+/// Sniff the first 5 bytes to choose between ASCII and binary STL, then parse.
+///
+/// Some binary STL files start with the literal text "solid ", which can
+/// fool a naive sniffer. The fallback heuristic: if the input begins with
+/// "solid" but ASCII parsing returns zero triangles, retry as binary.
+pub fn read_stl_auto(buf: &[u8]) -> Result<FaceSoup, MeshImportError> {
+    let looks_ascii = buf.starts_with(b"solid");
+    if looks_ascii {
+        if let Ok(soup) = read_ascii(&mut &buf[..]) {
+            if !soup.triangles.is_empty() {
+                return Ok(soup);
+            }
+        }
+        // Misleading "solid" header but actually binary: fall through.
+    }
+    read_binary(&mut &buf[..])
+}
+
 /// Read a binary STL stream and return a `FaceSoup`.
 pub fn read_binary(r: &mut impl Read) -> Result<FaceSoup, MeshImportError> {
     let mut header = [0u8; 80];
@@ -210,6 +272,14 @@ pub fn read_stl_binary_to_solid(r: &mut impl Read) -> Result<Solid, MeshImportEr
     from_triangles(&soup.triangles)
 }
 
+/// Read any STL stream (ASCII or binary, sniffed automatically) into a `Solid`.
+pub fn read_stl_to_solid(r: &mut impl Read) -> Result<Solid, MeshImportError> {
+    let mut buf = Vec::new();
+    r.read_to_end(&mut buf)?;
+    let soup = read_stl_auto(&buf)?;
+    from_triangles(&soup.triangles)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,6 +302,36 @@ mod tests {
         assert_eq!(s2.vertex_count(), 8);
         assert_eq!(s2.edge_count(), 18);
         assert_eq!(s2.face_count(), 12);
+    }
+
+    #[test]
+    fn round_trip_box_through_ascii_stl() {
+        use crate::write_ascii;
+        let s = box_(Vec3::new(1.0, 2.0, 3.0));
+        let soup = tessellate(&s, 8);
+        let mut buf = Vec::new();
+        write_ascii(&soup, "round_trip", &mut buf).unwrap();
+
+        let s2 = read_stl_to_solid(&mut buf.as_slice()).unwrap();
+        assert_eq!(s2.vertex_count(), 8);
+        assert_eq!(s2.edge_count(), 18);
+        assert_eq!(s2.face_count(), 12);
+    }
+
+    #[test]
+    fn auto_sniff_picks_correct_format() {
+        let s = box_(Vec3::new(1.0, 1.0, 1.0));
+        let soup = tessellate(&s, 8);
+        // Binary path
+        let mut bin = Vec::new();
+        crate::write_binary(&soup, "x", &mut bin).unwrap();
+        let soup_bin = read_stl_auto(&bin).unwrap();
+        assert_eq!(soup_bin.triangles.len(), 12);
+        // ASCII path
+        let mut ascii = Vec::new();
+        crate::write_ascii(&soup, "x", &mut ascii).unwrap();
+        let soup_ascii = read_stl_auto(&ascii).unwrap();
+        assert_eq!(soup_ascii.triangles.len(), 12);
     }
 
     #[test]

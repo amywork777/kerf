@@ -47,6 +47,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M26 — Booleans on imported meshes. Imported B-reps feed back into `union`/`intersection`/`difference` exactly like native primitives — every triangle face is a Plane surface. Closes the loop: build → tessellate → STL → import → boolean → STL. Tested for native↔imported and imported↔imported on overlapping boxes.
 - [x] M27 — `kerf` CLI binary. `cargo run --bin kerf -- <union|intersection|difference> a.stl b.stl out.stl` runs an end-to-end boolean on any binary STL inputs the importer accepts. Screenshots: `screenshots/cli_union.png`, `screenshots/cli_intersection.png`.
 - [x] M28 — Half-overlap difference fix. Two boxes shifted in x panicked in the stitcher because A's coincident-with-B face classified as OnBoundary and was kept, leaving the kept-face graph with an unmatched half-edge. Changed `keep_a_face(OnBoundary, Difference)` from `true` to `false`: the shared boundary is re-emitted via B's flipped face when needed. Adds `half_overlap_difference_yields_sub_box` regression test. CLI screenshot: `screenshots/cli_difference.png`.
+- [x] M29 — ASCII STL reader + auto-sniff. `read_ascii` parses the `vertex x y z` lines (recomputing normals on import); `read_stl_auto` sniffs the first 5 bytes and dispatches to ASCII or binary, with a fallback for binary STLs that happen to start with the literal "solid" prefix. CLI uses `read_stl_to_solid` so `kerf union ascii.stl binary.stl out.stl` works regardless of input format.
 
 ## Visual gallery
 

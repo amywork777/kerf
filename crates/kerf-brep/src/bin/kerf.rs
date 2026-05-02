@@ -12,7 +12,7 @@ use std::io::{BufReader, BufWriter};
 use std::process::ExitCode;
 
 use kerf_brep::tessellate::tessellate;
-use kerf_brep::{read_stl_binary_to_solid, write_binary, Solid};
+use kerf_brep::{read_stl_to_solid, write_binary, Solid};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -89,5 +89,5 @@ fn main() -> ExitCode {
 fn load_stl(path: &str) -> Result<Solid, String> {
     let f = File::open(path).map_err(|e| e.to_string())?;
     let mut r = BufReader::new(f);
-    read_stl_binary_to_solid(&mut r).map_err(|e| e.to_string())
+    read_stl_to_solid(&mut r).map_err(|e| e.to_string())
 }

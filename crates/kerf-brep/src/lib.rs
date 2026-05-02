@@ -12,7 +12,7 @@ pub mod stl;
 pub mod tessellate;
 
 pub use geometry::{CurveKind, CurveSegment, Sense, SurfaceKind};
-pub use mesh_import::{from_triangles, read_stl_binary_to_solid, MeshImportError};
+pub use mesh_import::{from_triangles, read_ascii, read_stl_auto, read_stl_binary_to_solid, read_stl_to_solid, MeshImportError};
 pub use obj::write_obj;
 pub use primitives::{box_, box_at, cone, cylinder, extrude_polygon, frustum, revolve_polyline, sphere, torus};
 pub use serde_io::{read_json, write_json};
