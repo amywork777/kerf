@@ -3,6 +3,7 @@
 pub mod box_;
 pub mod cone;
 pub mod cylinder;
+pub mod cylinder_faceted;
 pub mod extrude;
 pub mod frustum;
 pub mod revolve;
@@ -12,6 +13,7 @@ pub mod torus;
 pub use box_::{box_, box_at};
 pub use cone::cone;
 pub use cylinder::cylinder;
+pub use cylinder_faceted::cylinder_faceted;
 pub use extrude::extrude_polygon;
 pub use frustum::frustum;
 pub use revolve::revolve_polyline;
