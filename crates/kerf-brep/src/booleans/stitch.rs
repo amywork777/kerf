@@ -421,29 +421,45 @@ fn drop_orphan_contributors(
 ) -> (Vec<KeptFace>, Vec<Vec<usize>>) {
     let mut keep_mask: Vec<bool> = vec![true; kept.len()];
     loop {
-        // Build edge -> contributing faces map across currently-kept faces.
-        let mut edge_to_faces: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+        // Build edge -> [(face_idx, direction)] across currently-kept faces.
+        // Direction true = forward (matches canonical key order); false = backward.
+        let mut edge_to_dir_faces: HashMap<(usize, usize), Vec<(usize, bool)>> = HashMap::new();
         for (face_idx, vidx) in face_to_vidx.iter().enumerate() {
             if !keep_mask[face_idx] {
                 continue;
             }
             let n = vidx.len();
             for i in 0..n {
-                let key = canonical_edge_key(vidx[i], vidx[(i + 1) % n]);
-                edge_to_faces.entry(key).or_default().push(face_idx);
+                let v_start = vidx[i];
+                let v_end = vidx[(i + 1) % n];
+                if v_start == v_end {
+                    // Self-loop edges (e.g., M39f vase apex collapse) are
+                    // routed around edge_pairs in stage 4, so they don't
+                    // contribute to twin-pairing conflicts here.
+                    continue;
+                }
+                let key = canonical_edge_key(v_start, v_end);
+                let forward = (v_start, v_end) == key;
+                edge_to_dir_faces.entry(key).or_default().push((face_idx, forward));
             }
         }
 
-        // Count conflicts per face: edges where this face appears alongside
-        // 3+ contributors.
+        // Count conflicts per face. An edge is "in conflict" if:
+        //   - it has 3+ entries (orphan-contributor case, M39c), OR
+        //   - it has 2+ entries in the SAME direction (M39h: same-direction
+        //     duplicates that can't be paired as twins).
         let mut conflicts: Vec<usize> = vec![0; kept.len()];
         let mut any_conflict = false;
-        for entries in edge_to_faces.values() {
-            if entries.len() < 3 {
+        for entries in edge_to_dir_faces.values() {
+            let total = entries.len();
+            let forward_count = entries.iter().filter(|(_, fw)| *fw).count();
+            let backward_count = total - forward_count;
+            let bad = total >= 3 || forward_count >= 2 || backward_count >= 2;
+            if !bad {
                 continue;
             }
             any_conflict = true;
-            for &f in entries {
+            for &(f, _) in entries {
                 conflicts[f] += 1;
             }
         }

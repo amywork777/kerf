@@ -8,9 +8,9 @@ use kerf_brep::primitives::{box_, box_at};
 use kerf_geom::{Point3, Tolerance, Vec3};
 
 fn main() {
-    let a = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(1.0, 0.0, 0.0)); // box-shift
-    let b = box_at(Vec3::new(0.6, 0.6, 0.6), Point3::new(0.7, 0.7, 0.7)); // box-nested
-    let op = BooleanOp::Union;
+    let a = box_at(Vec3::new(0.6, 0.6, 0.6), Point3::new(0.7, 0.7, 0.7)); // box-nested
+    let b = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(1.0, 0.0, 0.0)); // box-shift
+    let op = BooleanOp::Intersection;
     let tol = Tolerance::default();
 
     let mut a = a.clone();

@@ -37,14 +37,20 @@ pub fn face_centroid(solid: &Solid, face: FaceId) -> Option<Point3> {
         return Some(Point3::from(sum / n));
     }
 
-    // M39: Area-weighted centroid via fan triangulation from vertex 0.
-    // For non-convex polygons (M36 stinger fjords, M37 L-shapes after
-    // boolean splits), the vertex-average centroid lands at a "fake"
-    // position — often on the OTHER solid's boundary at the polygon's
-    // concavity, mis-classifying the face as OnBoundary instead of
-    // Outside/Inside. The signed-area-weighted formula correctly handles
-    // concave polygons because triangles outside the polygon contribute
-    // negative area that cancels their position contribution.
+    // M39 / M39i: pick a 2D classification point for the face.
+    //
+    // (1) Compute the signed-area-weighted centroid via fan triangulation —
+    //     correctly handles convex and simple-concave polygons.
+    // (2) Verify that point lies INSIDE the polygon (point-in-polygon via
+    //     crossing-number ray cast). For "outer-ring" polygons traversed
+    //     via M36 stinger fjords (outer perimeter + spike to a chord
+    //     vertex inside an inner ring), the area-weighted centroid often
+    //     lands at the spike's anchor — geometrically inside the inner
+    //     ring's hole, NOT inside the L-shape's body — yielding wrong
+    //     classification.
+    // (3) If outside, fall back to the first non-degenerate fan triangle's
+    //     centroid; that point is guaranteed to lie inside its own
+    //     triangle, which lies inside the polygon body.
     if let Some(plane) = solid.face_geom.get(face)
         && let SurfaceKind::Plane(plane) = plane
     {
@@ -60,22 +66,30 @@ pub fn face_centroid(solid: &Solid, face: FaceId) -> Option<Point3> {
         let mut weighted_x = 0.0f64;
         let mut weighted_y = 0.0f64;
         let mut total_area = 0.0f64;
+        let mut first_good_centroid: Option<(f64, f64)> = None;
         for i in 1..unique.len() - 1 {
             let (pix, piy) = to_2d(unique[i]);
             let (pjx, pjy) = to_2d(unique[i + 1]);
-            // Signed triangle area: 0.5 * cross((Pi - P0), (Pj - P0)).
             let area = 0.5 * ((pix - p0x) * (pjy - p0y) - (piy - p0y) * (pjx - p0x));
-            // Triangle centroid (average of 3 vertices).
             let cx = (p0x + pix + pjx) / 3.0;
             let cy = (p0y + piy + pjy) / 3.0;
             weighted_x += area * cx;
             weighted_y += area * cy;
             total_area += area;
+            if first_good_centroid.is_none() && area.abs() > 1e-9 {
+                first_good_centroid = Some((cx, cy));
+            }
         }
         if total_area.abs() > 1e-12 {
-            let cx = weighted_x / total_area;
-            let cy = weighted_y / total_area;
-            return Some(origin + cx * fx + cy * fy);
+            let area_cx = weighted_x / total_area;
+            let area_cy = weighted_y / total_area;
+            let poly_2d: Vec<(f64, f64)> = unique.iter().map(|p| to_2d(*p)).collect();
+            if point_in_polygon_2d(area_cx, area_cy, &poly_2d) {
+                return Some(origin + area_cx * fx + area_cy * fy);
+            }
+            if let Some((cx, cy)) = first_good_centroid {
+                return Some(origin + cx * fx + cy * fy);
+            }
         }
     }
 
@@ -111,6 +125,29 @@ pub fn point_on_solid_boundary(solid: &Solid, p: Point3, tol: &Tolerance) -> Opt
         }
     }
     None
+}
+
+/// Crossing-number point-in-polygon test for a 2D polygon (works for both
+/// convex and concave polygons, including self-intersecting/spike geometry).
+fn point_in_polygon_2d(px: f64, py: f64, poly: &[(f64, f64)]) -> bool {
+    let n = poly.len();
+    if n < 3 {
+        return false;
+    }
+    let mut inside = false;
+    let mut j = n - 1;
+    for i in 0..n {
+        let (xi, yi) = poly[i];
+        let (xj, yj) = poly[j];
+        if (yi > py) != (yj > py) {
+            let x_intercept = (xj - xi) * (py - yi) / (yj - yi) + xi;
+            if px < x_intercept {
+                inside = !inside;
+            }
+        }
+        j = i;
+    }
+    inside
 }
 
 fn point_in_convex_polygon_2d(
