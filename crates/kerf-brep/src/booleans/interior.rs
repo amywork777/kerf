@@ -64,12 +64,6 @@ enum Side {
     B,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum EndpointSide {
-    Start,
-    End,
-}
-
 type Key = [i64; 3];
 
 fn quantize(p: Point3, tol: &Tolerance) -> Key {
@@ -117,79 +111,77 @@ pub fn resolve_interior_endpoints(
         let _ = i;
     }
 
-    // Second pass: handle deferred ones.
-    for i in 0..n {
-        if endpoints[i].is_some() {
-            continue;
+    // Second pass: handle deferred ones with multi-pass fixpoint iteration.
+    //
+    // M40: minimize stingers by deferring resolution until a sibling-with-boundary
+    // exists. Iterating multiple passes lets a chord chain propagate from one
+    // bootstrap-stinger across the whole ring instead of producing many short
+    // disconnected sticker chains. With one chain, phase C only needs ONE mef
+    // call (the closing chord), producing clean annulus + disk topology.
+    //
+    // Algorithm:
+    //   - Pass: try to resolve every unresolved intersection's endpoints in
+    //     no-stinger mode.
+    //   - If pass made progress, iterate.
+    //   - If stuck, force allow_stinger on the next pass (one shot of stinger)
+    //     to bootstrap, then go back to no-stinger iteration.
+    //   - Cap total passes for safety.
+    let max_passes = (n * 4).max(8);
+    let mut allow_stinger_next_pass = false;
+    for _pass in 0..max_passes {
+        let mut progress = false;
+        let mut any_unresolved = false;
+        let allow_stinger = allow_stinger_next_pass;
+        allow_stinger_next_pass = false;
+
+        for i in 0..n {
+            if endpoints[i].is_some() {
+                continue;
+            }
+            let inter = &intersections[i];
+
+            let start_va = try_resolve_endpoint(
+                a, inter.face_a, inter.start, tol, Side::A, i,
+                intersections, split_outcome, &mut interior_vertex_a,
+                &mut chord_already_added_a, allow_stinger,
+            );
+            let end_va = try_resolve_endpoint(
+                a, inter.face_a, inter.end, tol, Side::A, i,
+                intersections, split_outcome, &mut interior_vertex_a,
+                &mut chord_already_added_a, allow_stinger,
+            );
+            let start_vb = try_resolve_endpoint(
+                b, inter.face_b, inter.start, tol, Side::B, i,
+                intersections, split_outcome, &mut interior_vertex_b,
+                &mut chord_already_added_b, allow_stinger,
+            );
+            let end_vb = try_resolve_endpoint(
+                b, inter.face_b, inter.end, tol, Side::B, i,
+                intersections, split_outcome, &mut interior_vertex_b,
+                &mut chord_already_added_b, allow_stinger,
+            );
+
+            match (start_va, end_va, start_vb, end_vb) {
+                (Some(sva), Some(eva), Some(svb), Some(evb)) => {
+                    endpoints[i] = Some((
+                        EndpointVertices { vertex_a: sva, vertex_b: svb },
+                        EndpointVertices { vertex_a: eva, vertex_b: evb },
+                    ));
+                    progress = true;
+                }
+                _ => {
+                    any_unresolved = true;
+                }
+            }
         }
 
-        let inter = &intersections[i];
-
-        // Resolve start / end for solid A (face_a).
-        let start_va = resolve_one_endpoint(
-            a,
-            inter.face_a,
-            inter.start,
-            tol,
-            Side::A,
-            EndpointSide::Start,
-            i,
-            intersections,
-            split_outcome,
-            &mut interior_vertex_a,
-            &mut chord_already_added_a,
-        );
-        let end_va = resolve_one_endpoint(
-            a,
-            inter.face_a,
-            inter.end,
-            tol,
-            Side::A,
-            EndpointSide::End,
-            i,
-            intersections,
-            split_outcome,
-            &mut interior_vertex_a,
-            &mut chord_already_added_a,
-        );
-        // Solid B (face_b).
-        let start_vb = resolve_one_endpoint(
-            b,
-            inter.face_b,
-            inter.start,
-            tol,
-            Side::B,
-            EndpointSide::Start,
-            i,
-            intersections,
-            split_outcome,
-            &mut interior_vertex_b,
-            &mut chord_already_added_b,
-        );
-        let end_vb = resolve_one_endpoint(
-            b,
-            inter.face_b,
-            inter.end,
-            tol,
-            Side::B,
-            EndpointSide::End,
-            i,
-            intersections,
-            split_outcome,
-            &mut interior_vertex_b,
-            &mut chord_already_added_b,
-        );
-
-        endpoints[i] = Some((
-            EndpointVertices {
-                vertex_a: start_va,
-                vertex_b: start_vb,
-            },
-            EndpointVertices {
-                vertex_a: end_va,
-                vertex_b: end_vb,
-            },
-        ));
+        if !any_unresolved {
+            break;
+        }
+        if !progress {
+            // Stuck: allow stinger on next pass to bootstrap.
+            allow_stinger_next_pass = true;
+        }
     }
 
     InteriorResolution {
@@ -203,29 +195,33 @@ pub fn resolve_interior_endpoints(
 /// If it's OnVertex / OnEdge, just return the vertex (after splitting if needed).
 /// If it's Interior, find a sibling intersection that has this point as ITS
 /// endpoint AND a boundary endpoint we can anchor mev on.
+///
+/// `allow_stinger`: when false, returns None on no-sibling case (M40 deferred
+/// resolution — caller iterates and bootstraps with stinger only when needed).
+/// When true, falls back to stinger as the M36 final-resort path.
 #[allow(clippy::too_many_arguments)]
-fn resolve_one_endpoint(
+fn try_resolve_endpoint(
     solid: &mut Solid,
     face: FaceId,
     p: Point3,
     tol: &Tolerance,
     side: Side,
-    _endpoint_side: EndpointSide,
     intersection_idx: usize,
     intersections: &[FaceIntersection],
     split_outcome: &SplitOutcome,
     interior_map: &mut HashMap<(FaceId, Key), VertexId>,
     chord_already_added: &mut [bool],
-) -> VertexId {
+    allow_stinger: bool,
+) -> Option<VertexId> {
     // Fast path: existing interior vertex from a previous mev call.
     let key = (face, quantize(p, tol));
     if let Some(&v) = interior_map.get(&key) {
-        return v;
+        return Some(v);
     }
 
     // Try the simple boundary path first: point is on a vertex / edge.
     if let Some(v) = ensure_vertex_at(solid, face, p, tol) {
-        return v;
+        return Some(v);
     }
 
     // It's interior. Find a sibling intersection that:
@@ -243,6 +239,10 @@ fn resolve_one_endpoint(
         intersections,
         split_outcome,
     );
+
+    if sibling.is_none() && !allow_stinger {
+        return None;
+    }
 
     // Find face's outer loop once — needed by both the sibling and stinger paths.
     let outer_loop = solid
@@ -316,7 +316,7 @@ fn resolve_one_endpoint(
         chord_already_added[sib] = true;
     }
 
-    mev.vertex
+    Some(mev.vertex)
 }
 
 /// Look for a sibling FaceIntersection (different index) whose:
