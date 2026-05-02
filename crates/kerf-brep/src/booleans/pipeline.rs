@@ -80,30 +80,39 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
     let interior = resolve_interior_endpoints(&mut a, &mut b, &intersections, &outcome, tol);
     let _added = add_intersection_edges(&mut a, &mut b, &intersections, &interior, tol);
 
-    // Collect kept and dropped face polygons up front, tagged by source solid
-    // and classification. The chord-merge pass needs both: (a) restrict to
-    // same-solid sibling pairs (cross-solid merge breaks adjacency), and (b)
-    // skip merges where the dropped face is OnBoundary (dropped only because
-    // the OTHER solid contributed the same face).
+    // Collect kept and dropped face polygons up front, tagged by source solid,
+    // classification, and ancestor (M38b face provenance). chord-merge uses:
+    //   - source: only merge same-solid sibling pairs (cross-solid breaks adj)
+    //   - cls: only merge Inside-dropped siblings (OnBoundary-dropped means
+    //     the OTHER solid covers that region)
+    //   - ancestor: only merge same-original-face sibling pairs (geometric
+    //     plane-equality is necessary but not sufficient)
     let mut kept: Vec<KeptFace> = Vec::new();
     let mut kept_source: Vec<u8> = Vec::new();
+    let mut kept_ancestor: Vec<(u8, u64)> = Vec::new();
     let mut dropped: Vec<KeptFace> = Vec::new();
     let mut dropped_source: Vec<u8> = Vec::new();
     let mut dropped_cls: Vec<FaceClassification> = Vec::new();
+    let mut dropped_ancestor: Vec<(u8, u64)> = Vec::new();
+    use slotmap::Key as _;
     for face_id in a.topo.face_ids() {
         let cls = classify_face(&a, face_id, &b, tol);
         let Some(polygon) = face_polygon(&a, face_id) else {
             continue;
         };
         let surface = a.face_geom.get(face_id).cloned().unwrap();
+        let ancestor = a.face_ancestor(face_id);
+        let anc_key = (0u8, ancestor.data().as_ffi());
         let face = KeptFace { polygon, surface };
         if keep_a_face(cls, op) {
             kept.push(face);
             kept_source.push(0);
+            kept_ancestor.push(anc_key);
         } else {
             dropped.push(face);
             dropped_source.push(0);
             dropped_cls.push(cls);
+            dropped_ancestor.push(anc_key);
         }
     }
     let flip_b = flip_b_face(op);
@@ -113,6 +122,8 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
             continue;
         };
         let surface = b.face_geom.get(face_id).cloned().unwrap();
+        let ancestor = b.face_ancestor(face_id);
+        let anc_key = (1u8, ancestor.data().as_ffi());
         let face_kept = keep_b_face(cls, op);
         if face_kept && flip_b {
             polygon.reverse();
@@ -121,23 +132,24 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
         if face_kept {
             kept.push(face);
             kept_source.push(1);
+            kept_ancestor.push(anc_key);
         } else {
             dropped.push(face);
             dropped_source.push(1);
             dropped_cls.push(cls);
+            dropped_ancestor.push(anc_key);
         }
     }
 
-    // M38 attempt 3: chord-merge for same-solid Inside-classified dropped
-    // siblings only. OnBoundary-dropped faces are skipped — they were
-    // dropped because their twin in the OTHER solid is kept (coplanar
-    // duplicate dedup), and absorbing them would re-cover that region.
-    let _merge_count = crate::booleans::chord_merge::chord_merge_pass_same_source(
+    // M38b: chord-merge with ancestor gate.
+    let _merge_count = crate::booleans::chord_merge::chord_merge_pass_with_ancestor(
         &mut kept,
         &kept_source,
+        &kept_ancestor,
         &dropped,
         &dropped_source,
         &dropped_cls,
+        &dropped_ancestor,
         tol,
     );
 

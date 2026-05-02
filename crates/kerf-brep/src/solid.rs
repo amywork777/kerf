@@ -14,6 +14,13 @@ pub struct Solid {
     pub vertex_geom: SecondaryMap<VertexId, Point3>,
     pub edge_geom: SecondaryMap<EdgeId, CurveSegment>,
     pub face_geom: SecondaryMap<FaceId, SurfaceKind>,
+    /// Maps each face to its "ancestor" — the original face it descended from
+    /// via splitter mef calls. Faces that haven't been split point to
+    /// themselves. Used by the M38b chord-merge to restrict merges to
+    /// same-original-face sibling pairs. Lookup `face_ancestor(f)` returns
+    /// `f` itself if no entry exists.
+    #[serde(default)]
+    pub face_provenance: SecondaryMap<FaceId, FaceId>,
 }
 
 impl Solid {
@@ -40,6 +47,12 @@ impl Solid {
 
     pub fn surface_at(&self, f: FaceId) -> Option<&SurfaceKind> {
         self.face_geom.get(f)
+    }
+
+    /// Return the original face `f` descended from. Faces that haven't been
+    /// split (or were never tagged) return themselves.
+    pub fn face_ancestor(&self, f: FaceId) -> FaceId {
+        self.face_provenance.get(f).copied().unwrap_or(f)
     }
 
     /// Compute the union of `self` and `other` using the default tolerance.

@@ -184,6 +184,75 @@ fn chord_used_by_other_kept_face(
     false
 }
 
+/// Like [`chord_merge_pass_same_source`] but additionally requires the kept
+/// and dropped faces to share an ancestor (same original face before split).
+/// This is the M38b gate that lets us merge siblings without geometric
+/// false-positives.
+pub fn chord_merge_pass_with_ancestor(
+    kept: &mut Vec<KeptFace>,
+    kept_source: &[u8],
+    kept_ancestor: &[(u8, u64)],
+    dropped: &[KeptFace],
+    dropped_source: &[u8],
+    dropped_cls: &[FaceClassification],
+    dropped_ancestor: &[(u8, u64)],
+    tol: &Tolerance,
+) -> usize {
+    let mut available: Vec<bool> = vec![true; dropped.len()];
+    let mut merge_count = 0usize;
+    loop {
+        let mut changed = false;
+        for ki in 0..kept.len() {
+            for di in 0..dropped.len() {
+                if !available[di] {
+                    continue;
+                }
+                if kept_source[ki] != dropped_source[di] {
+                    continue;
+                }
+                if kept_ancestor[ki] != dropped_ancestor[di] {
+                    continue;
+                }
+                if !matches!(dropped_cls[di], FaceClassification::Inside) {
+                    continue;
+                }
+                if !coplanar(&kept[ki].surface, &dropped[di].surface, tol) {
+                    continue;
+                }
+                let kp = &kept[ki].polygon;
+                let dp = &dropped[di].polygon;
+                let n_k = kp.len();
+                let mut chord: Option<(Point3, Point3)> = None;
+                for j in 0..n_k {
+                    let a = kp[j];
+                    let b = kp[(j + 1) % n_k];
+                    if find_directed_edge(dp, b, a, tol).is_some() {
+                        chord = Some((a, b));
+                        break;
+                    }
+                }
+                let Some((chord_a, chord_b)) = chord else {
+                    continue;
+                };
+                if chord_used_by_other_kept_face(chord_a, chord_b, &kept[ki].surface, kept, tol) {
+                    continue;
+                }
+                if let Some(merged) = merge_along_shared_chord(kp, dp, tol) {
+                    kept[ki].polygon = merged;
+                    available[di] = false;
+                    merge_count += 1;
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    merge_count
+}
+
 /// Same as [`chord_merge_pass`] but only merges kept-with-dropped pairs from
 /// the SAME source solid (both from A or both from B). Cross-solid pairs are
 /// skipped — they're typically OnBoundary coincident faces whose merge

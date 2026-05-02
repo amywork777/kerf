@@ -158,6 +158,10 @@ fn add_chord(
         solid.face_geom.insert(mef.face, parent_surface);
     }
 
+    // M38b: new face inherits ancestor — the original face this came from.
+    let ancestor = solid.face_ancestor(face);
+    solid.face_provenance.insert(mef.face, ancestor);
+
     Some((mef.edge, mef.face))
 }
 
