@@ -4,9 +4,17 @@ use kerf_geom::Point3;
 use kerf_topo::FaceId;
 
 use crate::Solid;
+use crate::geometry::SurfaceKind;
 
 /// Returns the ordered list of vertex positions along the face's outer loop.
 /// Returns `None` if the face does not exist or its outer loop is empty.
+///
+/// M40: ensures the polygon walks CCW from the face's outward normal. After
+/// kerf's mef-based splits + stinger-fjord reorderings, the half-edge loop
+/// can end up walking CW from outward — the resulting flip in DIFF mode
+/// then produces same-direction-conflicts in stitch. We detect winding via
+/// signed area against the face plane's normal and reverse the polygon when
+/// it walks the wrong way.
 pub fn face_polygon(solid: &Solid, face: FaceId) -> Option<Vec<Point3>> {
     let f = solid.topo.face(face)?;
     let lp = solid.topo.loop_(f.outer_loop())?;
@@ -22,7 +30,38 @@ pub fn face_polygon(solid: &Solid, face: FaceId) -> Option<Vec<Point3>> {
             break;
         }
     }
+
+    // Normalize winding: CCW from face's surface outward normal.
+    if let Some(SurfaceKind::Plane(plane)) = solid.face_geom.get(face) {
+        let n = plane.frame.z;
+        let signed_area_x2 = polygon_signed_area_x2(&polygon, &n);
+        if signed_area_x2 < -1e-12 {
+            polygon.reverse();
+        }
+    }
+
     Some(polygon)
+}
+
+/// Signed area times 2 of a 3D polygon projected along the given normal.
+/// Sum over edges of (p_i × p_{i+1}) · n. Positive when polygon is CCW
+/// from the +n viewpoint.
+fn polygon_signed_area_x2(polygon: &[Point3], n: &kerf_geom::Vec3) -> f64 {
+    let len = polygon.len();
+    if len < 3 {
+        return 0.0;
+    }
+    let mut sum = 0.0;
+    for i in 0..len {
+        let pi = polygon[i].coords;
+        let pj = polygon[(i + 1) % len].coords;
+        // (pi × pj) · n  = scalar triple product component contribution.
+        let cross_x = pi.y * pj.z - pi.z * pj.y;
+        let cross_y = pi.z * pj.x - pi.x * pj.z;
+        let cross_z = pi.x * pj.y - pi.y * pj.x;
+        sum += cross_x * n.x + cross_y * n.y + cross_z * n.z;
+    }
+    sum
 }
 
 #[cfg(test)]

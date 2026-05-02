@@ -8,9 +8,9 @@ use kerf_brep::primitives::{box_at};
 use kerf_geom::{Point3, Tolerance, Vec3};
 
 fn main() {
-    let mut a = box_at(Vec3::new(0.6, 0.6, 0.6), Point3::new(0.7, 0.7, 0.7));
-    let mut b = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(1.0, 0.0, 0.0));
-    let op = BooleanOp::Union;
+    let mut a = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(1.0, 0.0, 0.0));
+    let mut b = box_at(Vec3::new(0.6, 0.6, 0.6), Point3::new(0.7, 0.7, 0.7));
+    let op = BooleanOp::Difference;
     let tol = Tolerance::default();
 
     let face_b_x1 = b.topo.face_ids().find(|&fid| {
@@ -44,6 +44,8 @@ fn main() {
     let added_a = interior.chord_already_added_a.iter().filter(|x| **x).count();
     let added_b = interior.chord_already_added_b.iter().filter(|x| **x).count();
     println!("chord_already_added: A={}, B={}", added_a, added_b);
+    println!("  A flags: {:?}", interior.chord_already_added_a);
+    println!("  B flags: {:?}", interior.chord_already_added_b);
 
     let skip_chord = classify_chord_interiorness(&a, &b, &intersections, op, &tol);
     let added = add_intersection_edges(&mut a, &mut b, &intersections, &interior, &skip_chord, &tol);
@@ -59,16 +61,31 @@ fn main() {
             println!("Original x=1 face still has {} vertices", poly.len());
         }
     }
-    // List all faces near x=1 plane.
-    println!("\nB faces near x=1:");
-    for fid in b.topo.face_ids() {
-        let Some(poly) = kerf_brep::booleans::face_polygon(&b, fid) else { continue };
-        if poly.iter().any(|p| (p.x - 1.0).abs() < 1e-3) {
-            print!("  {fid:?} verts={}: ", poly.len());
-            for p in &poly {
-                print!("({:.2},{:.2},{:.2}) ", p.x, p.y, p.z);
-            }
-            println!();
+    // List ALL kept faces with classifications + polygons:
+    use kerf_brep::booleans::{classify_face, keep_a_face, keep_b_face};
+    println!("\nA all faces (kept+dropped):");
+    for fid in a.topo.face_ids() {
+        let cls = classify_face(&a, fid, &b, &tol);
+        let kept = keep_a_face(cls, op);
+        let Some(poly) = kerf_brep::booleans::face_polygon(&a, fid) else { continue };
+        let centroid = kerf_brep::booleans::face_centroid(&a, fid).unwrap_or(Point3::origin());
+        print!("  {fid:?} cls={cls:?} kept={kept} centroid=({:.2},{:.2},{:.2}) verts={}: ",
+            centroid.x, centroid.y, centroid.z, poly.len());
+        for p in &poly {
+            print!("({:.2},{:.2},{:.2}) ", p.x, p.y, p.z);
         }
+        println!();
+    }
+    println!("\nB kept faces with polygons (PRE-FLIP):");
+    for fid in b.topo.face_ids() {
+        let cls = classify_face(&b, fid, &a, &tol);
+        let kept = keep_b_face(cls, op);
+        if !kept { continue; }
+        let Some(poly) = kerf_brep::booleans::face_polygon(&b, fid) else { continue };
+        print!("  {fid:?}: ");
+        for p in &poly {
+            print!("({:.2},{:.2},{:.2}) ", p.x, p.y, p.z);
+        }
+        println!();
     }
 }

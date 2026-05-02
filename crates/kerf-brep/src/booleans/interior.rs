@@ -273,13 +273,43 @@ fn try_resolve_endpoint(
             )
         })
     } else {
-        // Stinger path: pick the loop's representative half-edge.
+        // M40: stinger path with smart anchor pick. The stinger goes from
+        // anchor.dest to the chord vertex. If two interior chord vertices
+        // happen to be collinear with a candidate anchor.dest, the stinger
+        // edge passes through the OTHER chord vertex — a later
+        // ensure_vertex_at on that vertex sees it OnEdge and split_edge's
+        // it, polluting the topology with extra vertices/edges.
+        //
+        // Pick the anchor.dest CLOSEST to the chord vertex `p`. This
+        // minimizes the stinger length, reducing the chance the stinger
+        // line crosses other chord-ring vertices.
         let lp = solid
             .topo
             .loop_(outer_loop)
             .expect("face's outer loop exists");
-        lp.half_edge()
-            .expect("outer loop has at least one half-edge")
+        let start = lp
+            .half_edge()
+            .expect("outer loop has at least one half-edge");
+        let mut best: HalfEdgeId = start;
+        let mut best_dist_sq = f64::INFINITY;
+        let mut cur = start;
+        loop {
+            let he = solid.topo.half_edge(cur).expect("he exists");
+            let twin = solid.topo.half_edge(he.twin()).expect("twin exists");
+            let v_dest = twin.origin();
+            if let Some(p_dest) = solid.vertex_geom.get(v_dest) {
+                let dist_sq = (p - *p_dest).norm_squared();
+                if dist_sq < best_dist_sq {
+                    best_dist_sq = dist_sq;
+                    best = cur;
+                }
+            }
+            cur = he.next();
+            if cur == start {
+                break;
+            }
+        }
+        best
     };
 
     // mev: grows a sticker edge from anchor.dest to a new vertex at p.
@@ -337,10 +367,15 @@ fn find_sibling_with_boundary(
     split_outcome: &SplitOutcome,
 ) -> Option<(usize, VertexId)> {
     let p_key = quantize(p, tol);
+    // M40: include self_idx as a fallback sibling. When self's OTHER endpoint
+    // is now boundary (e.g., just stingered), we can use self's own chord as
+    // the mev tail — anchoring on the boundary OTHER and growing toward p.
+    // This avoids a SECOND stinger which can pass through other chord vertices
+    // (geometric coincidence: stinger from corner → B may pass through D).
+    //
+    // Prefer non-self siblings; fall back to self if no other match.
+    let mut self_match: Option<(usize, VertexId)> = None;
     for (j, sib) in intersections.iter().enumerate() {
-        if j == self_idx {
-            continue;
-        }
         let sib_face = match side {
             Side::A => sib.face_a,
             Side::B => sib.face_b,
@@ -348,21 +383,24 @@ fn find_sibling_with_boundary(
         if sib_face != face {
             continue;
         }
-        // Which sibling endpoint matches `p`?
         let sib_start_matches = quantize(sib.start, tol) == p_key;
         let sib_end_matches = quantize(sib.end, tol) == p_key;
         if !sib_start_matches && !sib_end_matches {
             continue;
         }
-
-        // The sibling's OTHER endpoint must be on the boundary of `face` (in `solid`).
         let other_p = if sib_start_matches { sib.end } else { sib.start };
         if let PointLocation::OnVertex(v) = locate_point_on_face(solid, face, other_p, tol) {
             let _ = split_outcome.endpoints[j];
-            return Some((j, v));
+            if j == self_idx {
+                if self_match.is_none() {
+                    self_match = Some((j, v));
+                }
+            } else {
+                return Some((j, v));
+            }
         }
     }
-    None
+    self_match
 }
 
 /// Walk `loop_id` and return the first half-edge whose `next.origin == target`.
