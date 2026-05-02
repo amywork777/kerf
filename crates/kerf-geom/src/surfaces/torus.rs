@@ -4,9 +4,10 @@
 
 use crate::surface::{Domain2, Surface};
 use crate::types::{Frame, Point3, Vec3};
+use serde::{Deserialize, Serialize};
 use std::f64::consts::TAU;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Torus {
     pub frame: Frame,
     pub major_radius: f64, // R, distance from axis to tube center

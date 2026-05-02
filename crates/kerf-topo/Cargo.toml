@@ -7,8 +7,9 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-slotmap = "1.0"
+slotmap   = { version = "1.0", features = ["serde"] }
 thiserror = { workspace = true }
+serde     = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

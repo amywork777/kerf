@@ -3,9 +3,10 @@
 
 use crate::curve::Curve;
 use crate::types::{Frame, Point3, Vec3};
+use serde::{Deserialize, Serialize};
 use std::f64::consts::TAU;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Ellipse {
     pub frame: Frame,
     pub semi_major: f64, // along frame.x

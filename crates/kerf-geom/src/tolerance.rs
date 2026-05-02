@@ -1,8 +1,9 @@
 //! Numerical tolerance, threaded explicitly through every routine that compares values.
 
 use crate::types::{Point3, Vec3};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Tolerance {
     /// Distance below which two points are considered equal.
     pub point_eq: f64,

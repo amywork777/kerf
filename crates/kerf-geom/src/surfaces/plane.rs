@@ -2,8 +2,9 @@
 
 use crate::surface::{Domain2, Surface};
 use crate::types::{Frame, Point3, Vec3};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Plane {
     pub frame: Frame,
 }

@@ -2,9 +2,10 @@
 
 use crate::curve::Curve;
 use crate::types::{Frame, Point3, Vec3};
+use serde::{Deserialize, Serialize};
 use std::f64::consts::TAU;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Circle {
     pub frame: Frame,
     pub radius: f64,

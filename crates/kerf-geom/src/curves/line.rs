@@ -2,8 +2,9 @@
 
 use crate::curve::Curve;
 use crate::types::{Point3, Vec3};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Line {
     pub origin: Point3,
     pub direction: Vec3, // unit

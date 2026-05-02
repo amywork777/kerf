@@ -4,8 +4,9 @@ use slotmap::SlotMap;
 
 use crate::entity::{Edge, Face, HalfEdge, Loop, Shell, Vertex};
 use crate::id::{EdgeId, FaceId, HalfEdgeId, LoopId, ShellId, SolidId, VertexId};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Solid {
     pub(crate) vertices: SlotMap<VertexId, Vertex>,
     pub(crate) half_edges: SlotMap<HalfEdgeId, HalfEdge>,
@@ -14,7 +15,7 @@ pub struct Solid {
     pub(crate) faces: SlotMap<FaceId, Face>,
     pub(crate) shells: SlotMap<ShellId, Shell>,
     pub(crate) solid_id: Option<SolidId>,
-    pub(crate) solids: SlotMap<SolidId, ()>,
+    pub(crate) solids: SlotMap<SolidId, bool>,
 }
 
 impl Solid {

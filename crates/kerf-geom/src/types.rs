@@ -1,10 +1,12 @@
 //! Core geometric types: points, vectors, axes, and orthonormal frames.
 
+use serde::{Deserialize, Serialize};
+
 pub type Point3 = nalgebra::Point3<f64>;
 pub type Vec3 = nalgebra::Vector3<f64>;
 
 /// A directed line: a point on the line plus a unit direction.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Axis {
     pub origin: Point3,
     pub direction: Vec3, // unit length
@@ -21,7 +23,7 @@ impl Axis {
 }
 
 /// An orthonormal right-handed frame: origin + (x, y, z) unit basis.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Frame {
     pub origin: Point3,
     pub x: Vec3,

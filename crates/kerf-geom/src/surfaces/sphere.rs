@@ -4,9 +4,10 @@
 
 use crate::surface::{Domain2, Surface};
 use crate::types::{Frame, Point3, Vec3};
+use serde::{Deserialize, Serialize};
 use std::f64::consts::{PI, TAU};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Sphere {
     pub frame: Frame,
     pub radius: f64,

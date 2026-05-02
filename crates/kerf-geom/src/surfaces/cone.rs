@@ -6,9 +6,10 @@
 
 use crate::surface::{Domain2, Surface};
 use crate::types::{Frame, Point3, Vec3};
+use serde::{Deserialize, Serialize};
 use std::f64::consts::TAU;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Cone {
     pub frame: Frame,
     pub half_angle: f64, // radians, in (0, π/2)

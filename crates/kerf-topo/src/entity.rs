@@ -1,8 +1,9 @@
 //! Half-edge entities. Fields are `pub(crate)` — mutation only via Euler operators.
 
 use crate::id::{EdgeId, FaceId, HalfEdgeId, LoopId, ShellId, SolidId, VertexId};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Vertex {
     /// Some incident half-edge whose origin is this vertex. None on a freshly
     /// mvfs'd vertex with no edges yet.
@@ -15,7 +16,7 @@ impl Vertex {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HalfEdge {
     pub(crate) origin: VertexId,
     pub(crate) twin: HalfEdgeId,
@@ -48,7 +49,7 @@ impl HalfEdge {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Edge {
     pub(crate) half_edges: [HalfEdgeId; 2],
 }
@@ -59,7 +60,7 @@ impl Edge {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Loop {
     /// Some half-edge in this loop. None for an empty loop (e.g., right after mvfs).
     pub(crate) half_edge: Option<HalfEdgeId>,
@@ -75,7 +76,7 @@ impl Loop {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Face {
     pub(crate) outer_loop: LoopId,
     // Used by kemr/mfkrh (T5) and validator (T6).
@@ -96,7 +97,7 @@ impl Face {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Shell {
     pub(crate) faces: Vec<FaceId>,
     // Used by kemr/mfkrh (T5).

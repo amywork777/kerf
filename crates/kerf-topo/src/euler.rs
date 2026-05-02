@@ -19,7 +19,7 @@ impl Solid {
     /// Make Vertex-Face-Solid: bootstrap a minimal solid (1 vertex, 1 empty-loop
     /// face, 1 shell, 1 solid). Euler: V=1, E=0, F=1, R=0, S=1 → 1-0+1-0 = 2 = 2*(1-0). ✓
     pub fn mvfs(&mut self) -> MvfsResult {
-        let solid_id = self.solids.insert(());
+        let solid_id = self.solids.insert(true);
         if self.solid_id.is_none() {
             self.solid_id = Some(solid_id);
         }

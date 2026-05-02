@@ -27,7 +27,7 @@ impl Solid {
     /// Insert a fresh solid id; returns the id. The caller decides whether to
     /// also assign it to `Solid.solid_id`.
     pub fn build_insert_solid(&mut self) -> SolidId {
-        self.solids.insert(())
+        self.solids.insert(true)
     }
 
     /// Set the active solid id (one per `Solid` container).

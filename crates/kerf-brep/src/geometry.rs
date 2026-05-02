@@ -5,15 +5,16 @@
 //! the right closed-form intersection routine in M6.
 
 use kerf_geom::{Circle, Cone, Curve as _, Cylinder, Ellipse, Line, Plane, Point3, Sphere, Torus};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum CurveKind {
     Line(Line),
     Circle(Circle),
     Ellipse(Ellipse),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum SurfaceKind {
     Plane(Plane),
     Cylinder(Cylinder),
@@ -22,14 +23,14 @@ pub enum SurfaceKind {
     Torus(Torus),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CurveSegment {
     pub curve: CurveKind,
     pub range: (f64, f64),
     pub sense: Sense,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Sense {
     Forward,
     Reverse,

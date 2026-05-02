@@ -6,8 +6,9 @@ use kerf_geom::Point3;
 use kerf_topo::{EdgeId, FaceId, Solid as TopoSolid, VertexId};
 
 use crate::geometry::{CurveSegment, SurfaceKind};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Solid {
     pub topo: TopoSolid,
     pub vertex_geom: SecondaryMap<VertexId, Point3>,
