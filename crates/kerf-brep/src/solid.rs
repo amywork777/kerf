@@ -108,28 +108,63 @@ impl std::fmt::Display for BooleanError {
 impl std::error::Error for BooleanError {}
 
 /// Run `boolean_solid` inside `catch_unwind` and convert any panic into a
-/// `BooleanError`. For the commutative ops (Union, Intersection), if the
-/// (a, b) ordering trips a classifier asymmetry, retry with arguments
-/// swapped. None of the kernel's internal panics corrupt heap state, so
-/// unwinding is safe.
+/// `BooleanError`. Three retry tiers:
+///
+/// 1. Primary: `(a, b)` as given.
+/// 2. Swap: `(b, a)` for commutative ops (Union, Intersection). The OnBoundary
+///    classifier is order-dependent, so the swap sometimes succeeds where
+///    the primary doesn't.
+/// 3. Jitter: shift `b` by ~1e-9 in a fixed direction to break coplanar /
+///    coincident-vertex degeneracies. The geometric error is well below
+///    visualization precision but enough to dodge classifier ambiguity.
+///
+/// None of the kernel's internal panics corrupt heap state, so unwinding
+/// is safe.
 pub fn try_boolean_solid(
     a: &Solid,
     b: &Solid,
     op: crate::booleans::BooleanOp,
 ) -> Result<Solid, BooleanError> {
     use crate::booleans::BooleanOp;
+    // Tier 1: primary.
     if let Ok(s) = run_boolean_solid_caught(a, b, op) {
         return Ok(s);
     }
-    // Commutative-op retry: swap arguments. Difference is not commutative.
+    // Tier 2: swap (commutative ops only).
     if matches!(op, BooleanOp::Union | BooleanOp::Intersection) {
         if let Ok(s) = run_boolean_solid_caught(b, a, op) {
             return Ok(s);
         }
     }
-    // Both attempts failed — re-run primary to capture the original message.
+    // Tier 3: jitter b by ~1e-6 to break coplanar / coincident-vertex
+    // degeneracies. This is small enough to be invisible in any reasonable
+    // visualization (1 µm against meter-scale models) but two orders of
+    // magnitude larger than the default `point_eq` tolerance, so points that
+    // were ON a boundary now read as just-off.
+    let b_jittered = jitter_solid(b, kerf_geom::Vec3::new(7.0e-6, 3.0e-6, 5.0e-6));
+    if let Ok(s) = run_boolean_solid_caught(a, &b_jittered, op) {
+        return Ok(s);
+    }
+    if matches!(op, BooleanOp::Union | BooleanOp::Intersection) {
+        if let Ok(s) = run_boolean_solid_caught(&b_jittered, a, op) {
+            return Ok(s);
+        }
+    }
+    // All attempts failed — re-run primary to capture the original message.
     let payload = run_boolean_solid_caught(a, b, op).err().unwrap();
     Err(payload)
+}
+
+/// Shift every vertex of a solid by `offset`. Used as a degeneracy-breaking
+/// retry: jittering by ~1e-9 along a non-axis-aligned direction perturbs
+/// coplanar / coincident-vertex configurations enough that the OnBoundary
+/// classifier no longer sees them as degenerate.
+fn jitter_solid(s: &Solid, offset: kerf_geom::Vec3) -> Solid {
+    let mut out = s.clone();
+    for v in out.vertex_geom.values_mut() {
+        *v += offset;
+    }
+    out
 }
 
 fn run_boolean_solid_caught(

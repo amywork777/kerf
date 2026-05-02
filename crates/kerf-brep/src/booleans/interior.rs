@@ -210,7 +210,7 @@ fn resolve_one_endpoint(
     p: Point3,
     tol: &Tolerance,
     side: Side,
-    endpoint_side: EndpointSide,
+    _endpoint_side: EndpointSide,
     intersection_idx: usize,
     intersections: &[FaceIntersection],
     split_outcome: &SplitOutcome,
