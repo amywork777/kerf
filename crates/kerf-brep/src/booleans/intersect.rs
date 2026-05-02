@@ -8,7 +8,10 @@ use kerf_geom::{Plane, Point3, Tolerance};
 use kerf_topo::FaceId;
 
 use crate::Solid;
-use crate::booleans::{ClipResult, clip_line_to_convex_polygon, face_polygon};
+use crate::booleans::{
+    BooleanOp, ClipResult, FaceClassification, classify_face, clip_line_to_convex_polygon,
+    face_polygon, keep_a_face, keep_b_face,
+};
 use crate::geometry::SurfaceKind;
 
 #[derive(Clone, Debug)]
@@ -95,6 +98,61 @@ fn intersect_planar_pair(
         start,
         end,
     })
+}
+
+/// M39: per-chord "skip mef" flag.
+///
+/// For each `FaceIntersection`, classify the pre-split host faces against the
+/// other solid. The chord is "interior" — and the mef can be safely skipped —
+/// when both host faces would be DROPPED under the boolean op. Splitting an
+/// interior chord produces two pieces of a face, both classified the same way
+/// as the original (Inside stays Inside, OnBoundary's centroid often stays on
+/// the boundary), so both pieces get dropped — and the chord ends up with one
+/// or zero half-edges in the kept manifold. Skipping the split avoids that.
+pub fn classify_chord_interiorness(
+    a: &Solid,
+    b: &Solid,
+    intersections: &[FaceIntersection],
+    op: BooleanOp,
+    tol: &Tolerance,
+) -> Vec<bool> {
+    intersections
+        .iter()
+        .map(|inter| is_chord_interior(a, b, inter, op, tol))
+        .collect()
+}
+
+fn is_chord_interior(
+    a: &Solid,
+    b: &Solid,
+    inter: &FaceIntersection,
+    op: BooleanOp,
+    tol: &Tolerance,
+) -> bool {
+    let cls_a = classify_face(a, inter.face_a, b, tol);
+    let cls_b = classify_face(b, inter.face_b, a, tol);
+    chord_interior_by_classification(cls_a, cls_b, op)
+}
+
+/// Centralized M39 criterion: skip mef only when both hosts classify as
+/// strictly `Inside` against the other solid AND would be dropped under op.
+/// `Inside` (vs `OnBoundary`) means the centroid is unambiguously interior;
+/// these chords' splits produce dropped-only pieces that confuse stitch.
+///
+/// Empirically: aggressive variants ("both dropped including OnBoundary")
+/// over-skip and break half-overlap cases. The Inside/Inside gate is the
+/// safe ceiling — the bulk of the M39 win comes from the area-weighted
+/// centroid in `face_centroid` (which the gate complements without
+/// overriding).
+fn chord_interior_by_classification(
+    cls_a: FaceClassification,
+    cls_b: FaceClassification,
+    op: BooleanOp,
+) -> bool {
+    use FaceClassification::Inside;
+    matches!((cls_a, cls_b), (Inside, Inside))
+        && !keep_a_face(cls_a, op)
+        && !keep_b_face(cls_b, op)
 }
 
 #[cfg(test)]

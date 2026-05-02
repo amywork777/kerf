@@ -4,9 +4,10 @@ use kerf_geom::{Point3, Tolerance};
 
 use crate::Solid;
 use crate::booleans::{
-    BooleanOp, FaceClassification, SelectedFaces, add_intersection_edges, classify_face,
-    face_intersections, face_polygon, fan_triangulate, fan_triangulate_reversed, flip_b_face,
-    keep_a_face, keep_b_face, resolve_interior_endpoints, split_solids_at_intersections,
+    BooleanOp, FaceClassification, SelectedFaces, add_intersection_edges,
+    classify_chord_interiorness, classify_face, face_intersections, face_polygon, fan_triangulate,
+    fan_triangulate_reversed, flip_b_face, keep_a_face, keep_b_face, resolve_interior_endpoints,
+    split_solids_at_intersections,
 };
 
 /// A face soup: triangles representing the boolean result. Not a stitched B-rep
@@ -25,7 +26,7 @@ pub fn boolean(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> FaceSoup
     let intersections = face_intersections(&a, &b, tol);
     let outcome = split_solids_at_intersections(&mut a, &mut b, &intersections, tol);
     let interior = resolve_interior_endpoints(&mut a, &mut b, &intersections, &outcome, tol);
-    let _added = add_intersection_edges(&mut a, &mut b, &intersections, &interior, tol);
+    let _added = add_intersection_edges(&mut a, &mut b, &intersections, &interior, &[], tol);
 
     // Phase 4: classify every face of both solids.
     let mut selected = SelectedFaces {
@@ -78,7 +79,14 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
     let intersections = face_intersections(&a, &b, tol);
     let outcome = split_solids_at_intersections(&mut a, &mut b, &intersections, tol);
     let interior = resolve_interior_endpoints(&mut a, &mut b, &intersections, &outcome, tol);
-    let _added = add_intersection_edges(&mut a, &mut b, &intersections, &interior, tol);
+    // M39: skip mef on chords whose pre-split host faces are both dropped
+    // under op. Such chords are interior to the result; splitting them
+    // produces dropped-only pieces that leave stitch with single-half-edge
+    // errors. Without this gate, chord_merge has to repair the damage
+    // post-classification (and often can't).
+    let skip_chord = classify_chord_interiorness(&a, &b, &intersections, op, tol);
+    let _added =
+        add_intersection_edges(&mut a, &mut b, &intersections, &interior, &skip_chord, tol);
 
     // Collect kept and dropped face polygons up front, tagged by source solid,
     // classification, and ancestor (M38b face provenance). chord-merge uses:

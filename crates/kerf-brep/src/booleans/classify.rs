@@ -22,15 +22,64 @@ pub fn face_centroid(solid: &Solid, face: FaceId) -> Option<Point3> {
         return None;
     }
     // Dedup spike-anchor duplicates (M36 stinger fjords visit one vertex
-    // twice per spike). Naive vertex-average centroids on a fjord-bearing
-    // polygon land in the hole / off-face. After dedup, the centroid is
-    // closer to the polygon's actual perimeter midpoint.
+    // twice per spike). Without this, fan-triangulation triangles around the
+    // duplicate are degenerate.
     let mut unique: Vec<Point3> = Vec::with_capacity(poly.len());
     for p in &poly {
         if !unique.iter().any(|q| (*p - *q).norm() < 1e-9) {
             unique.push(*p);
         }
     }
+    if unique.len() < 3 {
+        // Fall back to vertex average for degenerate input.
+        let n = unique.len() as f64;
+        let sum: Vec3 = unique.iter().map(|p| p.coords).sum();
+        return Some(Point3::from(sum / n));
+    }
+
+    // M39: Area-weighted centroid via fan triangulation from vertex 0.
+    // For non-convex polygons (M36 stinger fjords, M37 L-shapes after
+    // boolean splits), the vertex-average centroid lands at a "fake"
+    // position — often on the OTHER solid's boundary at the polygon's
+    // concavity, mis-classifying the face as OnBoundary instead of
+    // Outside/Inside. The signed-area-weighted formula correctly handles
+    // concave polygons because triangles outside the polygon contribute
+    // negative area that cancels their position contribution.
+    if let Some(plane) = solid.face_geom.get(face)
+        && let SurfaceKind::Plane(plane) = plane
+    {
+        let origin = plane.frame.origin;
+        let fx = plane.frame.x;
+        let fy = plane.frame.y;
+        let to_2d = |p: Point3| -> (f64, f64) {
+            let d = p - origin;
+            (d.dot(&fx), d.dot(&fy))
+        };
+        let p0 = unique[0];
+        let (p0x, p0y) = to_2d(p0);
+        let mut weighted_x = 0.0f64;
+        let mut weighted_y = 0.0f64;
+        let mut total_area = 0.0f64;
+        for i in 1..unique.len() - 1 {
+            let (pix, piy) = to_2d(unique[i]);
+            let (pjx, pjy) = to_2d(unique[i + 1]);
+            // Signed triangle area: 0.5 * cross((Pi - P0), (Pj - P0)).
+            let area = 0.5 * ((pix - p0x) * (pjy - p0y) - (piy - p0y) * (pjx - p0x));
+            // Triangle centroid (average of 3 vertices).
+            let cx = (p0x + pix + pjx) / 3.0;
+            let cy = (p0y + piy + pjy) / 3.0;
+            weighted_x += area * cx;
+            weighted_y += area * cy;
+            total_area += area;
+        }
+        if total_area.abs() > 1e-12 {
+            let cx = weighted_x / total_area;
+            let cy = weighted_y / total_area;
+            return Some(origin + cx * fx + cy * fy);
+        }
+    }
+
+    // Fallback: vertex average (planar geom missing or degenerate area).
     let n = unique.len() as f64;
     let sum: Vec3 = unique.iter().map(|p| p.coords).sum();
     Some(Point3::from(sum / n))
@@ -260,6 +309,52 @@ mod tests {
             let cls = classify_face(&a, face_id, &b, &tol);
             assert_eq!(cls, FaceClassification::Outside);
         }
+    }
+
+    /// M39 regression: corner-overlap union has L-shape post-split pieces
+    /// whose vertex-average centroid lands on the OTHER solid's edge,
+    /// mis-classifying them as OnBoundary. The area-weighted formula must
+    /// produce a centroid strictly inside the L's body.
+    #[test]
+    fn area_weighted_centroid_lands_inside_l_shape() {
+        // Build a solid whose only face is an L-shape on the x=1 plane,
+        // simulating the post-split B.x=1 face from corner-overlap union.
+        // L vertices (CCW from -x view): (1,2,1),(1,3,1),(1,3,3),(1,1,3),
+        // (1,1,2),(1,2,2). Vertex-average centroid is (1,2,2) — exactly on
+        // the inner-corner concavity. Area-weighted centroid lands strictly
+        // inside the L (away from the corner).
+        use crate::primitives::extrude_polygon;
+        let poly = vec![
+            Point3::new(2.0, 1.0, 1.0),
+            Point3::new(3.0, 1.0, 1.0),
+            Point3::new(3.0, 3.0, 1.0),
+            Point3::new(1.0, 3.0, 1.0),
+            Point3::new(1.0, 2.0, 1.0),
+            Point3::new(2.0, 2.0, 1.0),
+        ];
+        let solid = extrude_polygon(&poly, Vec3::new(0.0, 0.0, 1.0));
+        // Bottom face has the L shape. Find it via face_id iteration —
+        // its centroid should NOT coincide with the polygon-average concavity.
+        let mut found_l_face = false;
+        for fid in solid.topo.face_ids() {
+            let centroid = face_centroid(&solid, fid).unwrap();
+            // Skip non-L faces (top, sides) by checking z == 1.0 (the L face).
+            if (centroid.z - 1.0).abs() > 1e-6 {
+                continue;
+            }
+            found_l_face = true;
+            // Polygon-average concavity is at (2, 2, 1). Area-weighted
+            // centroid must be measurably away from it (well inside the
+            // L's body).
+            let avg = Point3::new(2.0, 2.0, 1.0);
+            let dist = (centroid - avg).norm();
+            assert!(
+                dist > 0.05,
+                "L-shape centroid too close to polygon-average concavity: \
+                 centroid={centroid:?}, avg={avg:?}, dist={dist}"
+            );
+        }
+        assert!(found_l_face, "no L-shape face found in extrusion");
     }
 
     #[test]

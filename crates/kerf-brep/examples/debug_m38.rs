@@ -18,7 +18,7 @@ fn main() {
     let intersections = face_intersections(&a, &b, &tol);
     let outcome = split_solids_at_intersections(&mut a, &mut b, &intersections, &tol);
     let interior = resolve_interior_endpoints(&mut a, &mut b, &intersections, &outcome, &tol);
-    let _added = add_intersection_edges(&mut a, &mut b, &intersections, &interior, &tol);
+    let _added = add_intersection_edges(&mut a, &mut b, &intersections, &interior, &[], &tol);
 
     println!("After splits: A has {} faces, B has {} faces", a.face_count(), b.face_count());
 

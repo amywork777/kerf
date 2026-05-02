@@ -30,7 +30,7 @@ Failures fall into four root-cause buckets:
 ## Latest run
 
 ```
-readiness: 104/168 (62%)
+readiness: 132/168 (79%)
 ```
 
 See `readiness.txt` for the full per-row table — regenerated alongside this
@@ -48,26 +48,27 @@ file via `cargo run --example readiness_matrix -p kerf-brep`.
 | 2026-05-01 | m38a | 119/168 (71%) | Centroid dedup before averaging. M36's stinger fjords add duplicate spike-anchor vertices to face polygons; the polygon-average centroid then lands inside the cylinder hole instead of on the actual face, mis-classifying the outer face as Inside. Dedup makes classification correct. +2 cases. Chord-merge module integrated (same-source, Inside-only) but doesn't unblock new cases yet — the cyl∪box family still trips downstream. Floor bumped to 119. |
 | 2026-05-01 | m38b | 119/168 (71%) | Threaded `face_provenance: SecondaryMap<FaceId, FaceId>` through `add_chord` (`mef`) so chord-merge can gate on same-ancestor pairs. No matrix improvement — the corner-overlap-union failures are caused by topology issues downstream of the merges that DO happen, not by the merges that DON'T. Architecture is in place for future work; provenance is a strict refinement of the same-source + coplanar gate. |
 | 2026-05-01 | m38c | 119/168 (71%) | Added T-junction healing pass in stitch (Stage 1b): when a polygon's edge passes through a unique vertex from another polygon, insert that vertex collinearly. No matrix delta on current failing set — chord vertices in our boolean output land at chord endpoints not mid-edge, so T-junctions don't arise here. Defensive against imported-mesh inputs (typical CAD interchange T-junctions). |
+| 2026-05-02 | m39  | 132/168 (79%) | **Two-part fix.** (1) `face_centroid` now uses signed-area-weighted centroid via fan triangulation instead of vertex-average. Fixes the "L-shape concavity lands on other solid's edge" mis-classification that drove most corner-overlap union/intersection failures: B's L-shape on x=1 has vertex-avg centroid (1,2,2) which lies on A's edge (OnBoundary→drop) but the area-weighted centroid lands strictly inside the L (Outside→keep). (2) Per-chord interiorness gate in `add_intersection_edges`: pre-split classify both host faces; skip mef when both are strictly Inside AND would be dropped under op. The conservative gate is a near no-op on the current matrix but prevents regressions for the few Inside-Inside chord cases. +13 cases — every box×box-corner union and intersection now passes. Floor bumped to 132. |
 
-## Why the remaining 49 cases haven't budged
+## What M39 actually fixed (vs. what was sketched)
 
-Multiple substantial attempts (gated chord-merge, ancestor-tagged chord-merge,
-T-junction healing) all sit at 119/168. The bottleneck isn't a single missing
-heuristic — it's a structural mismatch: when boolean splits a face along a
-chord that ends up interior to the result, the kept-face graph needs the chord
-removed FROM ALL FACES that share its vertices, atomically. Geometric merges
-on individual face pairs always produce inconsistencies somewhere because
-neighbouring faces' chords aren't synchronized.
+The original M39 plan was a chord-classifier pass — skip mef when both
+perpendicular faces would be dropped. Implementation revealed the chord-skip
+gate is mostly a no-op on the matrix; the real bottleneck wasn't spurious
+chord introductions at all but rather **mis-classification of L-shape post-
+split pieces.** The vertex-average centroid of a non-convex polygon lands at
+the polygon's concavity, which for boolean-split L-shapes coincides with the
+OTHER solid's edge — yielding OnBoundary (and drop) when the correct answer
+is Outside (keep).
 
-The real fix is a **chord-classifier pass**: before splitter mef, compute
-per-chord "interiorness" by checking the perpendicular-face fates in BOTH
-solids. Skip the mef for interior chords entirely — the face never gets
-split, no inconsistency arises, no merge is needed.
+The signed-area-weighted centroid (sum over fan triangles of `area * tri_centroid
+/ total_area`) places the centroid strictly inside the polygon's body. Concave
+fan triangles contribute negative area that cancels their position, so the
+result is robust for L-shapes, T-shapes, and the M36 stinger fjords.
 
-That's a topology pre-pass that requires hooking into both `face_intersections`
-(to identify chords) and `add_intersection_edges` (to selectively skip mef
-calls). Estimated 4–6 hours of careful work plus regression sweep on the
-matrix. Tracked as M39.
+The chord-skip gate is kept (Inside∧Inside only) — a minimal-impact safety
+net that documents the intended structural fix and is in place to harden if
+future cases need it.
 
 ## Bucket #2 root cause (analysis pending fix)
 

@@ -64,15 +64,24 @@ pub struct AddedEdge {
 /// Takes the post-phase-B `InteriorResolution`, which has fully resolved endpoint
 /// vertex IDs for every intersection AND records which intersections' chords
 /// were already added by phase B's mev tail (those are skipped here).
+///
+/// `skip_chord[i] == true` skips the mef for intersection `i` entirely (M39:
+/// the chord is interior to the boolean result and splitting along it would
+/// produce dropped-only pieces, leaving stitch with single-half-edge errors).
+/// Pass `&[]` (or a vec of `false`) to disable M39 gating.
 pub fn add_intersection_edges(
     a: &mut Solid,
     b: &mut Solid,
     intersections: &[FaceIntersection],
     interior: &InteriorResolution,
+    skip_chord: &[bool],
     _tol: &Tolerance,
 ) -> Vec<AddedEdge> {
     let mut added = Vec::new();
     for (i, inter) in intersections.iter().enumerate() {
+        if skip_chord.get(i).copied().unwrap_or(false) {
+            continue;
+        }
         let (start_v, end_v) = match interior.endpoints[i] {
             Some(pair) => pair,
             // No resolution at all — skip (shouldn't happen in well-formed input).
@@ -198,6 +207,7 @@ mod tests {
             &mut b,
             &intersections,
             &interior,
+            &[],
             &Tolerance::default(),
         );
 
@@ -240,6 +250,7 @@ mod tests {
             &mut small,
             &intersections,
             &interior,
+            &[],
             &Tolerance::default(),
         );
 
