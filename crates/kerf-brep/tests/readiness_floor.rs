@@ -16,7 +16,7 @@ use kerf_geom::{Point3, Vec3};
 
 /// Minimum number of (primitive × primitive × op) combos that must succeed.
 /// Bumped milestone-by-milestone in docs/readiness.md.
-const READINESS_FLOOR: usize = 117;
+const READINESS_FLOOR: usize = 119;
 
 /// Total number of combos run by the matrix (8 inputs × 7 others × 3 ops).
 const READINESS_TOTAL: usize = 168;

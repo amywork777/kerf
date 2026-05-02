@@ -21,8 +21,18 @@ pub fn face_centroid(solid: &Solid, face: FaceId) -> Option<Point3> {
     if poly.is_empty() {
         return None;
     }
-    let n = poly.len() as f64;
-    let sum: Vec3 = poly.iter().map(|p| p.coords).sum();
+    // Dedup spike-anchor duplicates (M36 stinger fjords visit one vertex
+    // twice per spike). Naive vertex-average centroids on a fjord-bearing
+    // polygon land in the hole / off-face. After dedup, the centroid is
+    // closer to the polygon's actual perimeter midpoint.
+    let mut unique: Vec<Point3> = Vec::with_capacity(poly.len());
+    for p in &poly {
+        if !unique.iter().any(|q| (*p - *q).norm() < 1e-9) {
+            unique.push(*p);
+        }
+    }
+    let n = unique.len() as f64;
+    let sum: Vec3 = unique.iter().map(|p| p.coords).sum();
     Some(Point3::from(sum / n))
 }
 

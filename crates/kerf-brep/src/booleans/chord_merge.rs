@@ -12,6 +12,7 @@
 
 use kerf_geom::{Point3, Tolerance};
 
+use crate::booleans::FaceClassification;
 use crate::booleans::stitch::KeptFace;
 use crate::geometry::SurfaceKind;
 
@@ -181,6 +182,72 @@ fn chord_used_by_other_kept_face(
         }
     }
     false
+}
+
+/// Same as [`chord_merge_pass`] but only merges kept-with-dropped pairs from
+/// the SAME source solid (both from A or both from B). Cross-solid pairs are
+/// skipped — they're typically OnBoundary coincident faces whose merge
+/// produces overlapping kept polygons.
+pub fn chord_merge_pass_same_source(
+    kept: &mut Vec<KeptFace>,
+    kept_source: &[u8],
+    dropped: &[KeptFace],
+    dropped_source: &[u8],
+    dropped_cls: &[FaceClassification],
+    tol: &Tolerance,
+) {
+    let mut available: Vec<bool> = vec![true; dropped.len()];
+    loop {
+        let mut changed = false;
+        for ki in 0..kept.len() {
+            for di in 0..dropped.len() {
+                if !available[di] {
+                    continue;
+                }
+                if kept_source[ki] != dropped_source[di] {
+                    continue;
+                }
+                // Only merge "Inside" dropped siblings — those are dropped
+                // because their region is interior to the result. OnBoundary
+                // dropped faces are coincident-with-other-solid duplicates;
+                // their region is ALREADY covered by another kept face from
+                // the other solid. Merging absorbs them spuriously.
+                if !matches!(dropped_cls[di], FaceClassification::Inside) {
+                    continue;
+                }
+                if !coplanar(&kept[ki].surface, &dropped[di].surface, tol) {
+                    continue;
+                }
+                let kp = &kept[ki].polygon;
+                let dp = &dropped[di].polygon;
+                let n_k = kp.len();
+                let mut chord: Option<(Point3, Point3)> = None;
+                for j in 0..n_k {
+                    let a = kp[j];
+                    let b = kp[(j + 1) % n_k];
+                    if find_directed_edge(dp, b, a, tol).is_some() {
+                        chord = Some((a, b));
+                        break;
+                    }
+                }
+                let Some((chord_a, chord_b)) = chord else {
+                    continue;
+                };
+                if chord_used_by_other_kept_face(chord_a, chord_b, &kept[ki].surface, kept, tol) {
+                    continue;
+                }
+                if let Some(merged) = merge_along_shared_chord(kp, dp, tol) {
+                    kept[ki].polygon = merged;
+                    available[di] = false;
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
 }
 
 /// Iteratively merge every coplanar (kept, dropped) pair sharing a chord.

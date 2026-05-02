@@ -7,7 +7,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 
 ## Status
 
-**Current readiness: 117/168 (70%)** of primitive × primitive × op combinations
+**Current readiness: 119/168 (71%)** of primitive × primitive × op combinations
 succeed. See [`docs/readiness.md`](docs/readiness.md) for the failure-bucket
 roadmap. Run `cargo run --example readiness_matrix -p kerf-brep` to refresh.
 
@@ -76,6 +76,7 @@ roadmap. Run `cargo run --example readiness_matrix -p kerf-brep` to refresh.
 - [x] M35 — Stitch robustness: `pick_twin_pair` handles edges with N≥3 half-edges by picking one in each direction (drops extras as coplanar duplicates) instead of panicking. Canonical-cycle face dedup catches same-orientation duplicate kept faces. No matrix improvement yet — the surviving 3-half-edge failures all have three half-edges in the same direction, which is a coplanar-face classification problem upstream of stitch.
 - [x] M36 — Stinger edges for orphan interior endpoints. M11 phase B no longer panics when an interior intersection point has no boundary-anchored sibling — it mev's a "stinger" edge from any face boundary vertex to the orphan, leaving a topological fjord (face's outer loop has a spike). 104/168 → 108/168 (62% → 64%); the M11 phase-B family of failures now flows past phase B into the stitch single-half-edge bucket (recoverable). `tests/readiness_floor.rs` asserts ≥ 108/168 to prevent regressions.
 - [x] M37 — Argument-swap retry. The boolean classifier is order-dependent for the OnBoundary case — `a.try_union(&b)` can fail where `b.try_union(&a)` succeeds. `try_*` now retries with arguments swapped on failure for commutative ops. 108/168 → 117/168 (64% → 70%), +9 cases unblocked. Floor bumped to 117.
+- [x] M38a — Centroid dedup before averaging. M36's stinger fjords add duplicate spike-anchor vertices to the face polygon, which biases polygon-average centroids enough that the OUTER face of a cyl-pierced box top mis-classifies as Inside (centroid lands in the hole). `face_centroid` now dedups vertices before averaging. 117/168 → 119/168 (70% → 71%). Chord-merge module integrated (same-source + Inside-only restrictions) but doesn't unblock new cases yet — `cyl ∪ box` still fails downstream in stitch.
 
 ## Visual gallery
 

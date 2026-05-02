@@ -4,9 +4,9 @@ use kerf_geom::{Point3, Tolerance};
 
 use crate::Solid;
 use crate::booleans::{
-    BooleanOp, SelectedFaces, add_intersection_edges, classify_face, face_intersections,
-    face_polygon, fan_triangulate, fan_triangulate_reversed, flip_b_face, keep_a_face, keep_b_face,
-    resolve_interior_endpoints, split_solids_at_intersections,
+    BooleanOp, FaceClassification, SelectedFaces, add_intersection_edges, classify_face,
+    face_intersections, face_polygon, fan_triangulate, fan_triangulate_reversed, flip_b_face,
+    keep_a_face, keep_b_face, resolve_interior_endpoints, split_solids_at_intersections,
 };
 
 /// A face soup: triangles representing the boolean result. Not a stitched B-rep
@@ -80,10 +80,16 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
     let interior = resolve_interior_endpoints(&mut a, &mut b, &intersections, &outcome, tol);
     let _added = add_intersection_edges(&mut a, &mut b, &intersections, &interior, tol);
 
-    // Collect both kept and dropped face polygons up front. Dropped polygons
-    // are needed by the M38 chord-merge pass.
+    // Collect kept and dropped face polygons up front, tagged by source solid
+    // and classification. The chord-merge pass needs both: (a) restrict to
+    // same-solid sibling pairs (cross-solid merge breaks adjacency), and (b)
+    // skip merges where the dropped face is OnBoundary (dropped only because
+    // the OTHER solid contributed the same face).
     let mut kept: Vec<KeptFace> = Vec::new();
+    let mut kept_source: Vec<u8> = Vec::new();
     let mut dropped: Vec<KeptFace> = Vec::new();
+    let mut dropped_source: Vec<u8> = Vec::new();
+    let mut dropped_cls: Vec<FaceClassification> = Vec::new();
     for face_id in a.topo.face_ids() {
         let cls = classify_face(&a, face_id, &b, tol);
         let Some(polygon) = face_polygon(&a, face_id) else {
@@ -93,8 +99,11 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
         let face = KeptFace { polygon, surface };
         if keep_a_face(cls, op) {
             kept.push(face);
+            kept_source.push(0);
         } else {
             dropped.push(face);
+            dropped_source.push(0);
+            dropped_cls.push(cls);
         }
     }
     let flip_b = flip_b_face(op);
@@ -111,14 +120,26 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
         let face = KeptFace { polygon, surface };
         if face_kept {
             kept.push(face);
+            kept_source.push(1);
         } else {
             dropped.push(face);
+            dropped_source.push(1);
+            dropped_cls.push(cls);
         }
     }
 
-    let _ = &dropped; // chord_merge module is built and unit-tested but not
-                      // integrated — see docs/readiness.md for why a naive
-                      // merge breaks neighbouring kept faces' adjacency.
+    // M38 attempt 3: chord-merge for same-solid Inside-classified dropped
+    // siblings only. OnBoundary-dropped faces are skipped — they were
+    // dropped because their twin in the OTHER solid is kept (coplanar
+    // duplicate dedup), and absorbing them would re-cover that region.
+    crate::booleans::chord_merge::chord_merge_pass_same_source(
+        &mut kept,
+        &kept_source,
+        &dropped,
+        &dropped_source,
+        &dropped_cls,
+        tol,
+    );
 
     stitch(&kept, tol)
 }
