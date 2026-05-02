@@ -98,10 +98,6 @@ pub fn merge_along_shared_chord(
     loop {
         let prev_k = (chord_start_k + n_k - 1) % n_k;
         let next_d = (chord_end_d) % n_d;
-        // The previous kept edge is kept[prev_k] → kept[chord_start_k].
-        // Its reverse would be kept[chord_start_k] → kept[prev_k].
-        // We want this reverse to be the dropped edge ending at chord_end_d
-        // (i.e., dropped[next_d] == kept[prev_k]).
         if pt_eq(dropped[next_d], kept[prev_k], tol) && prev_k != chord_end_k {
             chord_start_k = prev_k;
             chord_end_d = (chord_end_d + 1) % n_d;

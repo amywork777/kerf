@@ -46,6 +46,58 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
         face_to_vidx.push(indices);
     }
 
+    // Stage 1b: T-junction healing. If a polygon edge (a, b) passes through
+    // a vertex c that exists in some other polygon, insert c into this
+    // polygon between a and b. Synchronizes polygon vertex sets at shared
+    // edges so stitch's per-edge twin pairing finds matched partners.
+    // Iterates until fixpoint.
+    let n_positions = positions.len();
+    loop {
+        let mut changed = false;
+        for face_idx in 0..face_to_vidx.len() {
+            let mut i = 0;
+            while i < face_to_vidx[face_idx].len() {
+                let n = face_to_vidx[face_idx].len();
+                let v_a = face_to_vidx[face_idx][i];
+                let v_b = face_to_vidx[face_idx][(i + 1) % n];
+                let a = positions[v_a];
+                let b = positions[v_b];
+                let ab = b - a;
+                let ab_len_sq = ab.norm_squared();
+                if ab_len_sq < tol.point_eq * tol.point_eq {
+                    i += 1;
+                    continue;
+                }
+                let mut found: Option<usize> = None;
+                for c_idx in 0..n_positions {
+                    if c_idx == v_a || c_idx == v_b {
+                        continue;
+                    }
+                    let c = positions[c_idx];
+                    let ac = c - a;
+                    let t = ac.dot(&ab) / ab_len_sq;
+                    if !(t > 1e-6 && t < 1.0 - 1e-6) {
+                        continue;
+                    }
+                    let proj = a + t * ab;
+                    if (c - proj).norm() < tol.point_eq * 100.0 {
+                        found = Some(c_idx);
+                        break;
+                    }
+                }
+                if let Some(c_idx) = found {
+                    face_to_vidx[face_idx].insert(i + 1, c_idx);
+                    changed = true;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
     // Stage 1b: coplanar-duplicate dedup. Two kept faces with the same cyclic
     // vertex sequence (after rotating to a canonical start) are the same face
     // emitted twice — usually an OnBoundary face that survived classification
