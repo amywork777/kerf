@@ -38,6 +38,7 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 - [x] M19b — STEP (ISO 10303-21 / AP214) B-rep export. Preserves exact geometry (planes, cylinders, spheres, cones, tori, lines, circles, ellipses) as native CAD entities. Real CAD interchange.
 - [x] M20 — `revolve_polyline(profile)` constructor for axisymmetric solids. Revolves an open polyline in the xz-plane around the z-axis. Profile must have ≥ 3 points with both endpoints on the z-axis and all interior points at x > 0. Produces N vertices, (2N-3) edges, and (N-1) faces — first and last faces are Cone surfaces (apex cones), middle faces are Cylinder (vertical segment) or Cone (tilted segment). Euler V-E+F = 2 verified at construction.
 - [x] M21 — Visual gallery: `cad_gallery` example renders 13 STLs covering every primitive + every working boolean. Tessellator fix for `Cone` faces with 2 boundary circles (frustum / revolve middle faces) — previously fan-from-apex which left the lateral surface invisible. Screenshots in `screenshots/`.
+- [x] M22a — Real CAD example models: chess pawn via `revolve_polyline` (7-point profile, 32 segments, 320 triangles), stair-step Mayan ziggurat (5 boxes, FaceSoup-merge fallback for face-to-face touching geometry), and L-bracket with chamfered corner (`union` + `difference`). Three new STLs + rendered PNGs in `screenshots/`.
 
 ## Visual gallery
 
@@ -57,6 +58,9 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 | Corner-cut Difference (M11) | `screenshots/12_corner_cut_step.png` |
 | Hollow nested Difference (M12) | `screenshots/13_hollow_box.png` |
 | Recursive boolean (M8) | `screenshots/14_recursive_intersection.png` |
+| Chess pawn — revolve_polyline 7-pt profile (M22a) | `screenshots/cad_pawn.png` |
+| Stair-step pyramid — 5-layer ziggurat (M22a) | `screenshots/cad_pyramid.png` |
+| L-bracket — union + chamfer difference (M22a) | `screenshots/cad_bracket.png` |
 
 Build the STL files with `cargo run --example cad_gallery`. Render to PNG with the `scripts/render_stl.py` helper (requires `numpy-stl` + `matplotlib`).
 
