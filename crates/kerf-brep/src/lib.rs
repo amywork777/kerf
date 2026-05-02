@@ -2,6 +2,7 @@
 
 pub mod booleans;
 pub mod geometry;
+pub mod mesh_import;
 pub mod obj;
 pub mod primitives;
 pub mod serde_io;
@@ -11,6 +12,7 @@ pub mod stl;
 pub mod tessellate;
 
 pub use geometry::{CurveKind, CurveSegment, Sense, SurfaceKind};
+pub use mesh_import::{from_triangles, read_stl_binary_to_solid, MeshImportError};
 pub use obj::write_obj;
 pub use primitives::{box_, box_at, cone, cylinder, extrude_polygon, frustum, revolve_polyline, sphere, torus};
 pub use serde_io::{read_json, write_json};
