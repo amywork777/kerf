@@ -108,10 +108,31 @@ impl std::fmt::Display for BooleanError {
 impl std::error::Error for BooleanError {}
 
 /// Run `boolean_solid` inside `catch_unwind` and convert any panic into a
-/// `BooleanError`. The kernel's internal panics are invariant violations from
-/// the boolean pipeline (e.g. M11 phase B interior-endpoint limits) — none
-/// corrupt heap state, so unwinding is safe.
+/// `BooleanError`. For the commutative ops (Union, Intersection), if the
+/// (a, b) ordering trips a classifier asymmetry, retry with arguments
+/// swapped. None of the kernel's internal panics corrupt heap state, so
+/// unwinding is safe.
 pub fn try_boolean_solid(
+    a: &Solid,
+    b: &Solid,
+    op: crate::booleans::BooleanOp,
+) -> Result<Solid, BooleanError> {
+    use crate::booleans::BooleanOp;
+    if let Ok(s) = run_boolean_solid_caught(a, b, op) {
+        return Ok(s);
+    }
+    // Commutative-op retry: swap arguments. Difference is not commutative.
+    if matches!(op, BooleanOp::Union | BooleanOp::Intersection) {
+        if let Ok(s) = run_boolean_solid_caught(b, a, op) {
+            return Ok(s);
+        }
+    }
+    // Both attempts failed — re-run primary to capture the original message.
+    let payload = run_boolean_solid_caught(a, b, op).err().unwrap();
+    Err(payload)
+}
+
+fn run_boolean_solid_caught(
     a: &Solid,
     b: &Solid,
     op: crate::booleans::BooleanOp,
