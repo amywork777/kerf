@@ -7,6 +7,26 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 
 ## Status
 
+**Current readiness: 104/168 (62%)** of primitive × primitive × op combinations
+succeed. See [`docs/readiness.md`](docs/readiness.md) for the failure-bucket
+roadmap. Run `cargo run --example readiness_matrix -p kerf-brep` to refresh.
+
+**What works today:**
+- All primitives build and tessellate to STL/OBJ/STEP cleanly.
+- Booleans on box/prism/box, box/box, box/cylinder_faceted, box/vase: ✓
+- STL/OBJ import, boolean on imported, re-export: ✓
+- CLI: `kerf union a.stl b.obj out.stl`, with `-` for stdin/stdout.
+
+**Known limits:**
+- `box ∪ cylinder` (analytic cylinder, not faceted) hits M11 phase-B interior
+  endpoint limit. Use `cylinder_faceted` for boolean inputs.
+- `box ∩ cylinder_faceted` etc. with curved-piercing-face geometry: still
+  hits M11 phase B.
+- Some half-overlap intersection configurations leave the kept-face graph
+  with unmatched half-edges (3-same-direction case).
+- Boolean output is safe: `try_*` variants never panic and return
+  `BooleanError` on unsupported configurations.
+
 - [x] M1 — Geometry foundations: workspace, primitives (Line, Circle, Ellipse, Plane, Cylinder, Sphere, Cone, Torus).
 - [x] M2a — Line intersections: Line vs Line, Plane, Cylinder, Sphere, Cone, Torus + polynomial solvers.
 - [x] M2b — Circle intersections (closed-form): Line-Circle, Circle-Circle (coplanar), Circle-Plane, Circle-Sphere. Harder pairs deferred to numerical fallback in M3.
