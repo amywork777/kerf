@@ -126,6 +126,21 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
         .map(|&i| face_to_vidx[i].clone())
         .collect();
 
+    // Stage 1c (M39c): drop orphan-contributor faces. An "orphan" arises
+    // when a canonical edge has 3+ half-edges contributed by 3+ different
+    // kept faces; pick_twin_pair selects 2, leaving the rest as half-edges
+    // with no twin (→ AsymmetricTwin in `validate`). Detect such faces
+    // ahead of stage 4 and drop them. Iterate to fixpoint because dropping
+    // a face changes other edges' contribution counts.
+    //
+    // Heuristic for which face to drop when multiple compete: drop the face
+    // with the most "conflicting" edges (edges currently with 3+ entries).
+    // Ties broken by higher index (later-added faces are more likely the
+    // duplicates from the second-solid pass).
+    let kept: Vec<KeptFace> = kept.iter().map(|kf| (*kf).clone()).collect();
+    let (kept, face_to_vidx) = drop_orphan_contributors(kept, face_to_vidx);
+    let kept: Vec<&KeptFace> = kept.iter().collect();
+
     // Stage 2: create vertices in the kerf-topo solid.
     let vids: Vec<_> = (0..positions.len())
         .map(|_| new_solid.topo.build_insert_vertex())
@@ -367,6 +382,83 @@ fn canonical_cycle(indices: &[usize]) -> Vec<usize> {
 
 fn canonical_edge_key(a: usize, b: usize) -> (usize, usize) {
     if a < b { (a, b) } else { (b, a) }
+}
+
+/// M39c: drop kept faces that contribute orphan half-edges. A canonical
+/// edge key with 3+ entries means 3+ kept faces share that polygon edge —
+/// only one forward and one backward survive `pick_twin_pair`, leaving the
+/// rest as half-edges with no twin (AsymmetricTwin in validation).
+///
+/// Iterate to fixpoint: dropping a face changes other edges' counts and
+/// may resolve them. Heuristic for which face to drop: the one with the
+/// most edges currently in conflict (3+ entries), tie-broken by higher
+/// index (later-added faces — usually B's faces in the boolean — are more
+/// often the duplicates).
+fn drop_orphan_contributors(
+    kept: Vec<KeptFace>,
+    face_to_vidx: Vec<Vec<usize>>,
+) -> (Vec<KeptFace>, Vec<Vec<usize>>) {
+    let mut keep_mask: Vec<bool> = vec![true; kept.len()];
+    loop {
+        // Build edge -> contributing faces map across currently-kept faces.
+        let mut edge_to_faces: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+        for (face_idx, vidx) in face_to_vidx.iter().enumerate() {
+            if !keep_mask[face_idx] {
+                continue;
+            }
+            let n = vidx.len();
+            for i in 0..n {
+                let key = canonical_edge_key(vidx[i], vidx[(i + 1) % n]);
+                edge_to_faces.entry(key).or_default().push(face_idx);
+            }
+        }
+
+        // Count conflicts per face: edges where this face appears alongside
+        // 3+ contributors.
+        let mut conflicts: Vec<usize> = vec![0; kept.len()];
+        let mut any_conflict = false;
+        for entries in edge_to_faces.values() {
+            if entries.len() < 3 {
+                continue;
+            }
+            any_conflict = true;
+            for &f in entries {
+                conflicts[f] += 1;
+            }
+        }
+        if !any_conflict {
+            break;
+        }
+
+        // Pick the highest-conflict face (ties broken by higher index).
+        let mut victim: Option<usize> = None;
+        let mut victim_count = 0usize;
+        for (i, &c) in conflicts.iter().enumerate() {
+            if !keep_mask[i] || c == 0 {
+                continue;
+            }
+            if c > victim_count || (c == victim_count && Some(i) > victim) {
+                victim = Some(i);
+                victim_count = c;
+            }
+        }
+        let Some(v) = victim else {
+            break;
+        };
+        keep_mask[v] = false;
+    }
+
+    let new_kept: Vec<KeptFace> = kept
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, kf)| keep_mask[i].then_some(kf))
+        .collect();
+    let new_face_to_vidx: Vec<Vec<usize>> = face_to_vidx
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, v)| keep_mask[i].then_some(v))
+        .collect();
+    (new_kept, new_face_to_vidx)
 }
 
 fn find_or_add(positions: &mut Vec<Point3>, p: Point3, tol: &Tolerance) -> usize {
