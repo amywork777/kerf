@@ -46,6 +46,34 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
         face_to_vidx.push(indices);
     }
 
+    // Stage 1b: coplanar-duplicate dedup. Two kept faces with the same cyclic
+    // vertex sequence (after rotating to a canonical start) are the same face
+    // emitted twice — usually an OnBoundary face that survived classification
+    // on both A and B sides with matching orientation. Reverse-winding
+    // duplicates are NOT collapsed (they're legitimate front/back pairs).
+    let kept_indices: Vec<usize> = {
+        let mut seen: std::collections::HashMap<Vec<usize>, usize> =
+            std::collections::HashMap::new();
+        let mut keep: Vec<usize> = Vec::with_capacity(kept.len());
+        for (i, vidx) in face_to_vidx.iter().enumerate() {
+            if vidx.len() < 3 {
+                continue;
+            }
+            let key = canonical_cycle(vidx);
+            if seen.contains_key(&key) {
+                continue;
+            }
+            seen.insert(key, i);
+            keep.push(i);
+        }
+        keep
+    };
+    let kept: Vec<&KeptFace> = kept_indices.iter().map(|&i| &kept[i]).collect();
+    let face_to_vidx: Vec<Vec<usize>> = kept_indices
+        .iter()
+        .map(|&i| face_to_vidx[i].clone())
+        .collect();
+
     // Stage 2: create vertices in the kerf-topo solid.
     let vids: Vec<_> = (0..positions.len())
         .map(|_| new_solid.topo.build_insert_vertex())
@@ -63,12 +91,6 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
     // after connected-component analysis in Stage 5b.
     let placeholder_shell = new_solid.topo.build_insert_shell(solid_id);
 
-    struct HalfEdgeRecord {
-        id: kerf_topo::HalfEdgeId,
-        v_start: usize,
-        v_end: usize,
-        face_idx: usize,
-    }
     let mut half_edge_records: Vec<HalfEdgeRecord> = Vec::new();
     let mut edge_pairs: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
     let mut face_ids: Vec<FaceId> = Vec::with_capacity(kept.len());
@@ -119,17 +141,21 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
     }
 
     // Stage 5: create edges and wire twins. Each canonical pair MUST have
-    // exactly two half-edges (one per adjacent face). Anything else is
-    // non-manifold input.
+    // exactly two half-edges (one per adjacent face) — but in practice the
+    // boolean classifier sometimes keeps coplanar duplicates that produce
+    // 3-or-more entries on a single edge. Partition by direction and pick
+    // a proper twin pair (one (u,v), one (v,u)); drop the rest. Anything
+    // else (all in one direction, or only 1 entry) really is non-manifold.
     for (key, indices) in &edge_pairs {
-        if indices.len() != 2 {
-            panic!(
-                "non-manifold input to stitch: edge key {key:?} has {} half-edges (expected 2)",
-                indices.len()
-            );
-        }
-        let he_a_record_idx = indices[0];
-        let he_b_record_idx = indices[1];
+        let (he_a_record_idx, he_b_record_idx) = match pick_twin_pair(indices, &half_edge_records, *key) {
+            Some(pair) => pair,
+            None => {
+                panic!(
+                    "non-manifold input to stitch: edge key {key:?} has {} half-edges (expected 2)",
+                    indices.len()
+                );
+            }
+        };
         let he_a = half_edge_records[he_a_record_idx].id;
         let he_b = half_edge_records[he_b_record_idx].id;
 
@@ -229,6 +255,62 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
     validate(&new_solid.topo).expect("stitched topology violates invariants");
 
     new_solid
+}
+
+struct HalfEdgeRecord {
+    id: kerf_topo::HalfEdgeId,
+    v_start: usize,
+    v_end: usize,
+    face_idx: usize,
+}
+
+/// Given a list of half-edge record indices that all share one canonical
+/// edge key (low, high), pick one half-edge in each direction (low→high and
+/// high→low) so they twin properly. Returns None if either direction is
+/// empty (truly non-manifold input). Extra half-edges in either direction
+/// are simply skipped — usually a sign of coplanar duplicate kept faces.
+fn pick_twin_pair(
+    indices: &[usize],
+    half_edge_records: &[HalfEdgeRecord],
+    key: (usize, usize),
+) -> Option<(usize, usize)> {
+    let mut forward = None;
+    let mut backward = None;
+    for &i in indices {
+        let r = &half_edge_records[i];
+        if (r.v_start, r.v_end) == key && forward.is_none() {
+            forward = Some(i);
+        } else if (r.v_end, r.v_start) == key && backward.is_none() {
+            backward = Some(i);
+        }
+        if forward.is_some() && backward.is_some() {
+            break;
+        }
+    }
+    match (forward, backward) {
+        (Some(f), Some(b)) => Some((f, b)),
+        _ => None,
+    }
+}
+
+/// Rotate a cyclic sequence so it starts at its minimum element. Two
+/// sequences are equivalent under cyclic rotation iff their canonical forms
+/// are equal.
+fn canonical_cycle(indices: &[usize]) -> Vec<usize> {
+    let n = indices.len();
+    if n == 0 {
+        return vec![];
+    }
+    let (min_pos, _) = indices
+        .iter()
+        .enumerate()
+        .min_by_key(|&(_, v)| *v)
+        .unwrap();
+    let mut out = Vec::with_capacity(n);
+    for k in 0..n {
+        out.push(indices[(min_pos + k) % n]);
+    }
+    out
 }
 
 fn canonical_edge_key(a: usize, b: usize) -> (usize, usize) {

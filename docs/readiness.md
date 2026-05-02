@@ -42,6 +42,7 @@ file via `cargo run --example readiness_matrix -p kerf-brep`.
 | ---------- | ---- | --------- | ------------ |
 | 2026-05-01 | m33  | 91/168 (54%) | converted panics to recoverable errors; baseline |
 | 2026-05-01 | m34  | 104/168 (62%) | stitch tolerates zero-length edges; +13 cases  |
+| 2026-05-01 | m35  | 104/168 (62%) | stitch picks twin pair from N≥3; canonical-cycle dedup. No new cases unblocked: bucket-#3 failures all have 3 half-edges in the SAME direction, which is a coplanar-face classification problem, not a stitch problem. |
 
 ## Driving toward 100%
 
