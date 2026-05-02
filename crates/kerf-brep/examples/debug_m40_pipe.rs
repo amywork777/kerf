@@ -129,7 +129,7 @@ fn main() {
     let box_nested = box_at(Vec3::new(0.6, 0.6, 0.6), Point3::new(0.7, 0.7, 0.7));
     let box_shift = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(1.0, 0.0, 0.0));
 
-    dump("box-shift", "box-nested", BooleanOp::Difference, &box_shift, &box_nested);
-    dump("box-shift", "box-nested", BooleanOp::Union, &box_shift, &box_nested);
-    dump("box-nested", "tri-prism", BooleanOp::Union, &box_nested, &tri);
+    dump("box[2³]", "tri-prism", BooleanOp::Difference, &box2, &tri);
+    dump("box-nested", "tri-prism", BooleanOp::Intersection, &box_nested, &tri);
+    dump("cyl_n12", "tri-prism", BooleanOp::Union, &cyl12, &tri);
 }

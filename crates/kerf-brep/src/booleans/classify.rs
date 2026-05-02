@@ -221,15 +221,16 @@ pub fn ray_solid_crossings(
         // Point of crossing.
         let cross = origin + t * dir;
         let poly = face_polygon(solid, face_id)?;
-        // 2D polygon containment using the same helper.
-        if point_in_convex_polygon_2d(
-            cross,
-            &poly,
-            &plane.frame.x,
-            &plane.frame.y,
-            &plane.frame.origin,
-            tol,
-        ) {
+        // 2D polygon containment using crossing-number test (handles non-convex
+        // polygons — after Phase B/C splits the splitter face polygons are
+        // generally non-convex due to fjord patterns).
+        let to_2d = |q: Point3| -> (f64, f64) {
+            let d = q - plane.frame.origin;
+            (d.dot(&plane.frame.x), d.dot(&plane.frame.y))
+        };
+        let (cx, cy) = to_2d(cross);
+        let poly_2d: Vec<(f64, f64)> = poly.iter().map(|p| to_2d(*p)).collect();
+        if point_in_polygon_2d(cx, cy, &poly_2d) {
             // Reject if crossing exactly through polygon vertex or edge → return None for retry.
             if on_polygon_boundary(
                 cross,

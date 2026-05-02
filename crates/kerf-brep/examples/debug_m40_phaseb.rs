@@ -8,9 +8,16 @@ use kerf_brep::primitives::{box_at};
 use kerf_geom::{Point3, Tolerance, Vec3};
 
 fn main() {
-    let mut a = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(1.0, 0.0, 0.0));
-    let mut b = box_at(Vec3::new(0.6, 0.6, 0.6), Point3::new(0.7, 0.7, 0.7));
-    let op = BooleanOp::Difference;
+    let mut a = box_at(Vec3::new(0.6, 0.6, 0.6), Point3::new(0.7, 0.7, 0.7));
+    let mut b = kerf_brep::primitives::extrude_polygon(
+        &[
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(2.0, 0.0, 0.0),
+            Point3::new(1.0, 1.5, 0.0),
+        ],
+        Vec3::new(0.0, 0.0, 2.0),
+    );
+    let op = BooleanOp::Intersection;
     let tol = Tolerance::default();
 
     let face_b_x1 = b.topo.face_ids().find(|&fid| {
