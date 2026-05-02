@@ -161,6 +161,12 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
     let mut half_edge_records: Vec<HalfEdgeRecord> = Vec::new();
     let mut edge_pairs: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
     let mut face_ids: Vec<FaceId> = Vec::with_capacity(kept.len());
+    // M39f: self-loop half-edges (v_start == v_end, e.g., vase apex after
+    // global vertex dedup collapses multiple coincident apex vertices). They
+    // can't be paired as twins (direction is ambiguous on a self-loop), so
+    // we self-twin them after stage 5 to satisfy the AsymmetricTwin invariant
+    // and keep them out of edge_pairs to avoid spurious "1 half-edge" panics.
+    let mut self_loops: Vec<kerf_topo::HalfEdgeId> = Vec::new();
 
     for (face_idx, kf) in kept.iter().enumerate() {
         let n = kf.polygon.len();
@@ -190,11 +196,16 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
                 v_end: v_end_idx,
                 face_idx,
             });
-            let key = canonical_edge_key(v_start_idx, v_end_idx);
-            edge_pairs
-                .entry(key)
-                .or_default()
-                .push(half_edge_records.len() - 1);
+            if v_start_idx == v_end_idx {
+                // Self-loop: bypass edge pairing.
+                self_loops.push(he_id);
+            } else {
+                let key = canonical_edge_key(v_start_idx, v_end_idx);
+                edge_pairs
+                    .entry(key)
+                    .or_default()
+                    .push(half_edge_records.len() - 1);
+            }
         }
         // Wire next/prev within this loop's cycle.
         for i in 0..n {
@@ -246,6 +257,16 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
             let seg = CurveSegment::line(line, 0.0, length);
             new_solid.edge_geom.insert(edge_id, seg);
         }
+    }
+
+    // M39f: self-twin all self-loop half-edges. Each gets its own degenerate
+    // edge with both half-edge slots pointing back to the same half-edge —
+    // satisfies validate's twin.twin == self check without polluting the
+    // manifold edge set. No edge geometry (zero-length).
+    for &he in &self_loops {
+        let edge_id = new_solid.topo.build_insert_edge([he, he]);
+        new_solid.topo.build_set_half_edge_twin(he, he);
+        new_solid.topo.build_set_half_edge_edge(he, edge_id);
     }
 
     // Stage 5b: connected-component analysis → allocate one Shell per component.
