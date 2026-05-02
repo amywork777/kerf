@@ -132,7 +132,7 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
     // siblings only. OnBoundary-dropped faces are skipped — they were
     // dropped because their twin in the OTHER solid is kept (coplanar
     // duplicate dedup), and absorbing them would re-cover that region.
-    crate::booleans::chord_merge::chord_merge_pass_same_source(
+    let _merge_count = crate::booleans::chord_merge::chord_merge_pass_same_source(
         &mut kept,
         &kept_source,
         &dropped,

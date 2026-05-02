@@ -38,7 +38,17 @@ fn main() {
     for face_id in a.topo.face_ids() {
         let cls = classify_face(&a, face_id, &b, &tol);
         let kept = keep_a_face(cls, op);
-        println!("  {face_id:?}: {cls:?} → {}", if kept { "KEEP" } else { "drop" });
+        let poly =
+            kerf_brep::booleans::face_polygon::face_polygon(&a, face_id).unwrap_or_default();
+        let poly_str: Vec<String> = poly
+            .iter()
+            .map(|p| format!("({:.1},{:.1},{:.1})", p.x, p.y, p.z))
+            .collect();
+        println!(
+            "  {face_id:?}: {cls:?} → {} [{}]",
+            if kept { "KEEP" } else { "drop" },
+            poly_str.join(", ")
+        );
         if kept {
             a_kept += 1;
         }

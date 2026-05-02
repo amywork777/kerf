@@ -160,10 +160,10 @@ pub fn merge_along_shared_chord(
     Some(merged)
 }
 
-/// Does any kept face NOT coplanar with `surface` contain BOTH `a` and `b` as
-/// vertices? Used to gate the merge: if the chord exists in a non-coplanar
-/// kept face, the chord is a REAL boundary edge of the result and merging
-/// would erase it.
+/// Does any kept face NOT coplanar with `surface` contain the directed edge
+/// `a → b` OR `b → a` (i.e., the actual edge, not just both vertices)?
+/// Used to gate the merge: if the chord IS an edge of a non-coplanar kept
+/// face, merging the chord away would erase a real boundary.
 fn chord_used_by_other_kept_face(
     a: Point3,
     b: Point3,
@@ -175,9 +175,9 @@ fn chord_used_by_other_kept_face(
         if coplanar(&kf.surface, surface, tol) {
             continue;
         }
-        let has_a = kf.polygon.iter().any(|p| pt_eq(*p, a, tol));
-        let has_b = kf.polygon.iter().any(|p| pt_eq(*p, b, tol));
-        if has_a && has_b {
+        if find_directed_edge(&kf.polygon, a, b, tol).is_some()
+            || find_directed_edge(&kf.polygon, b, a, tol).is_some()
+        {
             return true;
         }
     }
@@ -195,8 +195,9 @@ pub fn chord_merge_pass_same_source(
     dropped_source: &[u8],
     dropped_cls: &[FaceClassification],
     tol: &Tolerance,
-) {
+) -> usize {
     let mut available: Vec<bool> = vec![true; dropped.len()];
+    let mut merge_count = 0usize;
     loop {
         let mut changed = false;
         for ki in 0..kept.len() {
@@ -239,6 +240,7 @@ pub fn chord_merge_pass_same_source(
                 if let Some(merged) = merge_along_shared_chord(kp, dp, tol) {
                     kept[ki].polygon = merged;
                     available[di] = false;
+                    merge_count += 1;
                     changed = true;
                     break;
                 }
@@ -248,6 +250,7 @@ pub fn chord_merge_pass_same_source(
             break;
         }
     }
+    merge_count
 }
 
 /// Iteratively merge every coplanar (kept, dropped) pair sharing a chord.
