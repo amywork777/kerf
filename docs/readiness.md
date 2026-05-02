@@ -77,7 +77,7 @@ their pre-split form so the artificial chord disappears.
 This is a real classifier-splitter contract change, not a one-liner. Tracked
 as M38.
 
-### M38 attempt 1 — over-merging (reverted)
+### M38 attempts 1–2 — over-merging (reverted, kept as unit-tested module)
 
 Implemented `chord_merge_kept_with_dropped` in `clip.rs`: for each kept face F,
 find a coplanar dropped face D sharing an edge, merge F's polygon with D's
@@ -92,7 +92,7 @@ must have the same modification — otherwise stitch sees a 1-half-edge again
 on the SAME edge (now coming from a still-split neighbor instead of the
 merged-away dropped sibling).
 
-### Path to M38 attempt 2 (deferred)
+### Path to M38 attempt 3 (deferred)
 
 The fix needs **transitive consistency**: when a chord is identified as
 "spurious" (perpendicular faces also dropped), it must be removed from EVERY
@@ -110,6 +110,23 @@ kept face that contains it, simultaneously. Implementation outline:
 Realistic estimate: half-day of careful work touching `pipeline.rs`,
 `split.rs`, `splice.rs`, plus a new `provenance.rs` module. Worth doing
 in a focused session — would jump readiness past 90%.
+
+Attempt 2 added a "chord-used-by-other-kept-face" gate (don't merge if
+the chord exists in a non-coplanar kept face). Still failed: in
+half-overlap union, A's `[0,1]` top half merges with B's `[1,2]` top
+half (different solids, coplanar, share a chord that doesn't appear in
+any other kept face). After merge, A's super-polygon spans `[0,2]`
+which OVERLAPS with the still-kept A's separate `[1,2]` piece —
+producing a 3-half-edge stitch panic on their shared edge.
+
+The fundamental missing piece is **same-face provenance** — knowing
+which faces came from the same original A or B face. A merge should
+only collapse siblings of the same original face, never cross-solid.
+Without provenance metadata flowing through `split_solids_at_intersections`,
+geometry-only heuristics keep over- or under-merging.
+
+The unit-tested `chord_merge` module is preserved at
+`crates/kerf-brep/src/booleans/chord_merge.rs` for the next attempt.
 
 ## Driving toward 100%
 

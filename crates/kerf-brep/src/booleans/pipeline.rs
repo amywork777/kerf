@@ -116,7 +116,9 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
         }
     }
 
-    let _ = &dropped; // M38 placeholder — see docs/readiness.md for design.
+    let _ = &dropped; // chord_merge module is built and unit-tested but not
+                      // integrated — see docs/readiness.md for why a naive
+                      // merge breaks neighbouring kept faces' adjacency.
 
     stitch(&kept, tol)
 }

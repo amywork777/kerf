@@ -1,5 +1,6 @@
 //! Boolean operations on B-rep solids.
 
+pub mod chord_merge;
 pub mod classify;
 pub mod clip;
 pub mod edge_lookup;
