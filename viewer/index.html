@@ -42,6 +42,15 @@
     "SF Mono", Menlo, monospace; font-size: 11px; color: var(--muted);
     min-height: 36px; white-space: pre-wrap; }
   #status.error { color: #ff7b72; border-color: #ff7b72; }
+  #actions { margin-top: 14px; display: flex; gap: 8px; }
+  #views { margin-top: 14px; }
+  #views label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 12px; }
+  #views label.checkbox { margin-top: 10px; color: var(--fg); cursor: pointer; }
+  #views .view-row { display: flex; gap: 4px; }
+  button { background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 4px; padding: 6px 10px; font: inherit; cursor: pointer; flex: 1;
+    transition: border-color .15s, color .15s; }
+  button:hover { border-color: var(--accent); color: var(--accent); }
   canvas { display: block; }
   #stage { position: relative; }
   .examples { margin-top: 12px; font-size: 12px; color: var(--muted); }
@@ -71,6 +80,23 @@
       <select id="target-select"></select>
     </div>
     <div id="params"></div>
+    <div id="actions" hidden>
+      <button id="download-btn">Download JSON</button>
+      <button id="reset-btn">Reset params</button>
+    </div>
+    <div id="views" hidden>
+      <label>View</label>
+      <div class="view-row">
+        <button data-view="iso">iso</button>
+        <button data-view="front">front</button>
+        <button data-view="top">top</button>
+        <button data-view="side">side</button>
+      </div>
+      <label class="checkbox">
+        <input type="checkbox" id="wireframe-toggle" />
+        wireframe overlay
+      </label>
+    </div>
     <div id="status">no model loaded</div>
   </aside>
   <div id="stage"></div>

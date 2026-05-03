@@ -17,6 +17,11 @@ const dropZone = document.getElementById("drop")!;
 const paramsEl = document.getElementById("params")!;
 const targetsEl = document.getElementById("targets")!;
 const targetSelect = document.getElementById("target-select") as HTMLSelectElement;
+const actionsEl = document.getElementById("actions")!;
+const viewsEl = document.getElementById("views")!;
+const downloadBtn = document.getElementById("download-btn")!;
+const resetBtn = document.getElementById("reset-btn")!;
+const wireframeToggle = document.getElementById("wireframe-toggle") as HTMLInputElement;
 
 // --- three.js scene ---
 const scene = new THREE.Scene();
@@ -55,6 +60,7 @@ const meshMaterial = new THREE.MeshStandardMaterial({
 });
 
 let currentMesh: THREE.Mesh | null = null;
+let currentWireframe: THREE.LineSegments | null = null;
 
 function fitToView(box: THREE.Box3) {
   const center = box.getCenter(new THREE.Vector3());
@@ -68,11 +74,16 @@ function fitToView(box: THREE.Box3) {
   controls.update();
 }
 
-function setMesh(triangles: Float32Array) {
+function setMesh(triangles: Float32Array, fit: boolean) {
   if (currentMesh) {
     scene.remove(currentMesh);
     currentMesh.geometry.dispose();
     currentMesh = null;
+  }
+  if (currentWireframe) {
+    scene.remove(currentWireframe);
+    currentWireframe.geometry.dispose();
+    currentWireframe = null;
   }
   if (triangles.length === 0) return;
 
@@ -82,8 +93,24 @@ function setMesh(triangles: Float32Array) {
   geom.computeBoundingBox();
   currentMesh = new THREE.Mesh(geom, meshMaterial);
   scene.add(currentMesh);
-  if (geom.boundingBox) fitToView(geom.boundingBox);
+  refreshWireframe();
+  if (fit && geom.boundingBox) fitToView(geom.boundingBox);
 }
+
+function refreshWireframe() {
+  if (currentWireframe) {
+    scene.remove(currentWireframe);
+    currentWireframe.geometry.dispose();
+    currentWireframe = null;
+  }
+  if (!currentMesh || !wireframeToggle.checked) return;
+  const wf = new THREE.WireframeGeometry(currentMesh.geometry);
+  const mat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25 });
+  currentWireframe = new THREE.LineSegments(wf, mat);
+  scene.add(currentWireframe);
+}
+
+wireframeToggle.addEventListener("change", refreshWireframe);
 
 function resize() {
   const r = stage.getBoundingClientRect();
@@ -121,7 +148,7 @@ function err(msg: string) {
   status.textContent = msg;
 }
 
-function rebuild() {
+function rebuild(fit: boolean = false) {
   if (!model) return;
   try {
     const t0 = performance.now();
@@ -132,7 +159,7 @@ function rebuild() {
       SEGMENTS,
     );
     const dt = performance.now() - t0;
-    setMesh(new Float32Array(tris));
+    setMesh(new Float32Array(tris), fit);
     ok(
       `target='${model.targetId}'  triangles=${tris.length / 9}  eval=${dt.toFixed(1)}ms`,
     );
@@ -206,11 +233,59 @@ function loadJson(json: string) {
     };
     renderTargets(ids);
     renderParams();
-    rebuild();
+    actionsEl.hidden = false;
+    viewsEl.hidden = false;
+    rebuild(true);
   } catch (e) {
     err(String(e));
   }
 }
+
+// --- save back to JSON ---
+downloadBtn.addEventListener("click", () => {
+  if (!model) return;
+  // Re-emit JSON with the slider-modified parameters baked in.
+  const parsed = JSON.parse(model.json);
+  parsed.parameters = { ...model.parameters };
+  const out = JSON.stringify(parsed, null, 2);
+  const blob = new Blob([out], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "model.kerf-cad.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+});
+
+resetBtn.addEventListener("click", () => {
+  if (!model) return;
+  model.parameters = { ...model.defaults };
+  renderParams();
+  rebuild();
+});
+
+// --- view presets ---
+function setView(kind: "iso" | "front" | "top" | "side") {
+  if (!currentMesh?.geometry.boundingBox) return;
+  const box = currentMesh.geometry.boundingBox;
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3()).length() || 50;
+  const dist = size * 1.6;
+  const dir = {
+    iso: new THREE.Vector3(1, 0.7, 1.2).normalize(),
+    front: new THREE.Vector3(0, 0, 1),
+    top: new THREE.Vector3(0, 1, 0.001), // tiny z so OrbitControls doesn't lock up
+    side: new THREE.Vector3(1, 0, 0),
+  }[kind];
+  controls.target.copy(center);
+  camera.position.copy(center.clone().add(dir.multiplyScalar(dist)));
+  controls.update();
+}
+viewsEl.querySelectorAll<HTMLButtonElement>("button[data-view]").forEach((b) => {
+  b.addEventListener("click", () => setView(b.dataset.view as any));
+});
 
 // --- file drop / picker ---
 fileInput.addEventListener("change", () => {
