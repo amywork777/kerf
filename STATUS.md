@@ -16,17 +16,25 @@ cd viewer && pnpm install && ./build-wasm.sh && pnpm dev
 # → http://localhost:5174
 ```
 
-A typical model is ~10 lines of JSON declaring a tree of `Box`, `Cylinder`,
-`CylinderAt`, `Tube`, `TubeAt`, `HollowBox`, `HollowCylinder`, `Slot`,
-`Wedge`, `RegularPrism`, `Star`, `LBracket`, `UChannel`, `TBeam`,
-`Revolve`, `ExtrudePolygon`, `Sphere`, `Torus`, `Cone`, `Frustum`
-primitives, `Translate`/`Rotate`/`Mirror`/`LinearPattern`/
-`PolarPattern`/`CornerCut`/`Fillet`/`Fillets`/`Chamfer`/`Counterbore`
-transforms, and `Union`/`Intersection`/`Difference` booleans. Every
-numeric field accepts literals, `$param` references, or arbitrary
+A typical model is ~10 lines of JSON declaring a tree of:
+- **Geometric primitives**: `Box`, `BoxAt`, `Cylinder`, `CylinderAt`,
+  `Sphere`, `Torus`, `Cone`, `Frustum`, `Tube`, `TubeAt`, `HollowBox`,
+  `HollowCylinder`, `Slot`, `Wedge`, `RegularPrism`, `Star`,
+  `ExtrudePolygon`, `Revolve`.
+- **Standard structural shapes**: `LBracket`, `UChannel`, `TBeam`, `IBeam`.
+- **Standard fasteners and bosses**: `Bolt`, `CapScrew`, `Nut`,
+  `Washer`, `RoundBoss`, `RectBoss`.
+- **Transforms**: `Translate`, `Scale`, `Rotate`, `Mirror`,
+  `LinearPattern`, `PolarPattern`.
+- **Manufacturing operations**: `CornerCut`, `Fillet`, `Fillets`
+  (multi-edge), `Chamfer`, `Counterbore`, `HoleArray`, `BoltCircle`,
+  `HexHole`, `SquareHole`.
+- **Booleans**: `Union`, `Intersection`, `Difference`.
+
+Every numeric field accepts literals, `$param` references, or arbitrary
 arithmetic expressions (`"$plate_x / 2 + sqrt(16)"`) — the expression
-language has 24+ builtins (trig, log/pow, clamp, hypot, mod, if_pos,
-pi/tau/e constants).
+language has 24+ builtins (trig+inverses, pow/exp/log, clamp, hypot,
+mod, sign, if_pos for conditionals, pi/tau/e constants).
 
 ## Readiness against published CAD packages
 
@@ -36,7 +44,7 @@ kernel + authoring + viewer + production output).
 
 | Capability                                | SW weight | We're at | SW pts |
 |-------------------------------------------|----------:|---------:|-------:|
-| Planar booleans + primitives + validation | 15%       | 95%      | 14.25  |
+| Planar booleans + primitives + validation | 15%       | 98%      | 14.7   |
 | Authoring layer (params + expressions)    | 6%        | 98%      | 5.88   |
 | 3D viewer (mesh, camera, lighting)        | 7%        | 90%      | 6.3    |
 | Picking / selection                       | 5%        | 50%      | 2.5    |
@@ -45,20 +53,21 @@ kernel + authoring + viewer + production output).
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
 | Sweep / loft (Revolve only)               | 6%        | 15%      | 0.9    |
-| Manufacturing features (CornerCut, Fillet, Fillets, Chamfer, Counterbore) | 12% | 30%  | 3.6    |
+| Manufacturing features (CornerCut, Fillet, Fillets, Chamfer, Counterbore, hole patterns, hex/square holes) | 12% | 40%  | 4.8    |
 | Reference geometry (Mirror is adjacent)   | 3%        | 5%       | 0.15   |
 | Curved-surface analytic booleans          | 8%        | 0%       | 0      |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~44.4%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~46.1%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~92%**   |
 
-Started this run at ~40.5% / 91%. Shipped 14 new features in this
-session: Fillet (single-edge), Fillets (plural), Chamfer, Counterbore,
-Slot, HollowCylinder, Wedge, RegularPrism, Star, CylinderAt, TubeAt,
-LBracket, UChannel, TBeam — plus 14 new expression builtins
-(trig inverses, pow/log, clamp, mod, hypot, if_pos, pi/tau/e). 438
-tests pass.
+Started this run at ~40.5% / 91%. Shipped 26 new features:
+manufacturing (Fillet, Fillets, Chamfer, Counterbore, HoleArray,
+BoltCircle, HexHole, SquareHole), composed primitives (Slot,
+HollowCylinder, Wedge, RegularPrism, Star, CylinderAt, TubeAt),
+structural shapes (LBracket, UChannel, TBeam, IBeam), fasteners and
+bosses (Bolt, CapScrew, Nut, Washer, RoundBoss, RectBoss), one new
+transform (Scale), and 14 expression builtins. 462 tests pass.
 
 The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
 are real manufacturing features even if multi-edge fillet is still
@@ -101,24 +110,29 @@ proprietary product): years.
 ## What's real and what's brittle
 
 **Real:**
-- The kernel handles planar booleans for arbitrary tree depth (the
-  chained-DIFF bug fixed in the prior session was a multi-day root-cause
-  hunt).
+- The kernel handles planar booleans for arbitrary tree depth.
 - Parameters + expressions make the model authoring loop tight, with
   a 24-builtin expression language including conditionals (`if_pos`)
   and constants (`pi()`, `tau()`, `e()`).
 - The viewer is genuinely usable — drop a JSON, scrub sliders, see the
   mesh, export STL.
 - Mirror works including downstream Union composition.
+- Scale (uniform) works for any input.
 - Single-edge axis-aligned Fillet + Chamfer ship and survive into the
   STL/STEP exports. Fillets (plural) handles multi-edge cases that
   share only "irrelevant" body faces (diagonally-opposite z-edges).
 - Counterbore drills socket-head fastener pockets in any axis.
-- Cylinders and tubes can be positioned along any of three axes
-  using exact cyclic-permutation orientation (no sin/cos noise).
-- Standard structural shapes (LBracket, UChannel, TBeam) ship as
-  single-feature primitives.
-- 438 tests pass, 1 ignored (4-corner Fillets, kernel limitation).
+- Cylinders, tubes, and polygon-pocket cutters can be positioned
+  along any of three axes using exact cyclic-permutation orientation
+  (no sin/cos noise).
+- 12 standard structural / fastener primitives ship: LBracket,
+  UChannel, TBeam, IBeam, Bolt, CapScrew, Nut, Washer, RoundBoss,
+  RectBoss, Star, RegularPrism.
+- HoleArray and BoltCircle drill arbitrary linear/polar arrays of
+  through-pockets.
+- HexHole and SquareHole drill non-circular pockets via the
+  build_polygon_pocket helper.
+- 462 tests pass, 1 ignored (4-corner Fillets, kernel limitation).
 
 **Brittle:**
 - Coplanar overlapping faces still trip the boolean engine in some
