@@ -132,6 +132,7 @@ offending name.
 | `Fillet`         | `axis: "x"\|"y"\|"z"`, `edge_min: [x,y,z]`, `edge_length`, `radius`, `quadrant: "pp"\|"pn"\|"np"\|"nn"`, `segments` (≥3) (²) | `input: <id>` |
 | `Fillets`        | `edges: [{axis, edge_min, edge_length, radius, quadrant, segments}, …]` — multi-edge Fillet via composite cutter union (²) | `input: <id>` |
 | `Chamfer`        | `axis`, `edge_min`, `edge_length`, `setback`, `quadrant` — 45° flat cut (²) | `input: <id>` |
+| `Counterbore`    | `axis: "x"\|"y"\|"z"`, `top_center: [x,y,z]`, `drill_radius`, `cbore_radius`, `cbore_depth`, `total_depth`, `segments` (≥3) — stepped hole for socket-head fasteners; `top_center` is the center of the cbore opening on the +axis-facing surface, hole goes INTO the body in -axis direction | `input: <id>` |
 | `LinearPattern`  | `count` (≥1), `offset: [x,y,z]`                                    | `input: <id>`       |
 | `PolarPattern`   | `count` (≥1), `axis: [x,y,z]`, `center: [x,y,z]`, `total_angle_deg` | `input: <id>`      |
 | `Union`          | —                                                                  | `inputs: [<id>, …]` |

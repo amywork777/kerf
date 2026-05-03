@@ -117,6 +117,25 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// Counterbore: subtract a stepped hole from `input`. The "drill"
+    /// portion has `drill_radius` and runs full `total_depth`. The
+    /// "counterbore" portion is a wider cylinder of `cbore_radius` and
+    /// `cbore_depth`, sitting at the top (the +axis end of the hole).
+    /// `axis` is "x"|"y"|"z" — the drill direction is -axis (the hole
+    /// goes INTO the body from the +axis-facing surface). `top_center`
+    /// is the center of the counterbore opening on that surface.
+    Counterbore {
+        id: String,
+        input: String,
+        axis: String,
+        top_center: [Scalar; 3],
+        drill_radius: Scalar,
+        cbore_radius: Scalar,
+        cbore_depth: Scalar,
+        total_depth: Scalar,
+        segments: usize,
+    },
+
     /// Multiple `Fillet`s applied to the same `input` in one operation.
     /// Builds each fillet's wedge cutter relative to the unmodified input,
     /// unions the wedges, and subtracts the composite cutter once. This
@@ -327,6 +346,7 @@ impl Feature {
             | Feature::Fillet { id, .. }
             | Feature::Fillets { id, .. }
             | Feature::Chamfer { id, .. }
+            | Feature::Counterbore { id, .. }
             | Feature::Slot { id, .. }
             | Feature::HollowCylinder { id, .. }
             | Feature::Wedge { id, .. }
@@ -374,7 +394,8 @@ impl Feature {
             | Feature::CornerCut { input, .. }
             | Feature::Fillet { input, .. }
             | Feature::Fillets { input, .. }
-            | Feature::Chamfer { input, .. } => {
+            | Feature::Chamfer { input, .. }
+            | Feature::Counterbore { input, .. } => {
                 vec![input.as_str()]
             }
             Feature::Union { inputs, .. }

@@ -205,6 +205,92 @@ fn build(
             let r = resolve_one(id, radius, params)?;
             build_fillet(id, base, axis, em, len, r, quadrant, *segments)
         }
+        Feature::Counterbore {
+            input,
+            axis,
+            top_center,
+            drill_radius,
+            cbore_radius,
+            cbore_depth,
+            total_depth,
+            segments,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let tc = resolve3(id, top_center, params)?;
+            let dr = resolve_one(id, drill_radius, params)?;
+            let cr = resolve_one(id, cbore_radius, params)?;
+            let cd = resolve_one(id, cbore_depth, params)?;
+            let td = resolve_one(id, total_depth, params)?;
+            if dr <= 0.0 || cr <= 0.0 || cd <= 0.0 || td <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Counterbore requires positive radii and depths (got drill_r={dr}, cbore_r={cr}, cbore_d={cd}, total_d={td})"
+                    ),
+                });
+            }
+            if cr <= dr {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Counterbore cbore_radius ({cr}) must be > drill_radius ({dr})"
+                    ),
+                });
+            }
+            if cd >= td {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Counterbore cbore_depth ({cd}) must be < total_depth ({td})"
+                    ),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Counterbore segments must be >= 3 (got {segments})"),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            // Drill cylinder: centered at top_center perp coords, axis-origin
+            // shifted DOWN by total_depth so the cylinder runs from
+            // top_center[axis] - total_depth UP to top_center[axis].
+            // Extend a small overhang past top_center so the cylinder
+            // pokes outside the body and avoids coplanar caps.
+            let eps = (dr * 0.1).max(1e-3).min(td * 0.1);
+            let drill = cylinder_along_axis(
+                dr,
+                td + eps,
+                *segments,
+                axis_idx,
+                tc[axis_idx] - td,
+                tc[a_idx],
+                tc[b_idx],
+            );
+            // Counterbore cylinder: same center, runs from
+            // top_center[axis] - cbore_depth to top_center[axis] + eps.
+            let cbore = cylinder_along_axis(
+                cr,
+                cd + eps,
+                *segments,
+                axis_idx,
+                tc[axis_idx] - cd,
+                tc[a_idx],
+                tc[b_idx],
+            );
+            let composite = drill.try_union(&cbore).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "counterbore_union",
+                message: e.message,
+            })?;
+            base.try_difference(&composite).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "counterbore",
+                message: e.message,
+            })
+        }
         Feature::Fillets { input, edges, .. } => {
             let base = cache_get(cache, input)?;
             build_fillets(id, base, edges, params)
