@@ -23,6 +23,9 @@ const viewsEl = document.getElementById("views")!;
 const downloadBtn = document.getElementById("download-btn")!;
 const resetBtn = document.getElementById("reset-btn")!;
 const wireframeToggle = document.getElementById("wireframe-toggle") as HTMLInputElement;
+const featureTreeEl = document.getElementById("feature-tree")!;
+const featureListEl = document.getElementById("feature-list")!;
+const featureCountEl = document.getElementById("feature-count")!;
 
 // --- three.js scene ---
 const scene = new THREE.Scene();
@@ -245,13 +248,23 @@ function rebuild(fit: boolean = false) {
       model.targetId,
       JSON.stringify(model.parameters),
       SEGMENTS,
-    ) as { triangles: number[]; face_ids: number[]; face_count: number };
+    ) as {
+      triangles: number[];
+      face_ids: number[];
+      face_count: number;
+      volume: number;
+      shell_count: number;
+      vertex_count: number;
+      edge_count: number;
+      face_count_topo: number;
+    };
     const tris = new Float32Array(result.triangles);
     const faceIds = new Uint32Array(result.face_ids);
     const dt = performance.now() - t0;
     setMesh(tris, faceIds, result.face_count, fit);
     ok(
-      `target='${model.targetId}'  triangles=${tris.length / 9}  faces=${result.face_count}  eval=${dt.toFixed(1)}ms`,
+      `target='${model.targetId}'  V/E/F/S=${result.vertex_count}/${result.edge_count}/${result.face_count_topo}/${result.shell_count}` +
+        `  vol=${result.volume.toFixed(3)}  tris=${tris.length / 9}  eval=${dt.toFixed(1)}ms`,
     );
   } catch (e) {
     err(String(e));
@@ -301,8 +314,59 @@ function renderTargets(ids: string[]) {
   targetSelect.onchange = () => {
     if (!model) return;
     model.targetId = targetSelect.value;
+    refreshFeatureTreeSelection();
     rebuild();
   };
+}
+
+type FeatureSummary = { id: string; kind: string };
+
+function summarizeFeatures(json: string): FeatureSummary[] {
+  try {
+    const parsed = JSON.parse(json);
+    const features = (parsed?.features ?? []) as Array<Record<string, unknown>>;
+    return features
+      .filter((f): f is Record<string, unknown> => typeof f === "object" && f !== null)
+      .map((f) => ({
+        id: typeof f.id === "string" ? f.id : "?",
+        kind: typeof f.kind === "string" ? f.kind : "?",
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function renderFeatureTree() {
+  if (!model) {
+    featureTreeEl.hidden = true;
+    return;
+  }
+  const features = summarizeFeatures(model.json);
+  featureTreeEl.hidden = features.length === 0;
+  featureCountEl.textContent = features.length ? `(${features.length})` : "";
+  featureListEl.innerHTML = "";
+  for (const f of features) {
+    const li = document.createElement("li");
+    li.dataset.id = f.id;
+    li.innerHTML = `<span class="kind">${f.kind}</span> ${f.id}`;
+    li.title = `Click to set as target — current: '${f.id}'`;
+    li.addEventListener("click", () => {
+      if (!model) return;
+      model.targetId = f.id;
+      targetSelect.value = f.id;
+      refreshFeatureTreeSelection();
+      rebuild();
+    });
+    featureListEl.appendChild(li);
+  }
+  refreshFeatureTreeSelection();
+}
+
+function refreshFeatureTreeSelection() {
+  if (!model) return;
+  for (const li of featureListEl.children as HTMLCollectionOf<HTMLLIElement>) {
+    li.classList.toggle("target", li.dataset.id === model.targetId);
+  }
 }
 
 function loadJson(json: string) {
@@ -323,6 +387,7 @@ function loadJson(json: string) {
     };
     renderTargets(ids);
     renderParams();
+    renderFeatureTree();
     actionsEl.hidden = false;
     viewsEl.hidden = false;
     rebuild(true);

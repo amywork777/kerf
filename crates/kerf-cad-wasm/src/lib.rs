@@ -7,7 +7,11 @@
 
 use wasm_bindgen::prelude::*;
 
-use kerf_brep::{tessellate::{tessellate, tessellate_with_face_index}, Solid};
+use kerf_brep::{
+    measure::solid_volume,
+    tessellate::{tessellate, tessellate_with_face_index},
+    Solid,
+};
 use kerf_cad::Model;
 
 // Default panic hook is fine; viewer can install console_error_panic_hook
@@ -103,17 +107,28 @@ pub fn evaluate_with_face_ids(
             tris.push(v.z as f32);
         }
     }
+    let face_count = face_ids.iter().copied().max().map_or(0, |m| m + 1);
+    let vol = solid_volume(&solid);
     #[derive(serde::Serialize)]
-    struct Out {
+    struct OutFull {
         triangles: Vec<f32>,
         face_ids: Vec<u32>,
         face_count: u32,
+        volume: f64,
+        shell_count: usize,
+        vertex_count: usize,
+        edge_count: usize,
+        face_count_topo: usize,
     }
-    let face_count = face_ids.iter().copied().max().map_or(0, |m| m + 1);
-    serde_wasm_bindgen::to_value(&Out {
+    serde_wasm_bindgen::to_value(&OutFull {
         triangles: tris,
         face_ids,
         face_count,
+        volume: vol,
+        shell_count: solid.shell_count(),
+        vertex_count: solid.vertex_count(),
+        edge_count: solid.edge_count(),
+        face_count_topo: solid.face_count(),
     })
     .map_err(|e| JsError::new(&e.to_string()))
 }
