@@ -228,6 +228,47 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// L-shape (right-angle bracket) cross-section extruded along +z.
+    /// `width` is the leg along +x, `height` is the leg along +y, both
+    /// measured from the inner corner. `thickness` is the leg
+    /// thickness. `depth` is the extrusion length along +z. Inner
+    /// corner is at (thickness, thickness). Result fits in an axis-
+    /// aligned bounding box of (width, height, depth).
+    LBracket {
+        id: String,
+        width: Scalar,
+        height: Scalar,
+        thickness: Scalar,
+        depth: Scalar,
+    },
+
+    /// U-channel cross-section extruded along +z. `width` is the
+    /// outside x-extent, `height` is the y-extent of the legs (web
+    /// at y=0). `thickness` is the wall thickness for both legs and
+    /// the web. `depth` is the extrusion length. Result occupies
+    /// x ∈ [0, width], y ∈ [0, height], z ∈ [0, depth].
+    UChannel {
+        id: String,
+        width: Scalar,
+        height: Scalar,
+        thickness: Scalar,
+        depth: Scalar,
+    },
+
+    /// T-beam cross-section extruded along +z. The flange is a
+    /// horizontal bar of `flange_width` × `flange_thickness` sitting on
+    /// top; the web is a vertical bar of `web_thickness` ×
+    /// (`total_height` − `flange_thickness`) below it, centered along
+    /// the flange. `depth` is the extrusion length.
+    TBeam {
+        id: String,
+        flange_width: Scalar,
+        flange_thickness: Scalar,
+        web_thickness: Scalar,
+        total_height: Scalar,
+        depth: Scalar,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -354,6 +395,9 @@ impl Feature {
             | Feature::CylinderAt { id, .. }
             | Feature::TubeAt { id, .. }
             | Feature::Star { id, .. }
+            | Feature::LBracket { id, .. }
+            | Feature::UChannel { id, .. }
+            | Feature::TBeam { id, .. }
             | Feature::Translate { id, .. }
             | Feature::Rotate { id, .. }
             | Feature::Mirror { id, .. }
@@ -385,7 +429,10 @@ impl Feature {
             | Feature::RegularPrism { .. }
             | Feature::CylinderAt { .. }
             | Feature::TubeAt { .. }
-            | Feature::Star { .. } => Vec::new(),
+            | Feature::Star { .. }
+            | Feature::LBracket { .. }
+            | Feature::UChannel { .. }
+            | Feature::TBeam { .. } => Vec::new(),
             Feature::Translate { input, .. }
             | Feature::Rotate { input, .. }
             | Feature::Mirror { input, .. }

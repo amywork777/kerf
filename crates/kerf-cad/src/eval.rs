@@ -454,6 +454,152 @@ fn build(
                 b[b_idx],
             ))
         }
+        Feature::LBracket {
+            width,
+            height,
+            thickness,
+            depth,
+            ..
+        } => {
+            let w = resolve_one(id, width, params)?;
+            let h = resolve_one(id, height, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if w <= 0.0 || h <= 0.0 || t <= 0.0 || d <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "LBracket requires positive width, height, thickness, depth (got {w}, {h}, {t}, {d})"
+                    ),
+                });
+            }
+            if t >= w || t >= h {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "LBracket thickness ({t}) must be < width ({w}) and < height ({h})"
+                    ),
+                });
+            }
+            // L profile CCW (interior on the left as we walk):
+            //   (0, 0) -> (w, 0) -> (w, t) -> (t, t) -> (t, h) -> (0, h) -> close
+            let prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(w, 0.0, 0.0),
+                Point3::new(w, t, 0.0),
+                Point3::new(t, t, 0.0),
+                Point3::new(t, h, 0.0),
+                Point3::new(0.0, h, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
+        Feature::UChannel {
+            width,
+            height,
+            thickness,
+            depth,
+            ..
+        } => {
+            let w = resolve_one(id, width, params)?;
+            let h = resolve_one(id, height, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if w <= 0.0 || h <= 0.0 || t <= 0.0 || d <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "UChannel requires positive width, height, thickness, depth (got {w}, {h}, {t}, {d})"
+                    ),
+                });
+            }
+            if 2.0 * t >= w {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "UChannel 2*thickness ({}) must be < width ({w})",
+                        2.0 * t
+                    ),
+                });
+            }
+            if t >= h {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "UChannel thickness ({t}) must be < height ({h})"
+                    ),
+                });
+            }
+            // U profile CCW: walk around the outside, then dip in for the
+            // channel.
+            //   (0,0) -> (w,0) -> (w,h) -> (w-t,h) -> (w-t,t) -> (t,t)
+            //   -> (t,h) -> (0,h) -> close
+            let prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(w, 0.0, 0.0),
+                Point3::new(w, h, 0.0),
+                Point3::new(w - t, h, 0.0),
+                Point3::new(w - t, t, 0.0),
+                Point3::new(t, t, 0.0),
+                Point3::new(t, h, 0.0),
+                Point3::new(0.0, h, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
+        Feature::TBeam {
+            flange_width,
+            flange_thickness,
+            web_thickness,
+            total_height,
+            depth,
+            ..
+        } => {
+            let fw = resolve_one(id, flange_width, params)?;
+            let ft = resolve_one(id, flange_thickness, params)?;
+            let wt = resolve_one(id, web_thickness, params)?;
+            let th = resolve_one(id, total_height, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if fw <= 0.0 || ft <= 0.0 || wt <= 0.0 || th <= 0.0 || d <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TBeam requires positive flange_width, flange_thickness, web_thickness, total_height, depth (got {fw}, {ft}, {wt}, {th}, {d})"
+                    ),
+                });
+            }
+            if wt >= fw {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TBeam web_thickness ({wt}) must be < flange_width ({fw})"
+                    ),
+                });
+            }
+            if ft >= th {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TBeam flange_thickness ({ft}) must be < total_height ({th})"
+                    ),
+                });
+            }
+            // T profile CCW. Web is centered on x. Web bottom at y=0,
+            // flange top at y=th. Flange spans x=[0, fw], y=[th-ft, th].
+            // Web spans x=[wx_min, wx_max], y=[0, th-ft].
+            let wx_min = (fw - wt) / 2.0;
+            let wx_max = wx_min + wt;
+            let wy_top = th - ft;
+            let prof = vec![
+                Point3::new(wx_min, 0.0, 0.0),
+                Point3::new(wx_max, 0.0, 0.0),
+                Point3::new(wx_max, wy_top, 0.0),
+                Point3::new(fw, wy_top, 0.0),
+                Point3::new(fw, th, 0.0),
+                Point3::new(0.0, th, 0.0),
+                Point3::new(0.0, wy_top, 0.0),
+                Point3::new(wx_min, wy_top, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
         Feature::TubeAt {
             base,
             axis,

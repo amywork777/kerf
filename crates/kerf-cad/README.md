@@ -125,6 +125,9 @@ offending name.
 | `CylinderAt`     | `base: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `radius`, `height`, `segments` (≥3) — cylinder positioned at `base` with cap-axis along `axis` | — |
 | `Star`           | `points` (≥3), `outer_radius`, `inner_radius`, `height` — n-pointed star prism extruded along +z | — |
 | `TubeAt`         | `base: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `outer_radius`, `inner_radius`, `height`, `segments` (≥3) | — |
+| `LBracket`       | `width`, `height`, `thickness`, `depth` — L cross-section extruded along +z | — |
+| `UChannel`       | `width`, `height`, `thickness`, `depth` — U cross-section (web at y=0, legs along +y) extruded along +z | — |
+| `TBeam`          | `flange_width`, `flange_thickness`, `web_thickness`, `total_height`, `depth` — T cross-section extruded along +z | — |
 | `Translate`      | `offset: [x,y,z]`                                                  | `input: <id>`       |
 | `Rotate`         | `axis: [x,y,z]`, `angle_deg`, `center: [x,y,z]`                    | `input: <id>`       |
 | `Mirror`         | `plane_origin: [x,y,z]`, `plane_normal: [x,y,z]` (¹)                | `input: <id>`       |
