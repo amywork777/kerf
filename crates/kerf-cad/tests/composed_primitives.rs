@@ -271,3 +271,36 @@ fn star_round_trips_via_json() {
     let v2 = solid_volume(&m2.evaluate("out").unwrap());
     assert!((v1 - v2).abs() < 1e-9);
 }
+
+// -------- TubeAt --------
+
+#[test]
+fn tube_at_x_volume_matches() {
+    let m = kerf_cad::Model::new().add(Feature::TubeAt {
+        id: "out".into(),
+        base: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(0.0)],
+        axis: "x".into(),
+        outer_radius: Scalar::lit(2.0),
+        inner_radius: Scalar::lit(1.0),
+        height: Scalar::lit(5.0),
+        segments: 32,
+    });
+    let v = solid_volume(&m.evaluate("out").unwrap());
+    let exp = std::f64::consts::PI * (4.0 - 1.0) * 5.0;
+    let rel = (v - exp).abs() / exp;
+    assert!(rel < 0.02, "v={v}, exp={exp}, rel={rel}");
+}
+
+#[test]
+fn tube_at_rejects_inner_geq_outer() {
+    let m = kerf_cad::Model::new().add(Feature::TubeAt {
+        id: "out".into(),
+        base: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(0.0)],
+        axis: "z".into(),
+        outer_radius: Scalar::lit(1.0),
+        inner_radius: Scalar::lit(1.0),
+        height: Scalar::lit(2.0),
+        segments: 16,
+    });
+    assert!(m.evaluate("out").is_err());
+}

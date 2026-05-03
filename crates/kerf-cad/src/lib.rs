@@ -11,6 +11,6 @@ pub mod scalar;
 pub mod transform;
 
 pub use eval::EvalError;
-pub use feature::{Feature, Profile2D};
+pub use feature::{Feature, FilletEdge, Profile2D};
 pub use model::{Model, ModelError};
 pub use scalar::{lits, Scalar};

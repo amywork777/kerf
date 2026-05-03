@@ -12,7 +12,7 @@ use kerf_brep::{
 use kerf_geom::{Point3, Vec3};
 use thiserror::Error;
 
-use crate::feature::{Feature, Profile2D};
+use crate::feature::{Feature, FilletEdge, Profile2D};
 use crate::model::Model;
 use crate::scalar::{resolve_arr, Scalar};
 use crate::transform::{mirror_solid, rotate_solid, translate_solid};
@@ -205,6 +205,10 @@ fn build(
             let r = resolve_one(id, radius, params)?;
             build_fillet(id, base, axis, em, len, r, quadrant, *segments)
         }
+        Feature::Fillets { input, edges, .. } => {
+            let base = cache_get(cache, input)?;
+            build_fillets(id, base, edges, params)
+        }
         Feature::Chamfer {
             input,
             axis,
@@ -363,6 +367,70 @@ fn build(
                 b[a_idx],
                 b[b_idx],
             ))
+        }
+        Feature::TubeAt {
+            base,
+            axis,
+            outer_radius,
+            inner_radius,
+            height,
+            segments,
+            ..
+        } => {
+            let b = resolve3(id, base, params)?;
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            if r_out <= 0.0 || r_in <= 0.0 || h <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TubeAt requires positive outer_radius, inner_radius, height (got {r_out}, {r_in}, {h})"
+                    ),
+                });
+            }
+            if r_in >= r_out {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TubeAt inner_radius ({r_in}) must be < outer_radius ({r_out})"
+                    ),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("TubeAt segments must be >= 3 (got {segments})"),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            let outer = cylinder_along_axis(
+                r_out,
+                h,
+                *segments,
+                axis_idx,
+                b[axis_idx],
+                b[a_idx],
+                b[b_idx],
+            );
+            // Inner cylinder extends 1 unit past each cap to make a clean
+            // through-bore (matches Tube's convention).
+            let bore_h = h + 2.0;
+            let inner = cylinder_along_axis(
+                r_in,
+                bore_h,
+                *segments,
+                axis_idx,
+                b[axis_idx] - 1.0,
+                b[a_idx],
+                b[b_idx],
+            );
+            outer.try_difference(&inner).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "tube_at",
+                message: e.message,
+            })
         }
         Feature::Star {
             points,
@@ -830,19 +898,21 @@ fn cylinder_along_axis(
     translate_solid(&oriented, Vec3::new(offset[0], offset[1], offset[2]))
 }
 
-/// Apply the exact rotation (x, y, z) -> (z, y, -x) (rot +y by +π/2) to
-/// every point and frame in `s`. Preserves topology and orientation.
+/// Apply the cyclic permutation (x, y, z) -> (z, x, y) — a det=+1
+/// rotation. Local +z maps to world +x, so a +z-aligned cylinder
+/// becomes +x-aligned. Preserves topology and orientation.
 fn axis_swap_xz_to_x(s: &Solid) -> Solid {
-    apply_orthonormal_remap(s, |p| Point3::new(p.z, p.y, -p.x), |v| {
-        Vec3::new(v.z, v.y, -v.x)
+    apply_orthonormal_remap(s, |p| Point3::new(p.z, p.x, p.y), |v| {
+        Vec3::new(v.z, v.x, v.y)
     })
 }
 
-/// Apply the exact rotation (x, y, z) -> (x, z, -y) (rot +x by -π/2) to
-/// every point and frame in `s`. Preserves topology and orientation.
+/// Apply the cyclic permutation (x, y, z) -> (y, z, x) — a det=+1
+/// rotation. Local +z maps to world +y, so a +z-aligned cylinder
+/// becomes +y-aligned. Preserves topology and orientation.
 fn axis_swap_yz_to_y(s: &Solid) -> Solid {
-    apply_orthonormal_remap(s, |p| Point3::new(p.x, p.z, -p.y), |v| {
-        Vec3::new(v.x, v.z, -v.y)
+    apply_orthonormal_remap(s, |p| Point3::new(p.y, p.z, p.x), |v| {
+        Vec3::new(v.y, v.z, v.x)
     })
 }
 
@@ -894,6 +964,25 @@ fn build_fillet(
     quadrant: &str,
     segments: usize,
 ) -> Result<Solid, EvalError> {
+    let wedge = build_fillet_wedge(id, axis, edge_min, edge_length, radius, quadrant, segments)?;
+    base.try_difference(&wedge).map_err(|e| EvalError::Boolean {
+        id: id.into(),
+        op: "fillet",
+        message: e.message,
+    })
+}
+
+/// Build the wedge cutter for a single fillet without applying it. Used
+/// by `Fillet` (single) and `Fillets` (plural).
+fn build_fillet_wedge(
+    id: &str,
+    axis: &str,
+    edge_min: [f64; 3],
+    edge_length: f64,
+    radius: f64,
+    quadrant: &str,
+    segments: usize,
+) -> Result<Solid, EvalError> {
     if radius <= 0.0 {
         return Err(EvalError::Invalid {
             id: id.into(),
@@ -914,23 +1003,17 @@ fn build_fillet(
     }
     let axis_idx = parse_axis(id, axis)?;
     let (sa, sb) = parse_quadrant(id, quadrant)?;
-    // Overhang: extend cutter past the edge ends along the edge axis to
-    // dodge coplanar caps with body faces.
     let eps = (radius * 0.25).max(1e-3).min(edge_length * 0.5);
     let overhang_h = edge_length + 2.0 * eps;
-    let cb_extent_along = overhang_h;
     let cb_axis_origin = edge_min[axis_idx] - eps;
-    // Corner box: extends `radius` in each perpendicular direction from the
-    // edge into the body's quadrant.
     let mut corner_origin = edge_min;
     corner_origin[axis_idx] = cb_axis_origin;
     let corner_box = axis_aligned_box_at_edge(
         corner_origin,
         axis_idx,
-        cb_extent_along,
+        overhang_h,
         (sa * radius, sb * radius),
     );
-    // Cylinder centered at edge_min ± (radius, radius) in the two perps.
     let (a_idx, b_idx) = perpendicular_axes(axis_idx);
     let cyl = cylinder_along_axis(
         radius,
@@ -941,18 +1024,60 @@ fn build_fillet(
         edge_min[a_idx] + sa * radius,
         edge_min[b_idx] + sb * radius,
     );
-    let wedge = corner_box
+    corner_box
         .try_difference(&cyl)
         .map_err(|e| EvalError::Boolean {
             id: id.into(),
             op: "fillet_wedge",
             message: e.message,
+        })
+}
+
+fn build_fillets(
+    id: &str,
+    base: &Solid,
+    edges: &[FilletEdge],
+    params: &HashMap<String, f64>,
+) -> Result<Solid, EvalError> {
+    if edges.is_empty() {
+        return Err(EvalError::Invalid {
+            id: id.into(),
+            reason: "Fillets needs at least one edge".into(),
+        });
+    }
+    // Build each wedge from the unmodified base, union them into a single
+    // composite cutter, subtract once. For wedges that don't share a body
+    // face (e.g., diagonally-opposite z-edges of a box) this works. For
+    // wedges that share a body face (the four z-edges of a box all share
+    // the lateral faces in pairs), the boolean engine still trips during
+    // the wedge-union step or the final difference — that's a kernel
+    // limitation around coplanar faces.
+    let mut composite: Option<Solid> = None;
+    for (i, e) in edges.iter().enumerate() {
+        let em = resolve_arr(&e.edge_min, params).map_err(|message| EvalError::Parameter {
+            id: id.into(),
+            message,
         })?;
-    base.try_difference(&wedge).map_err(|e| EvalError::Boolean {
-        id: id.into(),
-        op: "fillet",
-        message: e.message,
-    })
+        let len = resolve_one(id, &e.edge_length, params)?;
+        let r = resolve_one(id, &e.radius, params)?;
+        let wedge =
+            build_fillet_wedge(id, &e.axis, em, len, r, &e.quadrant, e.segments)?;
+        composite = Some(match composite.take() {
+            None => wedge,
+            Some(prev) => prev.try_union(&wedge).map_err(|err| EvalError::Boolean {
+                id: id.into(),
+                op: "fillets_union",
+                message: format!("merging wedge {i}: {}", err.message),
+            })?,
+        });
+    }
+    let cutter = composite.expect("non-empty edges");
+    base.try_difference(&cutter)
+        .map_err(|err| EvalError::Boolean {
+            id: id.into(),
+            op: "fillets",
+            message: err.message,
+        })
 }
 
 fn build_chamfer(

@@ -12,6 +12,17 @@ pub struct Profile2D {
     pub points: Vec<[Scalar; 2]>,
 }
 
+/// One edge entry in a `Fillets` (plural) feature.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FilletEdge {
+    pub axis: String,
+    pub edge_min: [Scalar; 3],
+    pub edge_length: Scalar,
+    pub radius: Scalar,
+    pub quadrant: String,
+    pub segments: usize,
+}
+
 /// One operation in the model DAG.
 ///
 /// Every variant has an `id` (its key in the model) and either parameters
@@ -106,6 +117,21 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// Multiple `Fillet`s applied to the same `input` in one operation.
+    /// Builds each fillet's wedge cutter relative to the unmodified input,
+    /// unions the wedges, and subtracts the composite cutter once. This
+    /// avoids the "second fillet meets first fillet's curved face" failure
+    /// that single-`Fillet` stacking has.
+    ///
+    /// Edges with overlapping wedge regions still won't work (those
+    /// wedges' union itself fails). Each entry has the same fields as
+    /// `Fillet` minus `id` and `input`.
+    Fillets {
+        id: String,
+        input: String,
+        edges: Vec<FilletEdge>,
+    },
+
     /// Bevel an axis-aligned 90° edge of `input` by a 45° flat cut of
     /// `setback` (distance from the edge that the cut starts on each face).
     ///
@@ -179,6 +205,20 @@ pub enum Feature {
         base: [Scalar; 3],
         axis: String,
         radius: Scalar,
+        height: Scalar,
+        segments: usize,
+    },
+
+    /// Tube (hollow cylinder) at an axis-aligned position with chosen
+    /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
+    /// is automatically extended past both caps so the bore is a clean
+    /// through-hole regardless of orientation.
+    TubeAt {
+        id: String,
+        base: [Scalar; 3],
+        axis: String,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
         height: Scalar,
         segments: usize,
     },
@@ -285,12 +325,14 @@ impl Feature {
             | Feature::HollowBox { id, .. }
             | Feature::CornerCut { id, .. }
             | Feature::Fillet { id, .. }
+            | Feature::Fillets { id, .. }
             | Feature::Chamfer { id, .. }
             | Feature::Slot { id, .. }
             | Feature::HollowCylinder { id, .. }
             | Feature::Wedge { id, .. }
             | Feature::RegularPrism { id, .. }
             | Feature::CylinderAt { id, .. }
+            | Feature::TubeAt { id, .. }
             | Feature::Star { id, .. }
             | Feature::Translate { id, .. }
             | Feature::Rotate { id, .. }
@@ -322,6 +364,7 @@ impl Feature {
             | Feature::Wedge { .. }
             | Feature::RegularPrism { .. }
             | Feature::CylinderAt { .. }
+            | Feature::TubeAt { .. }
             | Feature::Star { .. } => Vec::new(),
             Feature::Translate { input, .. }
             | Feature::Rotate { input, .. }
@@ -330,6 +373,7 @@ impl Feature {
             | Feature::PolarPattern { input, .. }
             | Feature::CornerCut { input, .. }
             | Feature::Fillet { input, .. }
+            | Feature::Fillets { input, .. }
             | Feature::Chamfer { input, .. } => {
                 vec![input.as_str()]
             }

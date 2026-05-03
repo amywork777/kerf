@@ -118,11 +118,13 @@ Supported operators: `+ - * /` and parentheses. Supported builtins:
 | `RegularPrism`   | `radius`, `height`, `segments` (≥3) — n-gon prism (alias of `cylinder_faceted`) | —      |
 | `CylinderAt`     | `base: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `radius`, `height`, `segments` (≥3) — cylinder positioned at `base` with cap-axis along `axis` | — |
 | `Star`           | `points` (≥3), `outer_radius`, `inner_radius`, `height` — n-pointed star prism extruded along +z | — |
+| `TubeAt`         | `base: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `outer_radius`, `inner_radius`, `height`, `segments` (≥3) | — |
 | `Translate`      | `offset: [x,y,z]`                                                  | `input: <id>`       |
 | `Rotate`         | `axis: [x,y,z]`, `angle_deg`, `center: [x,y,z]`                    | `input: <id>`       |
 | `Mirror`         | `plane_origin: [x,y,z]`, `plane_normal: [x,y,z]` (¹)                | `input: <id>`       |
 | `CornerCut`      | `corner: [x,y,z]`, `extents: [x,y,z]` — subtract a box at a corner  | `input: <id>`       |
 | `Fillet`         | `axis: "x"\|"y"\|"z"`, `edge_min: [x,y,z]`, `edge_length`, `radius`, `quadrant: "pp"\|"pn"\|"np"\|"nn"`, `segments` (≥3) (²) | `input: <id>` |
+| `Fillets`        | `edges: [{axis, edge_min, edge_length, radius, quadrant, segments}, …]` — multi-edge Fillet via composite cutter union (²) | `input: <id>` |
 | `Chamfer`        | `axis`, `edge_min`, `edge_length`, `setback`, `quadrant` — 45° flat cut (²) | `input: <id>` |
 | `LinearPattern`  | `count` (≥1), `offset: [x,y,z]`                                    | `input: <id>`       |
 | `PolarPattern`   | `count` (≥1), `axis: [x,y,z]`, `center: [x,y,z]`, `total_angle_deg` | `input: <id>`      |
@@ -148,12 +150,15 @@ the edge in the two perpendicular axes (canonical perp-axis order is
 filleted edges don't share a face (e.g., diagonally opposite z-edges
 of a box are fine — they share only the top and bottom faces but the
 fillet cutters never meet there). It fails when adjacent edges share
-a face that both fillets cut into (e.g., all four z-edges of a box,
-which share the front/back/left/right faces in pairs); the second
-fillet's cutter meets the first fillet's curved face and trips a
-non-manifold check in stitch. Workarounds: fillet only opposite
-corners, split the body and union pre-filleted parts, or
-post-process in your slicer.
+a face that both fillets cut into. The plural `Fillets` form builds
+all wedge cutters from the unmodified input and unions them into a
+single composite cutter — this works for the same "diagonally
+opposite" case as chained `Fillet`, and additionally for any set of
+edges whose wedge cutters don't themselves trip the boolean engine.
+The four-corner-of-a-box case still fails because the wedge union
+hits the same coplanar-face limitation; needs kernel-side work to
+fix. Workarounds: fillet only opposite corners, split the body and
+union pre-filleted parts, or post-process in your slicer.
 
 ### Conventions
 
