@@ -96,7 +96,17 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
 
     let mut a = a.clone();
     let mut b = b.clone();
-    let intersections = face_intersections(&a, &b, tol);
+    let mut intersections = face_intersections(&a, &b, tol);
+    // Canonicalise intersection processing order. Without this, downstream
+    // mef-driven splits run in slotmap-iteration order, which depends on the
+    // construction path of the input solids (box_ vs extrude_polygon emit
+    // faces in different orders). Sorting by 3D coordinates makes the
+    // pipeline output deterministic in geometry alone.
+    intersections.sort_by(|x, y| {
+        let xs = (x.start.x, x.start.y, x.start.z, x.end.x, x.end.y, x.end.z);
+        let ys = (y.start.x, y.start.y, y.start.z, y.end.x, y.end.y, y.end.z);
+        xs.partial_cmp(&ys).unwrap_or(std::cmp::Ordering::Equal)
+    });
     let outcome = split_solids_at_intersections(&mut a, &mut b, &intersections, tol);
     let interior = resolve_interior_endpoints(&mut a, &mut b, &intersections, &outcome, tol);
     // M39: skip mef on chords whose pre-split host faces are both dropped

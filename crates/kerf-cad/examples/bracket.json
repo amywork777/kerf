@@ -15,15 +15,16 @@
     {"kind": "Cylinder", "id": "hole",
       "radius": "$hole_r", "height": "$hole_height", "segments": 16},
 
-    {"kind": "Translate", "id": "hole_left",
-      "input": "hole",
-      "offset": ["$edge_inset", 30.0, "$hole_z_start"]},
-
-    {"kind": "Translate", "id": "hole_right",
-      "input": "hole",
-      "offset": [90.0, 30.0, "$hole_z_start"]},
+    {"kind": "Translate", "id": "hole_bl",
+      "input": "hole", "offset": ["$edge_inset", "$edge_inset", "$hole_z_start"]},
+    {"kind": "Translate", "id": "hole_br",
+      "input": "hole", "offset": [90.0, "$edge_inset", "$hole_z_start"]},
+    {"kind": "Translate", "id": "hole_tl",
+      "input": "hole", "offset": ["$edge_inset", 50.0, "$hole_z_start"]},
+    {"kind": "Translate", "id": "hole_tr",
+      "input": "hole", "offset": [90.0, 50.0, "$hole_z_start"]},
 
     {"kind": "Difference", "id": "out",
-      "inputs": ["body", "hole_left", "hole_right"]}
+      "inputs": ["body", "hole_bl", "hole_br", "hole_tl", "hole_tr"]}
   ]
 }

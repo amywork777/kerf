@@ -1,25 +1,18 @@
-//! Reproducers for "non-manifold input to stitch" on chained Difference.
+//! Regression suite for chained `Difference` and disjoint `Union` that
+//! previously panicked in stitch with "1 half-edge". Root cause was
+//! face-iteration-order dependence in the boolean pipeline (mef order
+//! varied with input solid construction path), surfaced by the difference
+//! between `box_` and `extrude_polygon` half-edge layouts.
 //!
-//! ## What we know (verified via differential)
-//!
-//! - `block - box_at_cutter - box_at_cutter - box_at_cutter` works:
-//!   `chained_diff_three_box_through_holes` is GREEN today.
-//! - `block - extrude_polygon_cutter - extrude_polygon_cutter` panics in
-//!   stitch on the SECOND diff (not the third). True for every n≥4 prism
-//!   tested. True even for an axis-aligned 2×2×12 box built via
-//!   `extrude_polygon` instead of `box_at`.
-//! - The mixing `extrude → box_at` works; `box_at → extrude` panics.
-//!   Conclusion: the trigger is the SECOND diff using an extrude-built
-//!   cutter against any post-boolean A.
-//! - Face polygons (`face_polygon`) returned by extrude_polygon and box_at
-//!   for geometrically identical cubes are byte-for-byte identical, so
-//!   the discrepancy is upstream of the polygon walk — face/vertex
-//!   slotmap iteration order produced by the construction path.
-//!
-//! These tests are `#[ignore]` so the workspace stays green; remove the
-//! ignore once the boolean pipeline is hardened against face-iteration
-//! order. The kerf-cad layer ships a `union-cutters-first` workaround
-//! that avoids the bug for typical multi-cut models.
+//! Fix shipped in two parts:
+//! - `pipeline.rs`: canonicalise intersection processing by 3D-coord sort,
+//!   so the mef order is geometry-determined rather than slotmap-iteration-
+//!   determined.
+//! - `face_polygon.rs`: rotate the returned polygon off any stinger
+//!   junction (a vertex whose forward fan would emit a zero-area
+//!   triangle), so downstream tessellation of fjord-style annular faces
+//!   produces non-degenerate triangles regardless of where the loop
+//!   happened to start.
 
 use kerf_brep::{
     geometry::{CurveKind, SurfaceKind},
@@ -67,9 +60,10 @@ fn chained_diff_three_box_through_holes() {
     assert_eq!(s3.shell_count(), 1, "single shell of genus 3");
 }
 
-/// Reproducer (currently fails). chained DIFF with cylinder cutters.
+/// chained DIFF with cylinder cutters. Fixed by intersection-order
+/// canonicalization in pipeline.rs + stinger-junction polygon rotation in
+/// face_polygon.rs.
 #[test]
-#[ignore = "kerf boolean pipeline mishandles extrude-built cutters as the B operand of a chained DIFF — workaround in kerf-cad: union cutters first, then single DIFF"]
 fn chained_diff_three_cylinder_through_holes() {
     let block = box_(Vec3::new(30.0, 20.0, 10.0));
     let cyl = cylinder_faceted(2.0, 12.0, 12);
@@ -81,12 +75,9 @@ fn chained_diff_three_cylinder_through_holes() {
     s2.try_difference(&p3).expect("step 3");
 }
 
-/// Reproducer (currently fails). chained DIFF with extrude_polygon-built
-/// axis-aligned box cutters — geometrically identical to box_at, but built
-/// via the extrude_polygon path. Confirms the bug is in construction path,
-/// not geometry, polygon shape, or curved-surface handling.
+/// chained DIFF with extrude_polygon-built axis-aligned box cutters.
+/// Now passes with intersection-sort + polygon-rotate fixes.
 #[test]
-#[ignore = "see chained_diff_three_cylinder_through_holes"]
 fn chained_diff_three_extruded_boxes_axis_aligned() {
     let block = box_(Vec3::new(30.0, 20.0, 10.0));
     let make_cutter = |cx: f64, cy: f64| {
@@ -107,13 +98,10 @@ fn chained_diff_three_extruded_boxes_axis_aligned() {
     s2.try_difference(&p3).expect("step 3");
 }
 
-/// Attempted workaround: union the cutters first, then a single DIFF.
-/// FAILS too — union of disjoint extrude-built cylinders also triggers
-/// the bug (same "1 half-edge" panic). So a "union cutters first"
-/// strategy is NOT a viable workaround in pure kerf today.
+/// Union of disjoint extrude-built cylinders, then single DIFF.
+/// Now also passes with the same fix.
 #[test]
-#[ignore = "union of disjoint extrude-built cylinders ALSO panics — same root cause as chained_diff_three_cylinder_through_holes"]
-fn workaround_union_cutters_then_single_difference() {
+fn union_disjoint_cutters_then_single_difference() {
     let block = box_(Vec3::new(30.0, 20.0, 10.0));
     let cyl = cylinder_faceted(2.0, 12.0, 12);
     let p1 = translate(&cyl, Vec3::new(7.0, 10.0, -1.0));
