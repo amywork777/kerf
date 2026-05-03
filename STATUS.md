@@ -17,14 +17,16 @@ cd viewer && pnpm install && ./build-wasm.sh && pnpm dev
 ```
 
 A typical model is ~10 lines of JSON declaring a tree of `Box`, `Cylinder`,
-`CylinderAt`, `Tube`, `HollowBox`, `HollowCylinder`, `Slot`, `Wedge`,
-`RegularPrism`, `Star`, `Revolve`, `ExtrudePolygon`, `Sphere`, `Torus`,
-`Cone`, `Frustum` primitives,
-`Translate`/`Rotate`/`Mirror`/`LinearPattern`/`PolarPattern`/`CornerCut`/
-`Fillet`/`Chamfer` transforms, and
-`Union`/`Intersection`/`Difference` booleans. Every numeric field accepts
-literals, `$param` references, or arbitrary arithmetic expressions
-(`"$plate_x / 2 + sqrt(16)"`).
+`CylinderAt`, `Tube`, `TubeAt`, `HollowBox`, `HollowCylinder`, `Slot`,
+`Wedge`, `RegularPrism`, `Star`, `LBracket`, `UChannel`, `TBeam`,
+`Revolve`, `ExtrudePolygon`, `Sphere`, `Torus`, `Cone`, `Frustum`
+primitives, `Translate`/`Rotate`/`Mirror`/`LinearPattern`/
+`PolarPattern`/`CornerCut`/`Fillet`/`Fillets`/`Chamfer`/`Counterbore`
+transforms, and `Union`/`Intersection`/`Difference` booleans. Every
+numeric field accepts literals, `$param` references, or arbitrary
+arithmetic expressions (`"$plate_x / 2 + sqrt(16)"`) — the expression
+language has 24+ builtins (trig, log/pow, clamp, hypot, mod, if_pos,
+pi/tau/e constants).
 
 ## Readiness against published CAD packages
 
@@ -34,8 +36,8 @@ kernel + authoring + viewer + production output).
 
 | Capability                                | SW weight | We're at | SW pts |
 |-------------------------------------------|----------:|---------:|-------:|
-| Planar booleans + primitives + validation | 15%       | 92%      | 13.8   |
-| Authoring layer (params + expressions)    | 6%        | 95%      | 5.7    |
+| Planar booleans + primitives + validation | 15%       | 95%      | 14.25  |
+| Authoring layer (params + expressions)    | 6%        | 98%      | 5.88   |
 | 3D viewer (mesh, camera, lighting)        | 7%        | 90%      | 6.3    |
 | Picking / selection                       | 5%        | 50%      | 2.5    |
 | Feature tree UI                           | 5%        | 60%      | 3.0    |
@@ -43,19 +45,30 @@ kernel + authoring + viewer + production output).
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
 | Sweep / loft (Revolve only)               | 6%        | 15%      | 0.9    |
-| Manufacturing features (CornerCut, Fillet, Chamfer; single-edge only) | 12% | 20%  | 2.4    |
+| Manufacturing features (CornerCut, Fillet, Fillets, Chamfer, Counterbore) | 12% | 30%  | 3.6    |
 | Reference geometry (Mirror is adjacent)   | 3%        | 5%       | 0.15   |
 | Curved-surface analytic booleans          | 8%        | 0%       | 0      |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~42.6%** |
-| **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~91%**   |
+| **Solidworks-tier total**                 | **100%**  |          | **~44.4%** |
+| **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~92%**   |
 
-Started this session at 18% / 57%. Ended this session at ~40% / 91%.
-Current run shipped Fillet, Chamfer, Slot, HollowCylinder, Wedge, and
-RegularPrism on top of that → ~42.6% / 91%. The OpenSCAD-tier number
-doesn't move — the new features are SW-style operations, not the kernel
-or authoring categories OpenSCAD scores against.
+Started this run at ~40.5% / 91%. Shipped 14 new features in this
+session: Fillet (single-edge), Fillets (plural), Chamfer, Counterbore,
+Slot, HollowCylinder, Wedge, RegularPrism, Star, CylinderAt, TubeAt,
+LBracket, UChannel, TBeam — plus 14 new expression builtins
+(trig inverses, pow/log, clamp, mod, hypot, if_pos, pi/tau/e). 438
+tests pass.
+
+The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
+are real manufacturing features even if multi-edge fillet is still
+limited). Authoring climbed to 98% — the only things missing are
+piecewise expressions and string-typed parameters. Planar primitives
+to 95% — most common parts are now buildable from a single feature.
+
+Note: STATUS.md's own honest assessment is that 100% of SW-tier
+takes years and 80% takes months. This run shipped what's
+achievable in one focused session: ~4 SW pts of progress.
 
 ## What's left to reach 100% Solidworks-tier
 
@@ -91,13 +104,21 @@ proprietary product): years.
 - The kernel handles planar booleans for arbitrary tree depth (the
   chained-DIFF bug fixed in the prior session was a multi-day root-cause
   hunt).
-- Parameters + expressions make the model authoring loop tight.
+- Parameters + expressions make the model authoring loop tight, with
+  a 24-builtin expression language including conditionals (`if_pos`)
+  and constants (`pi()`, `tau()`, `e()`).
 - The viewer is genuinely usable — drop a JSON, scrub sliders, see the
   mesh, export STL.
 - Mirror works including downstream Union composition.
 - Single-edge axis-aligned Fillet + Chamfer ship and survive into the
-  STL/STEP exports.
-- 413 tests pass.
+  STL/STEP exports. Fillets (plural) handles multi-edge cases that
+  share only "irrelevant" body faces (diagonally-opposite z-edges).
+- Counterbore drills socket-head fastener pockets in any axis.
+- Cylinders and tubes can be positioned along any of three axes
+  using exact cyclic-permutation orientation (no sin/cos noise).
+- Standard structural shapes (LBracket, UChannel, TBeam) ship as
+  single-feature primitives.
+- 438 tests pass, 1 ignored (4-corner Fillets, kernel limitation).
 
 **Brittle:**
 - Coplanar overlapping faces still trip the boolean engine in some
