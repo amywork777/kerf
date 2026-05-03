@@ -4,8 +4,11 @@
 //! starting with `$` followed by an identifier (and nothing else) is treated
 //! as a bare parameter lookup; any other string is parsed as an expression.
 //! Expressions support `+ - * /`, parentheses, `$name` parameter references,
-//! decimal numbers, and a handful of math builtins (`sin`, `cos`, `tan`,
-//! `sqrt`, `abs`, `min`, `max`).
+//! decimal numbers, and a set of math builtins (`sin`, `cos`, `tan`, `asin`,
+//! `acos`, `atan`, `atan2`, `sqrt`, `pow`, `exp`, `ln`, `log`, `abs`,
+//! `sign`, `min`, `max`, `clamp`, `floor`, `ceil`, `round`, `mod`,
+//! `hypot`, `if_pos(cond, t, e)`) plus the zero-arg constants `pi`,
+//! `tau`, `e`.
 
 use std::collections::HashMap;
 
@@ -264,10 +267,13 @@ impl<'a> Parser<'a> {
             Tok::Func(name) => {
                 self.advance();
                 self.expect(&Tok::LParen)?;
-                let mut args = vec![self.parse_expr()?];
-                while matches!(self.peek(), Tok::Comma) {
-                    self.advance();
+                let mut args = Vec::new();
+                if !matches!(self.peek(), Tok::RParen) {
                     args.push(self.parse_expr()?);
+                    while matches!(self.peek(), Tok::Comma) {
+                        self.advance();
+                        args.push(self.parse_expr()?);
+                    }
                 }
                 self.expect(&Tok::RParen)?;
                 eval_func(&name, &args)
@@ -288,6 +294,10 @@ fn eval_func(name: &str, args: &[f64]) -> Result<f64, String> {
         ("sin", 1) => Ok(args[0].sin()),
         ("cos", 1) => Ok(args[0].cos()),
         ("tan", 1) => Ok(args[0].tan()),
+        ("asin", 1) => Ok(args[0].asin()),
+        ("acos", 1) => Ok(args[0].acos()),
+        ("atan", 1) => Ok(args[0].atan()),
+        ("atan2", 2) => Ok(args[0].atan2(args[1])),
         ("sqrt", 1) => {
             if args[0] < 0.0 {
                 Err(format!("sqrt of negative: {}", args[0]))
@@ -295,12 +305,44 @@ fn eval_func(name: &str, args: &[f64]) -> Result<f64, String> {
                 Ok(args[0].sqrt())
             }
         }
+        ("pow", 2) => Ok(args[0].powf(args[1])),
+        ("exp", 1) => Ok(args[0].exp()),
+        ("ln", 1) => {
+            if args[0] <= 0.0 {
+                Err(format!("ln of non-positive: {}", args[0]))
+            } else {
+                Ok(args[0].ln())
+            }
+        }
+        ("log", 2) => {
+            if args[0] <= 0.0 || args[1] <= 0.0 || args[1] == 1.0 {
+                Err(format!("log({}, {}) — base/value must be > 0, base != 1", args[0], args[1]))
+            } else {
+                Ok(args[0].log(args[1]))
+            }
+        }
         ("abs", 1) => Ok(args[0].abs()),
+        ("sign", 1) => Ok(args[0].signum()),
         ("min", 2) => Ok(args[0].min(args[1])),
         ("max", 2) => Ok(args[0].max(args[1])),
+        ("clamp", 3) => Ok(args[0].clamp(args[1], args[2])),
         ("floor", 1) => Ok(args[0].floor()),
         ("ceil", 1) => Ok(args[0].ceil()),
         ("round", 1) => Ok(args[0].round()),
+        ("mod", 2) => {
+            if args[1] == 0.0 {
+                Err("mod by zero".into())
+            } else {
+                Ok(args[0].rem_euclid(args[1]))
+            }
+        }
+        ("hypot", 2) => Ok(args[0].hypot(args[1])),
+        // Conditional: returns `t` (arg 1) if `cond` (arg 0) > 0, else `e` (arg 2).
+        ("if_pos", 3) => Ok(if args[0] > 0.0 { args[1] } else { args[2] }),
+        // Constants — expressed as zero-arg functions.
+        ("pi", 0) => Ok(std::f64::consts::PI),
+        ("tau", 0) => Ok(std::f64::consts::TAU),
+        ("e", 0) => Ok(std::f64::consts::E),
         _ => Err(format!(
             "unknown function or wrong arity: {name}({} args)",
             args.len()

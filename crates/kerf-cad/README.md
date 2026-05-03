@@ -93,9 +93,15 @@ Numeric fields accept three forms:
   `"sqrt($a * $a + $b * $b)"`.
 
 Supported operators: `+ - * /` and parentheses. Supported builtins:
-`sin`, `cos`, `tan`, `sqrt`, `abs`, `min(a, b)`, `max(a, b)`, `floor`,
-`ceil`, `round`. Missing parameters and parse errors surface as
-`Parameter` evaluation errors with the offending name.
+trig: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2(y, x)`;
+algebra: `sqrt`, `pow(a, b)`, `exp`, `ln`, `log(value, base)`,
+`abs`, `sign`, `hypot(a, b)`, `mod(a, b)`;
+selection: `min(a, b)`, `max(a, b)`, `clamp(v, lo, hi)`,
+`if_pos(cond, t, e)` (returns `t` when `cond > 0`, else `e`);
+rounding: `floor`, `ceil`, `round`;
+zero-arg constants: `pi()`, `tau()`, `e()`. Missing parameters and
+parse errors surface as `Parameter` evaluation errors with the
+offending name.
 
 ### Feature catalog
 

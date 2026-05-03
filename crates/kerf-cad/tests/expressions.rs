@@ -116,6 +116,72 @@ fn json_round_trip_preserves_expressions() {
 }
 
 #[test]
+fn expression_supports_pi_and_pow_and_clamp() {
+    let m = Model::new()
+        .with_parameter("r", 3.0)
+        .add(Feature::Box {
+            id: "body".into(),
+            extents: [
+                // pi() * r * r ≈ 28.274
+                Scalar::expr("pi() * $r * $r"),
+                // pow(2, 5) = 32
+                Scalar::expr("pow(2, 5)"),
+                // clamp(7, 1, 5) = 5
+                Scalar::expr("clamp(7, 1, 5)"),
+            ],
+        });
+    let s = m.evaluate("body").unwrap();
+    let v = solid_volume(&s);
+    let exp = std::f64::consts::PI * 9.0 * 32.0 * 5.0;
+    assert!((v - exp).abs() < 1e-6, "v={v}, exp={exp}");
+}
+
+#[test]
+fn expression_supports_atan2_and_hypot() {
+    let m = Model::new()
+        .with_parameter("a", 3.0)
+        .with_parameter("b", 4.0)
+        .add(Feature::Box {
+            id: "body".into(),
+            extents: [
+                Scalar::expr("hypot($a, $b)"), // 5
+                Scalar::expr("atan2(1, 1) * 4"), // π
+                Scalar::lit(2.0),
+            ],
+        });
+    let s = m.evaluate("body").unwrap();
+    let v = solid_volume(&s);
+    let exp = 5.0 * std::f64::consts::PI * 2.0;
+    assert!((v - exp).abs() < 1e-6, "v={v}, exp={exp}");
+}
+
+#[test]
+fn expression_supports_if_pos_branch() {
+    let m1 = Model::new()
+        .with_parameter("flag", 1.0)
+        .add(Feature::Box {
+            id: "body".into(),
+            extents: [
+                Scalar::expr("if_pos($flag, 5, 10)"),
+                Scalar::lit(2.0),
+                Scalar::lit(3.0),
+            ],
+        });
+    let m2 = Model::new()
+        .with_parameter("flag", -1.0)
+        .add(Feature::Box {
+            id: "body".into(),
+            extents: [
+                Scalar::expr("if_pos($flag, 5, 10)"),
+                Scalar::lit(2.0),
+                Scalar::lit(3.0),
+            ],
+        });
+    assert!((solid_volume(&m1.evaluate("body").unwrap()) - 30.0).abs() < 1e-9);
+    assert!((solid_volume(&m2.evaluate("body").unwrap()) - 60.0).abs() < 1e-9);
+}
+
+#[test]
 fn bare_dollar_name_is_still_a_param() {
     // backwards compat: Scalar::param produces a Scalar that evaluates as
     // a single parameter lookup.
