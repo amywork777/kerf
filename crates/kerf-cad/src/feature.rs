@@ -175,6 +175,25 @@ pub enum Feature {
         depth: Scalar,
     },
 
+    /// Countersink: subtract a hole with a conical chamfer at the top
+    /// (the +axis-facing surface of the body). The straight drill portion
+    /// has `drill_radius` and runs the full `total_depth`. The conical
+    /// portion expands from `drill_radius` at depth `csink_depth` to
+    /// `csink_radius` at the top surface (depth 0). `axis` chooses the
+    /// drill direction: the hole goes INTO the body in -axis from the
+    /// `top_center` opening.
+    Countersink {
+        id: String,
+        input: String,
+        axis: String,
+        top_center: [Scalar; 3],
+        drill_radius: Scalar,
+        csink_radius: Scalar,
+        csink_depth: Scalar,
+        total_depth: Scalar,
+        segments: usize,
+    },
+
     /// Counterbore: subtract a stepped hole from `input`. The "drill"
     /// portion has `drill_radius` and runs full `total_depth`. The
     /// "counterbore" portion is a wider cylinder of `cbore_radius` and
@@ -265,6 +284,17 @@ pub enum Feature {
     /// At `segments = 4` the result is a square prism (rotated by π/4 of
     /// the n-gon phase, like cylinder_faceted's convention).
     RegularPrism {
+        id: String,
+        radius: Scalar,
+        height: Scalar,
+        segments: usize,
+    },
+
+    /// Right pyramid with a regular `n`-gon base of `radius` (circumradius)
+    /// at z=0 and an apex at (0, 0, height). `segments` is the base
+    /// sidedness (≥ 3). Uses the kerf `cone_faceted` primitive — fully
+    /// planar, composes with booleans (the analytic `Cone` does not).
+    Pyramid {
         id: String,
         radius: Scalar,
         height: Scalar,
@@ -536,10 +566,12 @@ impl Feature {
             | Feature::Fillets { id, .. }
             | Feature::Chamfer { id, .. }
             | Feature::Counterbore { id, .. }
+            | Feature::Countersink { id, .. }
             | Feature::Slot { id, .. }
             | Feature::HollowCylinder { id, .. }
             | Feature::Wedge { id, .. }
             | Feature::RegularPrism { id, .. }
+            | Feature::Pyramid { id, .. }
             | Feature::CylinderAt { id, .. }
             | Feature::TubeAt { id, .. }
             | Feature::Star { id, .. }
@@ -587,6 +619,7 @@ impl Feature {
             | Feature::HollowCylinder { .. }
             | Feature::Wedge { .. }
             | Feature::RegularPrism { .. }
+            | Feature::Pyramid { .. }
             | Feature::CylinderAt { .. }
             | Feature::TubeAt { .. }
             | Feature::Star { .. }
@@ -614,7 +647,8 @@ impl Feature {
             | Feature::Fillet { input, .. }
             | Feature::Fillets { input, .. }
             | Feature::Chamfer { input, .. }
-            | Feature::Counterbore { input, .. } => {
+            | Feature::Counterbore { input, .. }
+            | Feature::Countersink { input, .. } => {
                 vec![input.as_str()]
             }
             Feature::Union { inputs, .. }

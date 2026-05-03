@@ -122,6 +122,7 @@ offending name.
 | `Slot`           | `length` (≥0), `radius`, `height`, `segments` (≥3) — stadium-shape extrude in xy | —     |
 | `Wedge`          | `width`, `depth`, `height` — right-triangular prism (legs along x and z, extrudes along y) | — |
 | `RegularPrism`   | `radius`, `height`, `segments` (≥3) — n-gon prism (alias of `cylinder_faceted`) | —      |
+| `Pyramid`        | `radius` (base circumradius), `height`, `segments` (≥3) — n-sided pyramid via faceted-cone primitive | — |
 | `CylinderAt`     | `base: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `radius`, `height`, `segments` (≥3) — cylinder positioned at `base` with cap-axis along `axis` | — |
 | `Star`           | `points` (≥3), `outer_radius`, `inner_radius`, `height` — n-pointed star prism extruded along +z | — |
 | `TubeAt`         | `base: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `outer_radius`, `inner_radius`, `height`, `segments` (≥3) | — |
@@ -144,6 +145,7 @@ offending name.
 | `Fillets`        | `edges: [{axis, edge_min, edge_length, radius, quadrant, segments}, …]` — multi-edge Fillet via composite cutter union (²) | `input: <id>` |
 | `Chamfer`        | `axis`, `edge_min`, `edge_length`, `setback`, `quadrant` — 45° flat cut (²) | `input: <id>` |
 | `Counterbore`    | `axis: "x"\|"y"\|"z"`, `top_center: [x,y,z]`, `drill_radius`, `cbore_radius`, `cbore_depth`, `total_depth`, `segments` (≥3) — stepped hole for socket-head fasteners; `top_center` is the center of the cbore opening on the +axis-facing surface, hole goes INTO the body in -axis direction | `input: <id>` |
+| `Countersink`    | `axis`, `top_center: [x,y,z]`, `drill_radius`, `csink_radius`, `csink_depth`, `total_depth`, `segments` (≥3) — hole with a conical chamfer at the top, for flat-head fasteners | `input: <id>` |
 | `HoleArray`      | `axis`, `start: [x,y,z]`, `offset: [x,y,z]`, `count`, `radius`, `depth`, `segments` (≥3) — drill a linear array of through-pockets | `input: <id>` |
 | `BoltCircle`     | `axis`, `center: [x,y,z]`, `bolt_circle_radius`, `count`, `radius`, `depth`, `segments` (≥3) — drill a polar array of through-pockets around `center` | `input: <id>` |
 | `HexHole`        | `axis`, `top_center: [x,y,z]`, `inscribed_radius` (apothem), `depth` — drill a hex-shaped through-pocket | `input: <id>` |

@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use kerf_brep::{
     primitives::{
-        box_, box_at, cone, cylinder_faceted, extrude_polygon, frustum, revolve_polyline, sphere,
-        torus,
+        box_, box_at, cone, cone_faceted, cylinder_faceted, extrude_polygon, frustum,
+        frustum_faceted, revolve_polyline, sphere, torus,
     },
     Solid,
 };
@@ -204,6 +204,92 @@ fn build(
             let len = resolve_one(id, edge_length, params)?;
             let r = resolve_one(id, radius, params)?;
             build_fillet(id, base, axis, em, len, r, quadrant, *segments)
+        }
+        Feature::Countersink {
+            input,
+            axis,
+            top_center,
+            drill_radius,
+            csink_radius,
+            csink_depth,
+            total_depth,
+            segments,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let tc = resolve3(id, top_center, params)?;
+            let dr = resolve_one(id, drill_radius, params)?;
+            let cr = resolve_one(id, csink_radius, params)?;
+            let cd = resolve_one(id, csink_depth, params)?;
+            let td = resolve_one(id, total_depth, params)?;
+            if dr <= 0.0 || cr <= 0.0 || cd <= 0.0 || td <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Countersink requires positive radii and depths (got drill_r={dr}, csink_r={cr}, csink_d={cd}, total_d={td})"
+                    ),
+                });
+            }
+            if cr <= dr {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Countersink csink_radius ({cr}) must be > drill_radius ({dr})"),
+                });
+            }
+            if cd >= td {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Countersink csink_depth ({cd}) must be < total_depth ({td})"),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Countersink segments must be >= 3 (got {segments})"),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            let eps = (dr * 0.1).max(1e-3).min(td * 0.1);
+            // Drill cylinder: full depth.
+            let drill = cylinder_along_axis(
+                dr,
+                td + eps,
+                *segments,
+                axis_idx,
+                tc[axis_idx] - td,
+                tc[a_idx],
+                tc[b_idx],
+            );
+            // Countersink cone: faceted frustum oriented along axis. Built
+            // local in +z (bottom = drill_radius at z=0, top = csink_radius
+            // at z=csink_depth+eps). Then reorient + translate so its top
+            // sits at top_center.
+            let cone_local = frustum_faceted(dr, cr, cd + eps, *segments);
+            let cone_oriented = match axis_idx {
+                2 => cone_local,
+                0 => axis_swap_xz_to_x(&cone_local),
+                1 => axis_swap_yz_to_y(&cone_local),
+                _ => unreachable!(),
+            };
+            let mut translation = [0.0_f64; 3];
+            translation[axis_idx] = tc[axis_idx] - cd;
+            translation[a_idx] = tc[a_idx];
+            translation[b_idx] = tc[b_idx];
+            let cone_pos = translate_solid(
+                &cone_oriented,
+                Vec3::new(translation[0], translation[1], translation[2]),
+            );
+            let composite = drill.try_union(&cone_pos).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "countersink_union",
+                message: e.message,
+            })?;
+            base.try_difference(&composite).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "countersink",
+                message: e.message,
+            })
         }
         Feature::Counterbore {
             input,
@@ -418,6 +504,28 @@ fn build(
             }
             // Same as cylinder_faceted but renamed for intent.
             Ok(cylinder_faceted(r, h, *segments))
+        }
+        Feature::Pyramid {
+            radius,
+            height,
+            segments,
+            ..
+        } => {
+            let r = resolve_one(id, radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            if r <= 0.0 || h <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Pyramid requires positive radius, height (got {r}, {h})"),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Pyramid segments must be >= 3 (got {})", segments),
+                });
+            }
+            Ok(cone_faceted(r, h, *segments))
         }
         Feature::CylinderAt {
             base,
