@@ -15,7 +15,7 @@ use thiserror::Error;
 use crate::feature::{Feature, Profile2D};
 use crate::model::Model;
 use crate::scalar::{resolve_arr, Scalar};
-use crate::transform::{rotate_solid, translate_solid};
+use crate::transform::{mirror_solid, rotate_solid, translate_solid};
 
 #[derive(Debug, Error)]
 pub enum EvalError {
@@ -228,6 +228,24 @@ fn build(
             let base = cache_get(cache, input)?;
             let o = resolve3(id, offset, params)?;
             Ok(translate_solid(base, Vec3::new(o[0], o[1], o[2])))
+        }
+        Feature::Mirror {
+            input,
+            plane_origin,
+            plane_normal,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let o = resolve3(id, plane_origin, params)?;
+            let n = resolve3(id, plane_normal, params)?;
+            let normal = Vec3::new(n[0], n[1], n[2]);
+            if normal.norm() < 1e-12 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "Mirror plane_normal must be non-zero".into(),
+                });
+            }
+            Ok(mirror_solid(base, Point3::new(o[0], o[1], o[2]), normal))
         }
         Feature::Rotate {
             input,

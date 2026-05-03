@@ -113,6 +113,16 @@ pub enum Feature {
         angle_deg: Scalar,
         center: [Scalar; 3],
     },
+    /// Reflect `input` across the plane defined by `plane_origin` and
+    /// `plane_normal`. Volume is preserved. The result is a single mirrored
+    /// body (NOT unioned with the original — for a symmetric design,
+    /// follow this with a Union of input + the mirrored result).
+    Mirror {
+        id: String,
+        input: String,
+        plane_origin: [Scalar; 3],
+        plane_normal: [Scalar; 3],
+    },
 
     /// Replicate `input` `count` times along `offset`, unioning all copies.
     /// `count = 1` returns the input unchanged. `count = 0` is an error.
@@ -165,6 +175,7 @@ impl Feature {
             | Feature::CornerCut { id, .. }
             | Feature::Translate { id, .. }
             | Feature::Rotate { id, .. }
+            | Feature::Mirror { id, .. }
             | Feature::LinearPattern { id, .. }
             | Feature::PolarPattern { id, .. }
             | Feature::Union { id, .. }
@@ -189,6 +200,7 @@ impl Feature {
             | Feature::HollowBox { .. } => Vec::new(),
             Feature::Translate { input, .. }
             | Feature::Rotate { input, .. }
+            | Feature::Mirror { input, .. }
             | Feature::LinearPattern { input, .. }
             | Feature::PolarPattern { input, .. }
             | Feature::CornerCut { input, .. } => {

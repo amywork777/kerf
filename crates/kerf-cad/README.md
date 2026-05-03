@@ -114,6 +114,7 @@ Supported operators: `+ - * /` and parentheses. Supported builtins:
 | `HollowBox`      | `extents: [x,y,z]`, `wall_thickness`                               | —                   |
 | `Translate`      | `offset: [x,y,z]`                                                  | `input: <id>`       |
 | `Rotate`         | `axis: [x,y,z]`, `angle_deg`, `center: [x,y,z]`                    | `input: <id>`       |
+| `Mirror`         | `plane_origin: [x,y,z]`, `plane_normal: [x,y,z]` (¹)                | `input: <id>`       |
 | `CornerCut`      | `corner: [x,y,z]`, `extents: [x,y,z]` — subtract a box at a corner  | `input: <id>`       |
 | `LinearPattern`  | `count` (≥1), `offset: [x,y,z]`                                    | `input: <id>`       |
 | `PolarPattern`   | `count` (≥1), `axis: [x,y,z]`, `center: [x,y,z]`, `total_angle_deg` | `input: <id>`      |
@@ -123,6 +124,12 @@ Supported operators: `+ - * /` and parentheses. Supported builtins:
 
 Booleans take 2+ inputs and fold left: `Difference` with inputs `[a, b, c]`
 evaluates as `(a − b) − c`.
+
+(¹) `Mirror` reflects geometry across the plane but does not reverse the
+B-rep loop walks — the result is topologically valid for tessellation /
+viewing but unsuitable for downstream booleans (it would appear inside-
+out to the boolean engine). Loop reversal is a planned kerf-topo
+addition.
 
 ### Conventions
 
