@@ -79,6 +79,26 @@ pub enum Feature {
         center: [Scalar; 3],
     },
 
+    /// Replicate `input` `count` times along `offset`, unioning all copies.
+    /// `count = 1` returns the input unchanged. `count = 0` is an error.
+    LinearPattern {
+        id: String,
+        input: String,
+        count: usize,
+        offset: [Scalar; 3],
+    },
+    /// Replicate `input` `count` times around `axis` through `center`,
+    /// distributing `total_angle_deg` evenly. `total_angle_deg = 360`
+    /// gives a closed circle. Copies are unioned.
+    PolarPattern {
+        id: String,
+        input: String,
+        count: usize,
+        axis: [Scalar; 3],
+        center: [Scalar; 3],
+        total_angle_deg: Scalar,
+    },
+
     Union {
         id: String,
         inputs: Vec<String>,
@@ -106,6 +126,8 @@ impl Feature {
             | Feature::ExtrudePolygon { id, .. }
             | Feature::Translate { id, .. }
             | Feature::Rotate { id, .. }
+            | Feature::LinearPattern { id, .. }
+            | Feature::PolarPattern { id, .. }
             | Feature::Union { id, .. }
             | Feature::Intersection { id, .. }
             | Feature::Difference { id, .. } => id,
@@ -123,7 +145,10 @@ impl Feature {
             | Feature::Cone { .. }
             | Feature::Frustum { .. }
             | Feature::ExtrudePolygon { .. } => Vec::new(),
-            Feature::Translate { input, .. } | Feature::Rotate { input, .. } => {
+            Feature::Translate { input, .. }
+            | Feature::Rotate { input, .. }
+            | Feature::LinearPattern { input, .. }
+            | Feature::PolarPattern { input, .. } => {
                 vec![input.as_str()]
             }
             Feature::Union { inputs, .. }

@@ -102,6 +102,8 @@ a `Parameter` evaluation error rather than silently substituting zero.
 | `ExtrudePolygon` | `profile: { points: [[x,y], ...] }`, `direction: [x,y,z]`          | —                   |
 | `Translate`      | `offset: [x,y,z]`                                                  | `input: <id>`       |
 | `Rotate`         | `axis: [x,y,z]`, `angle_deg`, `center: [x,y,z]`                    | `input: <id>`       |
+| `LinearPattern`  | `count` (≥1), `offset: [x,y,z]`                                    | `input: <id>`       |
+| `PolarPattern`   | `count` (≥1), `axis: [x,y,z]`, `center: [x,y,z]`, `total_angle_deg` | `input: <id>`      |
 | `Union`          | —                                                                  | `inputs: [<id>, …]` |
 | `Intersection`   | —                                                                  | `inputs: [<id>, …]` |
 | `Difference`     | —                                                                  | `inputs: [<id>, …]` |
@@ -147,7 +149,8 @@ evaluates as `(a − b) − c`.
 ```
 
 See [examples/](./examples/) for `bracket.json`, `hollow_box.json`,
-`multi_stage_carve.json`, and `hex_prism.json`.
+`multi_stage_carve.json`, `hex_prism.json`, and `bolt_circle.json` (the
+last shows `PolarPattern` driving a 6-bolt-hole circle).
 
 ## Limitations (inherited from kerf)
 

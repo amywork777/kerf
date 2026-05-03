@@ -158,6 +158,84 @@ fn build(
             ))
         }
 
+        Feature::LinearPattern {
+            input,
+            count,
+            offset,
+            ..
+        } => {
+            if *count == 0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "LinearPattern count must be >= 1".into(),
+                });
+            }
+            let base = cache_get(cache, input)?;
+            let o = resolve3(id, offset, params)?;
+            let dir = Vec3::new(o[0], o[1], o[2]);
+            let mut acc = base.clone();
+            for k in 1..*count {
+                let copy = translate_solid(base, dir * (k as f64));
+                acc = acc.try_union(&copy).map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "union(linear_pattern)",
+                    message: e.message,
+                })?;
+            }
+            Ok(acc)
+        }
+        Feature::PolarPattern {
+            input,
+            count,
+            axis,
+            center,
+            total_angle_deg,
+            ..
+        } => {
+            if *count == 0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "PolarPattern count must be >= 1".into(),
+                });
+            }
+            let base = cache_get(cache, input)?;
+            let a = resolve3(id, axis, params)?;
+            let c = resolve3(id, center, params)?;
+            let total = resolve_one(id, total_angle_deg, params)?;
+            let axis_v = Vec3::new(a[0], a[1], a[2]);
+            if axis_v.norm() < 1e-12 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "PolarPattern axis must be non-zero".into(),
+                });
+            }
+            // For a 360° pattern of N copies, the angular step is 360/N (last
+            // copy lands back at start, NOT at 360°). For partial sweeps
+            // (< 360 OR > 360 but != multiple of 360), divide by N-1 so the
+            // first copy is at 0° and the last at total_angle_deg.
+            let is_full_circle = (total.rem_euclid(360.0)).abs() < 1e-9
+                || ((total.rem_euclid(360.0)) - 360.0).abs() < 1e-9;
+            let step = if is_full_circle && *count > 0 {
+                total / *count as f64
+            } else if *count > 1 {
+                total / (*count - 1) as f64
+            } else {
+                0.0
+            };
+            let center_p = Point3::new(c[0], c[1], c[2]);
+            let mut acc = base.clone();
+            for k in 1..*count {
+                let theta = (step * k as f64).to_radians();
+                let copy = rotate_solid(base, axis_v, theta, center_p);
+                acc = acc.try_union(&copy).map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "union(polar_pattern)",
+                    message: e.message,
+                })?;
+            }
+            Ok(acc)
+        }
+
         Feature::Union { inputs, .. } => fold_boolean(id, inputs, cache, BoolKind::Union),
         Feature::Intersection { inputs, .. } => {
             fold_boolean(id, inputs, cache, BoolKind::Intersection)
