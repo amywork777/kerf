@@ -1756,14 +1756,20 @@ fn build_fillets(
             reason: "Fillets needs at least one edge".into(),
         });
     }
-    // Build each wedge from the unmodified base, union them into a single
-    // composite cutter, subtract once. For wedges that don't share a body
-    // face (e.g., diagonally-opposite z-edges of a box) this works. For
-    // wedges that share a body face (the four z-edges of a box all share
-    // the lateral faces in pairs), the boolean engine still trips during
-    // the wedge-union step or the final difference — that's a kernel
-    // limitation around coplanar faces.
-    let mut composite: Option<Solid> = None;
+    // Sequential subtract: each wedge built from the same `base` (not from
+    // the accumulator), then subtracted from the running result.
+    //
+    // Why not "union all wedges then subtract once": that approach hits a
+    // coplanar-face limitation when two wedges share a body face (e.g., the
+    // four z-edges of a box share lateral faces in pairs).
+    //
+    // Why not "build wedge from accumulator each step": redundant — wedges
+    // are pure geometry, they don't depend on the body topology.
+    //
+    // For two wedges that share a body face, this sequential approach
+    // STILL fails (the second subtract sees the first's curved face). For
+    // disjoint pairs (diagonal corners) it works.
+    let mut acc = base.clone();
     for (i, e) in edges.iter().enumerate() {
         let em = resolve_arr(&e.edge_min, params).map_err(|message| EvalError::Parameter {
             id: id.into(),
@@ -1773,22 +1779,13 @@ fn build_fillets(
         let r = resolve_one(id, &e.radius, params)?;
         let wedge =
             build_fillet_wedge(id, &e.axis, em, len, r, &e.quadrant, e.segments)?;
-        composite = Some(match composite.take() {
-            None => wedge,
-            Some(prev) => prev.try_union(&wedge).map_err(|err| EvalError::Boolean {
-                id: id.into(),
-                op: "fillets_union",
-                message: format!("merging wedge {i}: {}", err.message),
-            })?,
-        });
-    }
-    let cutter = composite.expect("non-empty edges");
-    base.try_difference(&cutter)
-        .map_err(|err| EvalError::Boolean {
+        acc = acc.try_difference(&wedge).map_err(|err| EvalError::Boolean {
             id: id.into(),
             op: "fillets",
-            message: err.message,
-        })
+            message: format!("applying edge {i}: {}", err.message),
+        })?;
+    }
+    Ok(acc)
 }
 
 fn build_chamfer(
