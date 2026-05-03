@@ -142,10 +142,23 @@ See [examples/](./examples/) for `bracket.json`, `hollow_box.json`,
 
 ## Limitations (inherited from kerf)
 
-- **Chained Difference on 3+ shell intermediates** can fail with "non-manifold
-  input to stitch". As a rule of thumb, keep `Difference` chains short, and
-  when carving many features out of one body, consider splitting the work
-  into multiple smaller bodies and unioning at the end.
+- **Chained `Difference` with 3+ inputs and `extrude_polygon`-built cutters**
+  panics in the boolean pipeline (`non-manifold input to stitch`). Repro and
+  diagnosis live in `crates/kerf-brep/tests/chained_diff_repro.rs` —
+  briefly: `box_at`-built cutters survive arbitrary chains, but
+  `extrude_polygon`-built cutters (which is everything `Cylinder` /
+  `ExtrudePolygon` / `Frustum` / `Cone` produces) fail starting at the
+  second chained DIFF whenever the A operand has any prior splits. Same
+  geometry, different construction path. Union-the-cutters-first does NOT
+  help in the current kernel — `Union` of disjoint extrude-built solids
+  hits the same path.
+
+  **Practical guidance until the kernel is fixed:**
+  - Keep `Difference` to **2 inputs** when any cutter is `Cylinder` /
+    `ExtrudePolygon` / `Cone` / `Frustum`.
+  - For multi-cut models, model each pocket/hole as its own body
+    (`block_a - hole_a`, `block_b - hole_b`, …) and assemble at the end —
+    or use `BoxAt` cutters where geometry allows.
 - **Cutters that span a torus's hole** are not supported.
 - The kernel itself runs against a 1e-9 vertex tolerance; very small
   coplanar offsets may fall outside its degenerate-case handling.
