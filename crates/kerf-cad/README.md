@@ -50,11 +50,20 @@ $ ls -la /tmp/bracket.stl
 CLI usage:
 
 ```
-kerf-cad <model.json> <target_id> <output.stl> [--segments N]
+kerf-cad <model.json> <target_id> <output.{stl,obj,step}> [--segments N]
 ```
 
-`--segments` controls tessellation resolution for curved surfaces (default
-24, must be ≥3).
+Output format is chosen from the file extension:
+
+| Ext            | Format                       |
+|----------------|------------------------------|
+| `.stl`         | binary STL (mesh)            |
+| `.obj`         | Wavefront OBJ (mesh)         |
+| `.step` / `.stp` | STEP AP203/214 (B-rep)     |
+
+`--segments` controls tessellation resolution for curved surfaces in mesh
+formats (default 24, must be ≥3). It is ignored for STEP, which writes the
+exact B-rep.
 
 ## JSON schema
 

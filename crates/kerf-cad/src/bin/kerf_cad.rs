@@ -1,13 +1,18 @@
-//! kerf-cad CLI: load a JSON model, evaluate a target feature, write STL.
+//! kerf-cad CLI: load a JSON model, evaluate a target feature, write geometry.
 //!
-//! Usage: kerf-cad <model.json> <target_id> <output.stl> [--segments N]
+//! Output format is chosen by the file extension:
+//!   .stl  → binary STL  (mesh)
+//!   .obj  → Wavefront OBJ  (mesh)
+//!   .step → STEP AP203/214 (B-rep)
+//!
+//! Usage: kerf-cad <model.json> <target_id> <output.{stl,obj,step}> [--segments N]
 
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use kerf_brep::{stl::write_binary, tessellate::tessellate};
+use kerf_brep::{obj::write_obj, step::write_step, stl::write_binary, tessellate::tessellate, Solid};
 use kerf_cad::Model;
 
 const DEFAULT_SEGMENTS: usize = 24;
@@ -27,6 +32,29 @@ struct Args {
     target: String,
     output: PathBuf,
     segments: usize,
+}
+
+#[derive(Clone, Copy)]
+enum Format {
+    Stl,
+    Obj,
+    Step,
+}
+
+fn format_for(path: &std::path::Path) -> Result<Format, String> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    match ext.as_deref() {
+        Some("stl") => Ok(Format::Stl),
+        Some("obj") => Ok(Format::Obj),
+        Some("step") | Some("stp") => Ok(Format::Step),
+        Some(other) => Err(format!(
+            "unrecognised output extension '.{other}' — use .stl, .obj, .step, or .stp"
+        )),
+        None => Err("output path needs a .stl/.obj/.step/.stp extension".into()),
+    }
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -62,21 +90,38 @@ fn parse_args() -> Result<Args, String> {
 }
 
 fn usage() -> String {
-    "usage: kerf-cad <model.json> <target_id> <output.stl> [--segments N]".into()
+    "usage: kerf-cad <model.json> <target_id> <output.{stl,obj,step}> [--segments N]".into()
 }
 
 fn run() -> Result<(), String> {
     let args = parse_args()?;
+    let format = format_for(&args.output)?;
     let model = Model::read_json_path(&args.model)
         .map_err(|e| format!("loading {}: {e}", args.model.display()))?;
     let solid = model
         .evaluate(&args.target)
         .map_err(|e| format!("evaluating '{}': {e}", args.target))?;
-    let soup = tessellate(&solid, args.segments);
-    let f = File::create(&args.output)
-        .map_err(|e| format!("creating {}: {e}", args.output.display()))?;
+    write_output(&args.output, &args.target, &solid, args.segments, format)
+}
+
+fn write_output(
+    path: &std::path::Path,
+    name: &str,
+    solid: &Solid,
+    segments: usize,
+    format: Format,
+) -> Result<(), String> {
+    let f = File::create(path).map_err(|e| format!("creating {}: {e}", path.display()))?;
     let mut w = BufWriter::new(f);
-    write_binary(&soup, &args.target, &mut w)
-        .map_err(|e| format!("writing STL: {e}"))?;
-    Ok(())
+    match format {
+        Format::Stl => {
+            let soup = tessellate(solid, segments);
+            write_binary(&soup, name, &mut w).map_err(|e| format!("writing STL: {e}"))
+        }
+        Format::Obj => {
+            let soup = tessellate(solid, segments);
+            write_obj(&soup, name, &mut w).map_err(|e| format!("writing OBJ: {e}"))
+        }
+        Format::Step => write_step(solid, name, &mut w).map_err(|e| format!("writing STEP: {e}")),
+    }
 }
