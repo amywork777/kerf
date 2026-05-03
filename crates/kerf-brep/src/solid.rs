@@ -121,15 +121,17 @@ impl std::fmt::Display for BooleanError {
 impl std::error::Error for BooleanError {}
 
 /// Run `boolean_solid` inside `catch_unwind` and convert any panic into a
-/// `BooleanError`. Three retry tiers:
+/// `BooleanError`. Tiered retry strategy:
 ///
 /// 1. Primary: `(a, b)` as given.
 /// 2. Swap: `(b, a)` for commutative ops (Union, Intersection). The OnBoundary
 ///    classifier is order-dependent, so the swap sometimes succeeds where
 ///    the primary doesn't.
-/// 3. Jitter: shift `b` by ~1e-9 in a fixed direction to break coplanar /
-///    coincident-vertex degeneracies. The geometric error is well below
-///    visualization precision but enough to dodge classifier ambiguity.
+/// 3. Jitter (multiple directions): shift `b` by various ~1e-6 offsets to
+///    break coplanar / coincident-vertex degeneracies. The geometric error
+///    is well below visualization precision but two orders of magnitude
+///    larger than the default `point_eq` tolerance, so points that were ON
+///    a boundary now read as just-off.
 ///
 /// None of the kernel's internal panics corrupt heap state, so unwinding
 /// is safe.
@@ -149,18 +151,31 @@ pub fn try_boolean_solid(
             return Ok(s);
         }
     }
-    // Tier 3: jitter b by ~1e-6 to break coplanar / coincident-vertex
-    // degeneracies. This is small enough to be invisible in any reasonable
-    // visualization (1 µm against meter-scale models) but two orders of
-    // magnitude larger than the default `point_eq` tolerance, so points that
-    // were ON a boundary now read as just-off.
-    let b_jittered = jitter_solid(b, kerf_geom::Vec3::new(7.0e-6, 3.0e-6, 5.0e-6));
-    if let Ok(s) = run_boolean_solid_caught(a, &b_jittered, op) {
-        return Ok(s);
-    }
-    if matches!(op, BooleanOp::Union | BooleanOp::Intersection) {
-        if let Ok(s) = run_boolean_solid_caught(&b_jittered, a, op) {
+    // Tier 3: try several jitter directions. Each direction is a small
+    // non-axis-aligned offset; together they break different classes of
+    // coplanar/coincident degeneracies. The original 7-3-5 direction
+    // covered most cases; the additional 3-7-2, -5-7-3, and 5-2-7 cover
+    // configurations where the wedge-meets-curved-face stitch error
+    // happens (different classifier code paths trip on different offsets).
+    const JITTERS: &[(f64, f64, f64)] = &[
+        (7.0e-6, 3.0e-6, 5.0e-6),
+        (3.0e-6, 7.0e-6, 2.0e-6),
+        (-5.0e-6, 7.0e-6, -3.0e-6),
+        (5.0e-6, 2.0e-6, 7.0e-6),
+        // Larger-magnitude jitter for configurations that need >1µm
+        // perturbation (still well below practical precision).
+        (1.7e-4, 0.9e-4, 1.3e-4),
+        (-1.3e-4, 1.7e-4, 0.5e-4),
+    ];
+    for &(jx, jy, jz) in JITTERS {
+        let b_jittered = jitter_solid(b, kerf_geom::Vec3::new(jx, jy, jz));
+        if let Ok(s) = run_boolean_solid_caught(a, &b_jittered, op) {
             return Ok(s);
+        }
+        if matches!(op, BooleanOp::Union | BooleanOp::Intersection) {
+            if let Ok(s) = run_boolean_solid_caught(&b_jittered, a, op) {
+                return Ok(s);
+            }
         }
     }
     // All attempts failed — re-run primary to capture the original message.
