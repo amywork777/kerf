@@ -167,6 +167,7 @@ dependencies = [
  "approx",
  "kerf-geom",
  "kerf-topo",
+ "nalgebra",
  "serde",
  "serde_json",
  "slotmap",

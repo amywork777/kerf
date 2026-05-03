@@ -12,7 +12,20 @@ use crate::geometry::SurfaceKind;
 pub enum FaceClassification {
     Inside,
     Outside,
+    /// Face's centroid lies on `b`'s surface AND `a`'s outward normal agrees
+    /// with `b`'s outward normal there (or `b`'s normal couldn't be resolved
+    /// — defaults to OnBoundary as the legacy behavior). This is the
+    /// "shared internal surface" case (e.g., A and B overlap and a face
+    /// of A coincides with a face of B at the overlap boundary).
     OnBoundary,
+    /// Face's centroid lies on `b`'s surface AND `a`'s outward normal points
+    /// OPPOSITE to `b`'s normal there. This is the "touching" case (e.g.,
+    /// two boxes adjacent at a shared face — A on one side, B on the other,
+    /// with no volumetric overlap). For Union, both A's and B's coplanar
+    /// faces remain part of the result boundary; for Intersection the
+    /// result is empty volumetrically; for Difference, A's face stays as
+    /// the outer boundary, B's contributes nothing.
+    OnBoundaryOpposite,
 }
 
 /// Compute the centroid of a face (signed-area-weighted, fjord-safe).
@@ -310,8 +323,23 @@ pub fn classify_face(a: &Solid, face_a: FaceId, b: &Solid, tol: &Tolerance) -> F
         None => return FaceClassification::Outside,
     };
 
-    // Boundary check first.
-    if point_on_solid_boundary(b, centroid, tol).is_some() {
+    // Boundary check first. Distinguish aligned vs opposite-normal cases by
+    // comparing A's face normal with B's normal at the matched point.
+    if let Some(face_b_id) = point_on_solid_boundary(b, centroid, tol) {
+        let a_normal = match a.face_geom.get(face_a) {
+            Some(SurfaceKind::Plane(p)) => Some(p.frame.z),
+            _ => None,
+        };
+        let b_normal = match b.face_geom.get(face_b_id) {
+            Some(SurfaceKind::Plane(p)) => Some(p.frame.z),
+            _ => None,
+        };
+        if let (Some(na), Some(nb)) = (a_normal, b_normal) {
+            // Opposite-direction normals (dot < 0) → touching case.
+            if na.dot(&nb) < 0.0 {
+                return FaceClassification::OnBoundaryOpposite;
+            }
+        }
         return FaceClassification::OnBoundary;
     }
 

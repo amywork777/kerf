@@ -19,9 +19,11 @@ pub fn keep_a_face(cls: FaceClassification, op: BooleanOp) -> bool {
         (Union, Outside) => true,
         (Union, Inside) => false,
         (Union, OnBoundary) => true, // include one copy from A
+        (Union, OnBoundaryOpposite) => true, // touching: A's outer face stays
         (Intersection, Outside) => false,
         (Intersection, Inside) => true,
         (Intersection, OnBoundary) => true,
+        (Intersection, OnBoundaryOpposite) => false, // touching: ∩ is empty here
         (Difference, Outside) => true,
         (Difference, Inside) => false,
         // OnBoundary faces from A are shared with B (coplanar-coincident).
@@ -30,6 +32,9 @@ pub fn keep_a_face(cls: FaceClassification, op: BooleanOp) -> bool {
         // pragma here drops it on the A side and re-emits it via B's flipped
         // face when needed — matches half-overlap difference geometry.
         (Difference, OnBoundary) => false,
+        // Touching: A's face is the outer boundary of the result; B's
+        // touches but is not subtracted (no volumetric overlap).
+        (Difference, OnBoundaryOpposite) => true,
     }
 }
 
@@ -42,12 +47,15 @@ pub fn keep_b_face(cls: FaceClassification, op: BooleanOp) -> bool {
         (Union, Outside) => true,
         (Union, Inside) => false,
         (Union, OnBoundary) => false, // A already contributed it
+        (Union, OnBoundaryOpposite) => true, // touching: B's outer face also stays
         (Intersection, Outside) => false,
         (Intersection, Inside) => true,
         (Intersection, OnBoundary) => false,
+        (Intersection, OnBoundaryOpposite) => false, // empty intersection
         (Difference, Outside) => false,
         (Difference, Inside) => true, // flipped at output time
         (Difference, OnBoundary) => false,
+        (Difference, OnBoundaryOpposite) => false, // touching: B contributes nothing
     }
 }
 
