@@ -422,6 +422,30 @@ pub enum Feature {
         extents: [Scalar; 3],
     },
 
+    /// Trapezoidal slot (dovetail) cross-section extruded along +y by
+    /// `length`. The trapezoid's `top_width` (wider, at z=`depth`) and
+    /// `bottom_width` (narrower, at z=0) sit on x ∈ [-W/2, +W/2]; the
+    /// slot extends in z from 0 to `depth`. Typical dovetail uses
+    /// `top_width > bottom_width`. Use as a cutter via Difference.
+    DovetailSlot {
+        id: String,
+        bottom_width: Scalar,
+        top_width: Scalar,
+        depth: Scalar,
+        length: Scalar,
+    },
+
+    /// V-groove cutter: triangular cross-section extruded along +y by
+    /// `length`. The notch opens at z=`depth` with width `top_width`,
+    /// converges to a sharp edge at z=0 (a single point along x=0).
+    /// Use as a cutter via Difference.
+    VeeGroove {
+        id: String,
+        top_width: Scalar,
+        depth: Scalar,
+        length: Scalar,
+    },
+
     /// Hex-head bolt: hexagonal head + cylindrical shaft, both along
     /// +z. The head is a `RegularPrism { sides: 6 }` of `head_inscribed_radius`
     /// (apothem) and `head_thickness`, sitting at z ∈ [0, head_thickness].
@@ -604,6 +628,8 @@ impl Feature {
             | Feature::UChannel { id, .. }
             | Feature::TBeam { id, .. }
             | Feature::IBeam { id, .. }
+            | Feature::DovetailSlot { id, .. }
+            | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
             | Feature::CapScrew { id, .. }
             | Feature::Nut { id, .. }
@@ -654,6 +680,8 @@ impl Feature {
             | Feature::UChannel { .. }
             | Feature::TBeam { .. }
             | Feature::IBeam { .. }
+            | Feature::DovetailSlot { .. }
+            | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }
             | Feature::CapScrew { .. }
             | Feature::Nut { .. }

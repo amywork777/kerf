@@ -132,6 +132,8 @@ offending name.
 | `UChannel`       | `width`, `height`, `thickness`, `depth` — U cross-section (web at y=0, legs along +y) extruded along +z | — |
 | `TBeam`          | `flange_width`, `flange_thickness`, `web_thickness`, `total_height`, `depth` — T cross-section extruded along +z | — |
 | `IBeam`          | `flange_width`, `flange_thickness`, `web_thickness`, `total_height`, `depth` — I/H cross-section (symmetric flanges) extruded along +z | — |
+| `DovetailSlot`   | `bottom_width`, `top_width`, `depth`, `length` — trapezoidal cutter (extruded along +y) for dovetail joints | — |
+| `VeeGroove`      | `top_width`, `depth`, `length` — V-shaped triangular cutter (extruded along +y) for ball-bearing tracks etc. | — |
 | `Bolt`           | `head_inscribed_radius` (apothem), `head_thickness`, `shaft_radius`, `shaft_length`, `segments` (≥3) — hex-head bolt along +z | — |
 | `CapScrew`       | `head_radius`, `head_thickness`, `shaft_radius`, `shaft_length`, `segments` (≥3) — socket-head cap screw along +z | — |
 | `Nut`            | `inscribed_radius` (apothem), `bore_radius`, `thickness`, `segments` (≥3) — hex nut along +z | — |

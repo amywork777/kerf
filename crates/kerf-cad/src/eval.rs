@@ -919,6 +919,68 @@ fn build(
                 Point3::new(c[0], c[1], c[2]),
             ))
         }
+        Feature::DovetailSlot {
+            bottom_width,
+            top_width,
+            depth,
+            length,
+            ..
+        } => {
+            let bw = resolve_one(id, bottom_width, params)?;
+            let tw = resolve_one(id, top_width, params)?;
+            let d = resolve_one(id, depth, params)?;
+            let l = resolve_one(id, length, params)?;
+            if bw <= 0.0 || tw <= 0.0 || d <= 0.0 || l <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "DovetailSlot requires positive bottom_width, top_width, depth, length (got {bw}, {tw}, {d}, {l})"
+                    ),
+                });
+            }
+            // Trapezoid CCW from +y: bottom-left, bottom-right, top-right, top-left.
+            //   (bottom-left) = (-bw/2, 0, 0)
+            //   (bottom-right) = (+bw/2, 0, 0)
+            //   (top-right) = (+tw/2, 0, d)
+            //   (top-left) = (-tw/2, 0, d)
+            // For extrude_polygon CCW-from-+direction (+y), walk such that
+            // (p1-p0) x (p2-p0) . y > 0.
+            //   Bottom-left → top-left → top-right → bottom-right gives that
+            //   orientation (going UP first, then RIGHT, then DOWN).
+            let prof = vec![
+                Point3::new(-bw / 2.0, 0.0, 0.0),
+                Point3::new(-tw / 2.0, 0.0, d),
+                Point3::new(tw / 2.0, 0.0, d),
+                Point3::new(bw / 2.0, 0.0, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, l, 0.0)))
+        }
+        Feature::VeeGroove {
+            top_width,
+            depth,
+            length,
+            ..
+        } => {
+            let tw = resolve_one(id, top_width, params)?;
+            let d = resolve_one(id, depth, params)?;
+            let l = resolve_one(id, length, params)?;
+            if tw <= 0.0 || d <= 0.0 || l <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "VeeGroove requires positive top_width, depth, length (got {tw}, {d}, {l})"
+                    ),
+                });
+            }
+            // Triangle CCW from +y: apex at z=0, top corners at z=d.
+            // Walk: apex → top-left → top-right (CCW from +y).
+            let prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(-tw / 2.0, 0.0, d),
+                Point3::new(tw / 2.0, 0.0, d),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, l, 0.0)))
+        }
         Feature::Bolt {
             head_inscribed_radius,
             head_thickness,
