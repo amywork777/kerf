@@ -1,0 +1,29 @@
+{
+  "parameters": {
+    "plate_x":     100.0,
+    "plate_y":      60.0,
+    "plate_z":       8.0,
+    "hole_r":        2.5,
+    "hole_height":  12.0,
+    "hole_z_start": -2.0,
+    "edge_inset":   10.0
+  },
+  "features": [
+    {"kind": "Box", "id": "body",
+      "extents": ["$plate_x", "$plate_y", "$plate_z"]},
+
+    {"kind": "Cylinder", "id": "hole",
+      "radius": "$hole_r", "height": "$hole_height", "segments": 16},
+
+    {"kind": "Translate", "id": "hole_left",
+      "input": "hole",
+      "offset": ["$edge_inset", 30.0, "$hole_z_start"]},
+
+    {"kind": "Translate", "id": "hole_right",
+      "input": "hole",
+      "offset": [90.0, 30.0, "$hole_z_start"]},
+
+    {"kind": "Difference", "id": "out",
+      "inputs": ["body", "hole_left", "hole_right"]}
+  ]
+}

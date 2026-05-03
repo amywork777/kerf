@@ -337,6 +337,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "kerf-cad"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "kerf-brep",
+ "kerf-geom",
+ "nalgebra",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "kerf-geom"
 version = "0.1.0"
 dependencies = [
