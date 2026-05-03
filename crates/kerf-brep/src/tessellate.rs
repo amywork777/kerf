@@ -60,8 +60,11 @@ pub fn tessellate(solid: &Solid, lateral_segments: usize) -> FaceSoup {
                         }
                     }
                 }
-                // Polygonal planar face: fan from vertex 0.
-                if let Some(poly) = crate::booleans::face_polygon(solid, face_id) {
+                // Polygonal planar face: fan from vertex 0. Use the RAW loop
+                // traversal (no winding normalization) so cavity faces in
+                // stitched results emit CCW-from-cavity-outward triangles —
+                // matches the convention the rest of the pipeline assumes.
+                if let Some(poly) = crate::booleans::face_polygon_raw(solid, face_id) {
                     if poly.len() >= 3 {
                         for i in 1..(poly.len() - 1) {
                             soup.triangles.push([poly[0], poly[i], poly[i + 1]]);

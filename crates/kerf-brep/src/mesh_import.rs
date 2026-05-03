@@ -83,7 +83,6 @@ pub fn from_triangles(tris: &[[Point3; 3]]) -> Result<Solid, MeshImportError> {
     let mut s = Solid::new();
     let solid_id = s.topo.build_insert_solid();
     s.topo.build_set_active_solid(Some(solid_id));
-    let shell = s.topo.build_insert_shell(solid_id);
 
     // Vertex dedup.
     let mut v_map: HashMap<(i64, i64, i64), kerf_topo::VertexId> = HashMap::new();
@@ -100,7 +99,13 @@ pub fn from_triangles(tris: &[[Point3; 3]]) -> Result<Solid, MeshImportError> {
 
     // For each triangle, allocate face + loop + 3 half-edges and link them.
     // Track directed edges (origin, destination) → HalfEdgeId for twin pairing.
+    // Use a placeholder shell; we'll re-shell per connected component later.
+    let placeholder_shell = s.topo.build_insert_shell(solid_id);
+
     let mut directed: HashMap<(kerf_topo::VertexId, kerf_topo::VertexId), kerf_topo::HalfEdgeId> =
+        HashMap::with_capacity(tris.len() * 3);
+    let mut tri_face_ids: Vec<kerf_topo::FaceId> = Vec::with_capacity(tris.len());
+    let mut tri_he_to_idx: HashMap<kerf_topo::HalfEdgeId, usize> =
         HashMap::with_capacity(tris.len() * 3);
 
     for (i, tri) in tris.iter().enumerate() {
@@ -114,9 +119,9 @@ pub fn from_triangles(tris: &[[Point3; 3]]) -> Result<Solid, MeshImportError> {
         }
 
         let lp = s.topo.build_insert_loop_placeholder();
-        let face = s.topo.build_insert_face(lp, shell);
+        let face = s.topo.build_insert_face(lp, placeholder_shell);
         s.topo.build_set_loop_face(lp, face);
-        s.topo.build_push_shell_face(shell, face);
+        tri_face_ids.push(face);
 
         let h: [kerf_topo::HalfEdgeId; 3] = [
             s.topo.build_insert_half_edge(v[0], lp),
@@ -133,6 +138,7 @@ pub fn from_triangles(tris: &[[Point3; 3]]) -> Result<Solid, MeshImportError> {
             if directed.insert(directed_key, h[k]).is_some() {
                 return Err(MeshImportError::DuplicateDirectedEdge(i, k));
             }
+            tri_he_to_idx.insert(h[k], i);
         }
 
         // Plane geometry from triangle corners.
@@ -149,6 +155,8 @@ pub fn from_triangles(tris: &[[Point3; 3]]) -> Result<Solid, MeshImportError> {
     // Pair twins. Each (u, v) directed edge must match exactly one (v, u).
     let keys: Vec<_> = directed.keys().copied().collect();
     let mut paired = HashMap::with_capacity(keys.len() / 2);
+    let n_tris = tris.len();
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n_tris];
     for (u, v) in keys {
         if paired.contains_key(&(u, v)) || paired.contains_key(&(v, u)) {
             continue;
@@ -166,6 +174,14 @@ pub fn from_triangles(tris: &[[Point3; 3]]) -> Result<Solid, MeshImportError> {
         s.topo.build_set_half_edge_edge(h_vu, edge);
         paired.insert((u, v), ());
         paired.insert((v, u), ());
+
+        // Build face-adjacency for connected-component analysis.
+        let ti = tri_he_to_idx[&h_uv];
+        let tj = tri_he_to_idx[&h_vu];
+        if ti != tj {
+            adj[ti].push(tj);
+            adj[tj].push(ti);
+        }
     }
 
     // Set each vertex's outgoing half-edge to any incident half-edge.
@@ -173,6 +189,45 @@ pub fn from_triangles(tris: &[[Point3; 3]]) -> Result<Solid, MeshImportError> {
         if s.topo.vertex(*u).and_then(|vx| vx.outgoing()).is_none() {
             s.topo.build_set_vertex_outgoing(*u, Some(*h));
         }
+    }
+
+    // Connected-component analysis → one shell per component. The triangle
+    // soup may represent multiple disjoint manifolds (e.g., the result of a
+    // boolean DIFF that carves a cavity into a body — outer surface + cavity
+    // surface are separate connected components even though they belong to
+    // the same Solid).
+    let mut component: Vec<Option<usize>> = vec![None; n_tris];
+    let mut n_components: usize = 0;
+    for start in 0..n_tris {
+        if component[start].is_some() {
+            continue;
+        }
+        let comp_id = n_components;
+        n_components += 1;
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(start);
+        component[start] = Some(comp_id);
+        while let Some(ti) = queue.pop_front() {
+            for &tj in &adj[ti] {
+                if component[tj].is_none() {
+                    component[tj] = Some(comp_id);
+                    queue.push_back(tj);
+                }
+            }
+        }
+    }
+
+    // Allocate shells: reuse placeholder for component 0, add fresh shells for others.
+    let mut shell_ids: Vec<kerf_topo::ShellId> = Vec::with_capacity(n_components);
+    shell_ids.push(placeholder_shell);
+    for _ in 1..n_components {
+        shell_ids.push(s.topo.build_insert_shell(solid_id));
+    }
+    for (i, face) in tri_face_ids.iter().enumerate() {
+        let comp_id = component[i].expect("every triangle has a component");
+        let shell_id = shell_ids[comp_id];
+        s.topo.build_set_face_shell(*face, shell_id);
+        s.topo.build_push_shell_face(shell_id, *face);
     }
 
     validate(&s.topo).map_err(|e| MeshImportError::InvalidTopology(format!("{e:?}")))?;

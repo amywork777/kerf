@@ -6,16 +6,41 @@ use kerf_topo::FaceId;
 use crate::Solid;
 use crate::geometry::SurfaceKind;
 
-/// Returns the ordered list of vertex positions along the face's outer loop.
-/// Returns `None` if the face does not exist or its outer loop is empty.
+/// Returns the ordered list of vertex positions along the face's outer loop,
+/// normalized to CCW from the face's surface outward normal.
 ///
-/// M40: ensures the polygon walks CCW from the face's outward normal. After
-/// kerf's mef-based splits + stinger-fjord reorderings, the half-edge loop
-/// can end up walking CW from outward — the resulting flip in DIFF mode
-/// then produces same-direction-conflicts in stitch. We detect winding via
-/// signed area against the face plane's normal and reverse the polygon when
-/// it walks the wrong way.
+/// **For boolean splitter input** (the M40 motivation): after mef + mev
+/// reorderings, the raw loop can walk CW from the face's frame.z. Stitch
+/// requires consistent winding so chord edges twin properly across A's and
+/// B's polygons; this normalization ensures CCW-from-frame.z for ALL faces
+/// of pre-stitch primitives.
+///
+/// **NOT for geometry computations on boolean RESULTS**: in a stitched
+/// result, cavity faces carry their original surface frame.z (= the
+/// unflipped original normal) but their loop walks CCW from the OPPOSITE
+/// direction (= away from the material). Normalizing them via frame.z would
+/// FLIP the cavity faces back toward material — wrong for volume,
+/// tessellation, etc. Use [`face_polygon_raw`] for those.
 pub fn face_polygon(solid: &Solid, face: FaceId) -> Option<Vec<Point3>> {
+    let mut polygon = face_polygon_raw(solid, face)?;
+    if let Some(SurfaceKind::Plane(plane)) = solid.face_geom.get(face) {
+        let n = plane.frame.z;
+        let signed_area_x2 = polygon_signed_area_x2(&polygon, &n);
+        if signed_area_x2 < -1e-12 {
+            polygon.reverse();
+        }
+    }
+    Some(polygon)
+}
+
+/// Returns the ordered list of vertex positions along the face's outer loop
+/// in the loop's natural traversal direction (NO winding normalization).
+///
+/// Use this for geometry computations on stitched results where cavity faces
+/// have already been correctly oriented by the boolean pipeline (their loops
+/// walk CCW from cavity-outward, even though their surface frame.z carries
+/// the original pre-flip normal).
+pub fn face_polygon_raw(solid: &Solid, face: FaceId) -> Option<Vec<Point3>> {
     let f = solid.topo.face(face)?;
     let lp = solid.topo.loop_(f.outer_loop())?;
     let start = lp.half_edge()?;
@@ -30,16 +55,6 @@ pub fn face_polygon(solid: &Solid, face: FaceId) -> Option<Vec<Point3>> {
             break;
         }
     }
-
-    // Normalize winding: CCW from face's surface outward normal.
-    if let Some(SurfaceKind::Plane(plane)) = solid.face_geom.get(face) {
-        let n = plane.frame.z;
-        let signed_area_x2 = polygon_signed_area_x2(&polygon, &n);
-        if signed_area_x2 < -1e-12 {
-            polygon.reverse();
-        }
-    }
-
     Some(polygon)
 }
 
