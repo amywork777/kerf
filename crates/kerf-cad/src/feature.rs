@@ -66,6 +66,23 @@ pub enum Feature {
         direction: [Scalar; 3],
     },
 
+    /// Hollow circular tube: outer cylinder minus a centered inner cylinder.
+    /// Both share the same axis (origin, +z direction) and height.
+    Tube {
+        id: String,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        height: Scalar,
+        segments: usize,
+    },
+    /// Box with a uniform inset wall thickness on all six faces. Equivalent
+    /// to BoxAt(extents, [0,0,0]) minus BoxAt(extents - 2*wall, [wall,wall,wall]).
+    HollowBox {
+        id: String,
+        extents: [Scalar; 3],
+        wall_thickness: Scalar,
+    },
+
     Translate {
         id: String,
         input: String,
@@ -124,6 +141,8 @@ impl Feature {
             | Feature::Cone { id, .. }
             | Feature::Frustum { id, .. }
             | Feature::ExtrudePolygon { id, .. }
+            | Feature::Tube { id, .. }
+            | Feature::HollowBox { id, .. }
             | Feature::Translate { id, .. }
             | Feature::Rotate { id, .. }
             | Feature::LinearPattern { id, .. }
@@ -144,7 +163,9 @@ impl Feature {
             | Feature::Torus { .. }
             | Feature::Cone { .. }
             | Feature::Frustum { .. }
-            | Feature::ExtrudePolygon { .. } => Vec::new(),
+            | Feature::ExtrudePolygon { .. }
+            | Feature::Tube { .. }
+            | Feature::HollowBox { .. } => Vec::new(),
             Feature::Translate { input, .. }
             | Feature::Rotate { input, .. }
             | Feature::LinearPattern { input, .. }

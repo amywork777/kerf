@@ -127,6 +127,70 @@ fn build(
             ..
         } => build_extrude(id, profile, direction, params),
 
+        Feature::Tube {
+            outer_radius,
+            inner_radius,
+            height,
+            segments,
+            ..
+        } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            if r_in >= r_out {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Tube inner_radius ({r_in}) must be < outer_radius ({r_out})"
+                    ),
+                });
+            }
+            let outer = cylinder_faceted(r_out, h, *segments);
+            // Inner cutter: extend slightly beyond outer top and below outer
+            // bottom so the boolean produces a clean through-hole.
+            let inner_raw = cylinder_faceted(r_in, h + 2.0, *segments);
+            let inner = translate_solid(&inner_raw, Vec3::new(0.0, 0.0, -1.0));
+            outer.try_difference(&inner).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "tube_difference",
+                message: e.message,
+            })
+        }
+        Feature::HollowBox {
+            extents,
+            wall_thickness,
+            ..
+        } => {
+            let e = resolve3(id, extents, params)?;
+            let w = resolve_one(id, wall_thickness, params)?;
+            if w <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("HollowBox wall_thickness must be > 0 (got {w})"),
+                });
+            }
+            let two_w = 2.0 * w;
+            if two_w >= e[0] || two_w >= e[1] || two_w >= e[2] {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "HollowBox wall_thickness {w} too large for extents [{}, {}, {}]",
+                        e[0], e[1], e[2]
+                    ),
+                });
+            }
+            let outer = box_(Vec3::new(e[0], e[1], e[2]));
+            let inner = box_at(
+                Vec3::new(e[0] - two_w, e[1] - two_w, e[2] - two_w),
+                Point3::new(w, w, w),
+            );
+            outer.try_difference(&inner).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "hollow_box_difference",
+                message: e.message,
+            })
+        }
+
         Feature::Translate { input, offset, .. } => {
             let base = cache_get(cache, input)?;
             let o = resolve3(id, offset, params)?;

@@ -100,6 +100,8 @@ a `Parameter` evaluation error rather than silently substituting zero.
 | `Cone`           | `radius`, `height`                                                 | —                   |
 | `Frustum`        | `top_radius`, `bottom_radius`, `height`                            | —                   |
 | `ExtrudePolygon` | `profile: { points: [[x,y], ...] }`, `direction: [x,y,z]`          | —                   |
+| `Tube`           | `outer_radius`, `inner_radius`, `height`, `segments` (≥3)          | —                   |
+| `HollowBox`      | `extents: [x,y,z]`, `wall_thickness`                               | —                   |
 | `Translate`      | `offset: [x,y,z]`                                                  | `input: <id>`       |
 | `Rotate`         | `axis: [x,y,z]`, `angle_deg`, `center: [x,y,z]`                    | `input: <id>`       |
 | `LinearPattern`  | `count` (≥1), `offset: [x,y,z]`                                    | `input: <id>`       |

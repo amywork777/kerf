@@ -8,6 +8,7 @@ import init, {
   parameters_of,
   target_ids_of,
 } from "./wasm/kerf_cad_wasm.js";
+import { exportThreeViewPng } from "./drawings.js";
 
 await init();
 
@@ -23,6 +24,8 @@ const viewsEl = document.getElementById("views")!;
 const downloadBtn = document.getElementById("download-btn")!;
 const resetBtn = document.getElementById("reset-btn")!;
 const wireframeToggle = document.getElementById("wireframe-toggle") as HTMLInputElement;
+const drawingBtn = document.getElementById("drawing-btn")!;
+const actions2El = document.getElementById("actions2")!;
 const featureTreeEl = document.getElementById("feature-tree")!;
 const featureListEl = document.getElementById("feature-list")!;
 const featureCountEl = document.getElementById("feature-count")!;
@@ -348,18 +351,56 @@ function renderFeatureTree() {
   for (const f of features) {
     const li = document.createElement("li");
     li.dataset.id = f.id;
-    li.innerHTML = `<span class="kind">${f.kind}</span> ${f.id}`;
-    li.title = `Click to set as target — current: '${f.id}'`;
-    li.addEventListener("click", () => {
+    li.innerHTML = `<span class="kind">${f.kind}</span><span class="id">${f.id}</span><span class="del" title="Delete this feature">✕</span>`;
+    (li.querySelector(".id") as HTMLElement).title = `Click to set as target — current: '${f.id}'`;
+    li.querySelector(".id")!.addEventListener("click", () => {
       if (!model) return;
       model.targetId = f.id;
       targetSelect.value = f.id;
       refreshFeatureTreeSelection();
       rebuild();
     });
+    li.querySelector(".del")!.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteFeature(f.id);
+    });
     featureListEl.appendChild(li);
   }
   refreshFeatureTreeSelection();
+}
+
+function deleteFeature(id: string) {
+  if (!model) return;
+  const parsed = JSON.parse(model.json);
+  const before = (parsed.features ?? []).length;
+  parsed.features = (parsed.features ?? []).filter(
+    (f: { id?: string }) => f?.id !== id,
+  );
+  const removed = before - parsed.features.length;
+  if (removed === 0) return;
+  // If we just deleted the current target, fall back to the last remaining feature.
+  const remainingIds = parsed.features
+    .map((f: { id?: string }) => f.id)
+    .filter((x: unknown): x is string => typeof x === "string");
+  if (remainingIds.length === 0) {
+    err(`would delete last feature — refusing`);
+    return;
+  }
+  const newJson = JSON.stringify(parsed, null, 2);
+  const nextTarget =
+    remainingIds.includes(model.targetId)
+      ? model.targetId
+      : remainingIds.includes("out")
+        ? "out"
+        : remainingIds[remainingIds.length - 1];
+  model = {
+    ...model,
+    json: newJson,
+    targetId: nextTarget,
+  };
+  renderTargets(remainingIds);
+  renderFeatureTree();
+  rebuild();
 }
 
 function refreshFeatureTreeSelection() {
@@ -389,6 +430,7 @@ function loadJson(json: string) {
     renderParams();
     renderFeatureTree();
     actionsEl.hidden = false;
+    actions2El.hidden = false;
     viewsEl.hidden = false;
     rebuild(true);
   } catch (e) {
@@ -419,6 +461,11 @@ resetBtn.addEventListener("click", () => {
   model.parameters = { ...model.defaults };
   renderParams();
   rebuild();
+});
+
+drawingBtn.addEventListener("click", () => {
+  if (!model || !currentMesh) return;
+  exportThreeViewPng(currentMesh, model.targetId);
 });
 
 // --- view presets ---

@@ -42,7 +42,8 @@
     "SF Mono", Menlo, monospace; font-size: 11px; color: var(--muted);
     min-height: 36px; white-space: pre-wrap; }
   #status.error { color: #ff7b72; border-color: #ff7b72; }
-  #actions { margin-top: 14px; display: flex; gap: 8px; }
+  #actions, #actions2 { margin-top: 8px; display: flex; gap: 8px; }
+  #actions2 { margin-top: 6px; }
   #views { margin-top: 14px; }
   #views label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 12px; }
   #views label.checkbox { margin-top: 10px; color: var(--fg); cursor: pointer; }
@@ -54,9 +55,15 @@
   #feature-list { margin: 0; padding: 0 0 0 18px; max-height: 150px; overflow-y: auto;
     font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; }
   #feature-list li { line-height: 1.6; padding: 1px 4px; border-radius: 3px; cursor: pointer; }
+  #feature-list li { display: flex; align-items: center; gap: 6px; }
   #feature-list li:hover { background: var(--bg); color: var(--accent); }
   #feature-list li.target { color: var(--accent); }
   #feature-list .kind { color: var(--muted); }
+  #feature-list .id { flex: 1; }
+  #feature-list .del { color: var(--muted); padding: 0 4px; visibility: hidden;
+    border-radius: 3px; cursor: pointer; }
+  #feature-list li:hover .del { visibility: visible; }
+  #feature-list .del:hover { color: #ff7b72; background: rgba(255,123,114,0.1); }
   button { background: var(--bg); color: var(--fg); border: 1px solid var(--line);
     border-radius: 4px; padding: 6px 10px; font: inherit; cursor: pointer; flex: 1;
     transition: border-color .15s, color .15s; }
@@ -83,7 +90,8 @@
       <a data-example="hollow_box">hollow_box</a> ·
       <a data-example="multi_stage_carve">multi_stage_carve</a> ·
       <a data-example="hex_prism">hex_prism</a> ·
-      <a data-example="bolt_circle">bolt_circle</a>
+      <a data-example="bolt_circle">bolt_circle</a> ·
+      <a data-example="tube">tube</a>
     </div>
     <div id="targets" hidden>
       <label for="target-select">Target</label>
@@ -97,6 +105,9 @@
     <div id="actions" hidden>
       <button id="download-btn">Download JSON</button>
       <button id="reset-btn">Reset params</button>
+    </div>
+    <div id="actions2" hidden>
+      <button id="drawing-btn">Export 3-view PNG</button>
     </div>
     <div id="views" hidden>
       <label>View</label>
