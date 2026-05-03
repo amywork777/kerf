@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/kerf-geom", "crates/kerf-topo", "crates/kerf-brep", "crates/kerf-cad"]
+members = ["crates/kerf-geom", "crates/kerf-topo", "crates/kerf-brep", "crates/kerf-cad", "crates/kerf-cad-wasm"]
 
 [workspace.package]
 version = "0.1.0"
