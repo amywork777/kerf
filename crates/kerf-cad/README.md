@@ -82,11 +82,20 @@ discriminator, an `id` (must be unique), and either parameters (for
 primitives) or `input`/`inputs` referencing other ids (for transforms and
 booleans).
 
-### Scalars and parameters
+### Scalars, parameters, and expressions
 
-Numeric fields accept either a literal `1.5` or a string `"$name"` that is
-resolved against `parameters` at evaluation time. Missing parameters produce
-a `Parameter` evaluation error rather than silently substituting zero.
+Numeric fields accept three forms:
+
+- a literal: `1.5`
+- a parameter reference: `"$name"` (looked up in `parameters`)
+- an expression: any string with arithmetic, parens, `$vars`, and
+  builtins, e.g. `"$plate_x / 2 + 5"`, `"$r * sin($theta * 3.14159 / 180)"`,
+  `"sqrt($a * $a + $b * $b)"`.
+
+Supported operators: `+ - * /` and parentheses. Supported builtins:
+`sin`, `cos`, `tan`, `sqrt`, `abs`, `min(a, b)`, `max(a, b)`, `floor`,
+`ceil`, `round`. Missing parameters and parse errors surface as
+`Parameter` evaluation errors with the offending name.
 
 ### Feature catalog
 
