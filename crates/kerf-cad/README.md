@@ -115,6 +115,8 @@ offending name.
 | `Cone`           | `radius`, `height`                                                 | —                   |
 | `Frustum`        | `top_radius`, `bottom_radius`, `height`                            | —                   |
 | `ExtrudePolygon` | `profile: { points: [[x,y], ...] }`, `direction: [x,y,z]`          | —                   |
+| `Loft`           | `bottom: { points }`, `top: { points }` (same length ≥3), `height` — skin between two parallel polygons | — |
+| `TaperedExtrude` | `profile: { points }`, `height`, `top_scale` — extrude with the top scaled around the centroid (draft angle) | — |
 | `Revolve`        | `profile: { points: [[x,z], ...] }` — revolved around z-axis        | —                   |
 | `Tube`           | `outer_radius`, `inner_radius`, `height`, `segments` (≥3)          | —                   |
 | `HollowBox`      | `extents: [x,y,z]`, `wall_thickness`                               | —                   |

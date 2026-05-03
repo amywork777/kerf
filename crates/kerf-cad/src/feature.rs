@@ -76,6 +76,29 @@ pub enum Feature {
         profile: Profile2D,
         direction: [Scalar; 3],
     },
+    /// Loft (skin) between two parallel polygons of the same vertex count.
+    /// `bottom` lies in the xy plane (z=0); `top` is the same number of
+    /// (x, y) points lifted to z = `height`. Both must have the same
+    /// length ≥ 3, both CCW from +z. Side faces are quads (will be
+    /// non-planar if the two polygons differ in shape — the kernel
+    /// stores those as "best-fit planar" with reduced boolean
+    /// robustness).
+    Loft {
+        id: String,
+        bottom: Profile2D,
+        top: Profile2D,
+        height: Scalar,
+    },
+    /// Tapered extrude: extrude `profile` along +z by `height`, scaling
+    /// the top profile by `top_scale` around the centroid. `top_scale`
+    /// in (0, ∞); 1.0 is a normal prism, < 1 tapers inward (draft), > 1
+    /// tapers outward.
+    TaperedExtrude {
+        id: String,
+        profile: Profile2D,
+        height: Scalar,
+        top_scale: Scalar,
+    },
     /// Revolve an open polyline in the xz-plane around the z-axis. The first
     /// and last points must lie on the z-axis (x = 0); all interior points
     /// must have x > 0. Produces a closed axisymmetric solid.
@@ -558,6 +581,8 @@ impl Feature {
             | Feature::Cone { id, .. }
             | Feature::Frustum { id, .. }
             | Feature::ExtrudePolygon { id, .. }
+            | Feature::Loft { id, .. }
+            | Feature::TaperedExtrude { id, .. }
             | Feature::Revolve { id, .. }
             | Feature::Tube { id, .. }
             | Feature::HollowBox { id, .. }
@@ -612,6 +637,8 @@ impl Feature {
             | Feature::Cone { .. }
             | Feature::Frustum { .. }
             | Feature::ExtrudePolygon { .. }
+            | Feature::Loft { .. }
+            | Feature::TaperedExtrude { .. }
             | Feature::Revolve { .. }
             | Feature::Tube { .. }
             | Feature::HollowBox { .. }

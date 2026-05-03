@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use kerf_brep::{
     primitives::{
-        box_, box_at, cone, cone_faceted, cylinder_faceted, extrude_polygon, frustum,
-        frustum_faceted, revolve_polyline, sphere, torus,
+        box_, box_at, cone, cone_faceted, cylinder_faceted, extrude_lofted, extrude_polygon,
+        frustum, frustum_faceted, revolve_polyline, sphere, torus,
     },
     Solid,
 };
@@ -129,6 +129,99 @@ fn build(
             direction,
             ..
         } => build_extrude(id, profile, direction, params),
+        Feature::Loft {
+            bottom,
+            top,
+            height,
+            ..
+        } => {
+            if bottom.points.len() != top.points.len() {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Loft bottom ({}) and top ({}) must have the same vertex count",
+                        bottom.points.len(),
+                        top.points.len()
+                    ),
+                });
+            }
+            if bottom.points.len() < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Loft profiles need at least 3 points (got {})",
+                        bottom.points.len()
+                    ),
+                });
+            }
+            let h = resolve_one(id, height, params)?;
+            if h <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Loft height must be > 0 (got {h})"),
+                });
+            }
+            let mut bottom_pts = Vec::with_capacity(bottom.points.len());
+            for p in &bottom.points {
+                let xy = resolve_arr(p, params).map_err(|message| EvalError::Parameter {
+                    id: id.into(),
+                    message,
+                })?;
+                bottom_pts.push(Point3::new(xy[0], xy[1], 0.0));
+            }
+            let mut top_pts = Vec::with_capacity(top.points.len());
+            for p in &top.points {
+                let xy = resolve_arr(p, params).map_err(|message| EvalError::Parameter {
+                    id: id.into(),
+                    message,
+                })?;
+                top_pts.push(Point3::new(xy[0], xy[1], h));
+            }
+            Ok(extrude_lofted(&bottom_pts, &top_pts))
+        }
+        Feature::TaperedExtrude {
+            profile,
+            height,
+            top_scale,
+            ..
+        } => {
+            if profile.points.len() < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TaperedExtrude profile needs at least 3 points (got {})",
+                        profile.points.len()
+                    ),
+                });
+            }
+            let h = resolve_one(id, height, params)?;
+            let s = resolve_one(id, top_scale, params)?;
+            if h <= 0.0 || s <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TaperedExtrude requires positive height and top_scale (got {h}, {s})"
+                    ),
+                });
+            }
+            let mut bottom_pts = Vec::with_capacity(profile.points.len());
+            for p in &profile.points {
+                let xy = resolve_arr(p, params).map_err(|message| EvalError::Parameter {
+                    id: id.into(),
+                    message,
+                })?;
+                bottom_pts.push(Point3::new(xy[0], xy[1], 0.0));
+            }
+            // Compute centroid (xy) and scale top points around it.
+            let n = bottom_pts.len() as f64;
+            let cx = bottom_pts.iter().map(|p| p.x).sum::<f64>() / n;
+            let cy = bottom_pts.iter().map(|p| p.y).sum::<f64>() / n;
+            let top_pts: Vec<Point3> = bottom_pts
+                .iter()
+                .map(|p| Point3::new(cx + (p.x - cx) * s, cy + (p.y - cy) * s, h))
+                .collect();
+            Ok(extrude_lofted(&bottom_pts, &top_pts))
+        }
 
         Feature::Revolve { profile, .. } => build_revolve(id, profile, params),
 
