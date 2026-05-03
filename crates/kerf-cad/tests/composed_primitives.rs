@@ -158,3 +158,116 @@ fn regular_prism_round_trips_via_json() {
     let v2 = solid_volume(&m2.evaluate("out").unwrap());
     assert!((v1 - v2).abs() < 1e-9);
 }
+
+// -------- CylinderAt --------
+
+#[test]
+fn cylinder_at_z_matches_translated_cylinder() {
+    let m1 = kerf_cad::Model::new().add(Feature::CylinderAt {
+        id: "out".into(),
+        base: [Scalar::lit(5.0), Scalar::lit(7.0), Scalar::lit(2.0)],
+        axis: "z".into(),
+        radius: Scalar::lit(1.0),
+        height: Scalar::lit(3.0),
+        segments: 16,
+    });
+    let v = solid_volume(&m1.evaluate("out").unwrap());
+    let n = 16.0;
+    let area = 0.5 * n * 1.0 * 1.0 * (2.0 * std::f64::consts::PI / n).sin();
+    let exp = area * 3.0;
+    assert!((v - exp).abs() < 1e-6, "v={v}, exp={exp}");
+}
+
+#[test]
+fn cylinder_at_x_volume_matches() {
+    let m = kerf_cad::Model::new().add(Feature::CylinderAt {
+        id: "out".into(),
+        base: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(0.0)],
+        axis: "x".into(),
+        radius: Scalar::lit(1.5),
+        height: Scalar::lit(4.0),
+        segments: 12,
+    });
+    let v = solid_volume(&m.evaluate("out").unwrap());
+    let n = 12.0;
+    let area = 0.5 * n * 1.5 * 1.5 * (2.0 * std::f64::consts::PI / n).sin();
+    let exp = area * 4.0;
+    assert!((v - exp).abs() < 1e-6, "v={v}, exp={exp}");
+}
+
+#[test]
+fn cylinder_at_can_be_subtracted_after_orientation() {
+    // A horizontal cylinder along x drilled through a box.
+    let m = kerf_cad::Model::new()
+        .add(Feature::Box {
+            id: "body".into(),
+            extents: [Scalar::lit(10.0), Scalar::lit(4.0), Scalar::lit(4.0)],
+        })
+        .add(Feature::CylinderAt {
+            id: "drill".into(),
+            base: [Scalar::lit(-1.0), Scalar::lit(2.0), Scalar::lit(2.0)],
+            axis: "x".into(),
+            radius: Scalar::lit(1.0),
+            height: Scalar::lit(12.0),
+            segments: 16,
+        })
+        .add(Feature::Difference {
+            id: "out".into(),
+            inputs: vec!["body".into(), "drill".into()],
+        });
+    let s = m.evaluate("out").unwrap();
+    let v = solid_volume(&s);
+    let n = 16.0;
+    let area = 0.5 * n * 1.0 * 1.0 * (2.0 * std::f64::consts::PI / n).sin();
+    let exp = 10.0 * 4.0 * 4.0 - area * 10.0;
+    assert!((v - exp).abs() < 0.05, "v={v}, exp={exp}");
+}
+
+// -------- Star --------
+
+#[test]
+fn star_5_point_extrude_volume_positive() {
+    let m = kerf_cad::Model::new().add(Feature::Star {
+        id: "out".into(),
+        points: 5,
+        outer_radius: Scalar::lit(2.0),
+        inner_radius: Scalar::lit(0.8),
+        height: Scalar::lit(1.0),
+    });
+    let s = m.evaluate("out").unwrap();
+    let v = solid_volume(&s);
+    // Star area: triangulate as 2N triangles from origin to each (r_i, theta_i),
+    // (r_{i+1}, theta_{i+1}). Each triangle area = (1/2) * r1 * r2 * sin(2π/2N).
+    let n = 10.0; // 2 * points
+    let tri_area = 0.5 * 2.0 * 0.8 * (2.0 * std::f64::consts::PI / n).sin();
+    let exp = n * tri_area * 1.0;
+    assert!((v - exp).abs() < 1e-6, "v={v}, exp={exp}");
+}
+
+#[test]
+fn star_rejects_inner_geq_outer() {
+    let m = kerf_cad::Model::new().add(Feature::Star {
+        id: "out".into(),
+        points: 5,
+        outer_radius: Scalar::lit(1.0),
+        inner_radius: Scalar::lit(1.0),
+        height: Scalar::lit(1.0),
+    });
+    assert!(m.evaluate("out").is_err());
+}
+
+#[test]
+fn star_round_trips_via_json() {
+    let m = kerf_cad::Model::new().add(Feature::Star {
+        id: "out".into(),
+        points: 6,
+        outer_radius: Scalar::lit(3.0),
+        inner_radius: Scalar::lit(1.0),
+        height: Scalar::lit(2.0),
+    });
+    let json = m.to_json_string().unwrap();
+    let m2 = kerf_cad::Model::from_json_str(&json).unwrap();
+    let v1 = solid_volume(&m.evaluate("out").unwrap());
+    let v2 = solid_volume(&m2.evaluate("out").unwrap());
+    assert!((v1 - v2).abs() < 1e-9);
+}

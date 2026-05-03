@@ -17,10 +17,11 @@ cd viewer && pnpm install && ./build-wasm.sh && pnpm dev
 ```
 
 A typical model is ~10 lines of JSON declaring a tree of `Box`, `Cylinder`,
-`Tube`, `HollowBox`, `HollowCylinder`, `Slot`, `Wedge`, `RegularPrism`,
-`Revolve`, `ExtrudePolygon`, `Sphere`, `Torus`, `Cone`, `Frustum`
-primitives, `Translate`/`Rotate`/`Mirror`/`LinearPattern`/`PolarPattern`/
-`CornerCut`/`Fillet`/`Chamfer` transforms, and
+`CylinderAt`, `Tube`, `HollowBox`, `HollowCylinder`, `Slot`, `Wedge`,
+`RegularPrism`, `Star`, `Revolve`, `ExtrudePolygon`, `Sphere`, `Torus`,
+`Cone`, `Frustum` primitives,
+`Translate`/`Rotate`/`Mirror`/`LinearPattern`/`PolarPattern`/`CornerCut`/
+`Fillet`/`Chamfer` transforms, and
 `Union`/`Intersection`/`Difference` booleans. Every numeric field accepts
 literals, `$param` references, or arbitrary arithmetic expressions
 (`"$plate_x / 2 + sqrt(16)"`).

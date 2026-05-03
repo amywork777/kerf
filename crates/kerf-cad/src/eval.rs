@@ -329,6 +329,85 @@ fn build(
             // Same as cylinder_faceted but renamed for intent.
             Ok(cylinder_faceted(r, h, *segments))
         }
+        Feature::CylinderAt {
+            base,
+            axis,
+            radius,
+            height,
+            segments,
+            ..
+        } => {
+            let b = resolve3(id, base, params)?;
+            let r = resolve_one(id, radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            if r <= 0.0 || h <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("CylinderAt requires positive radius, height (got {r}, {h})"),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("CylinderAt segments must be >= 3 (got {})", segments),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            Ok(cylinder_along_axis(
+                r,
+                h,
+                *segments,
+                axis_idx,
+                b[axis_idx],
+                b[a_idx],
+                b[b_idx],
+            ))
+        }
+        Feature::Star {
+            points,
+            outer_radius,
+            inner_radius,
+            height,
+            ..
+        } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            if *points < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Star points must be >= 3 (got {})", points),
+                });
+            }
+            if r_in <= 0.0 || r_out <= 0.0 || h <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Star requires positive outer_radius, inner_radius, height (got {r_out}, {r_in}, {h})"
+                    ),
+                });
+            }
+            if r_in >= r_out {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Star inner_radius ({r_in}) must be < outer_radius ({r_out})"
+                    ),
+                });
+            }
+            // 2N vertices alternating between r_out and r_in, going CCW from
+            // angle 0. First vertex is an outer tip on +x axis.
+            let n = 2 * points;
+            let prof: Vec<Point3> = (0..n)
+                .map(|i| {
+                    let theta = 2.0 * std::f64::consts::PI * i as f64 / n as f64;
+                    let r = if i % 2 == 0 { r_out } else { r_in };
+                    Point3::new(r * theta.cos(), r * theta.sin(), 0.0)
+                })
+                .collect();
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, h)))
+        }
         Feature::HollowBox {
             extents,
             wall_thickness,

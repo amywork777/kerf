@@ -168,6 +168,33 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// Cylinder at an axis-aligned position with chosen edge axis. The
+    /// cylinder runs along `axis` ("x" | "y" | "z") starting from
+    /// `base[axis_idx]` and extending by `height` in +axis direction.
+    /// `base` is the center of the bottom cap (in world coordinates).
+    /// Uses exact coordinate permutation for orientation to keep the
+    /// boolean engine happy.
+    CylinderAt {
+        id: String,
+        base: [Scalar; 3],
+        axis: String,
+        radius: Scalar,
+        height: Scalar,
+        segments: usize,
+    },
+
+    /// Regular n-pointed star prism: profile is a star polygon with
+    /// `points` outer tips at `outer_radius` and `points` inner valleys
+    /// at `inner_radius`, alternating. Extruded along +z by `height`.
+    /// `inner_radius` must be < `outer_radius`.
+    Star {
+        id: String,
+        points: usize,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        height: Scalar,
+    },
+
     /// Hollow circular tube: outer cylinder minus a centered inner cylinder.
     /// Both share the same axis (origin, +z direction) and height.
     Tube {
@@ -263,6 +290,8 @@ impl Feature {
             | Feature::HollowCylinder { id, .. }
             | Feature::Wedge { id, .. }
             | Feature::RegularPrism { id, .. }
+            | Feature::CylinderAt { id, .. }
+            | Feature::Star { id, .. }
             | Feature::Translate { id, .. }
             | Feature::Rotate { id, .. }
             | Feature::Mirror { id, .. }
@@ -291,7 +320,9 @@ impl Feature {
             | Feature::Slot { .. }
             | Feature::HollowCylinder { .. }
             | Feature::Wedge { .. }
-            | Feature::RegularPrism { .. } => Vec::new(),
+            | Feature::RegularPrism { .. }
+            | Feature::CylinderAt { .. }
+            | Feature::Star { .. } => Vec::new(),
             Feature::Translate { input, .. }
             | Feature::Rotate { input, .. }
             | Feature::Mirror { input, .. }

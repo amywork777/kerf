@@ -116,6 +116,8 @@ Supported operators: `+ - * /` and parentheses. Supported builtins:
 | `Slot`           | `length` (≥0), `radius`, `height`, `segments` (≥3) — stadium-shape extrude in xy | —     |
 | `Wedge`          | `width`, `depth`, `height` — right-triangular prism (legs along x and z, extrudes along y) | — |
 | `RegularPrism`   | `radius`, `height`, `segments` (≥3) — n-gon prism (alias of `cylinder_faceted`) | —      |
+| `CylinderAt`     | `base: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `radius`, `height`, `segments` (≥3) — cylinder positioned at `base` with cap-axis along `axis` | — |
+| `Star`           | `points` (≥3), `outer_radius`, `inner_radius`, `height` — n-pointed star prism extruded along +z | — |
 | `Translate`      | `offset: [x,y,z]`                                                  | `input: <id>`       |
 | `Rotate`         | `axis: [x,y,z]`, `angle_deg`, `center: [x,y,z]`                    | `input: <id>`       |
 | `Mirror`         | `plane_origin: [x,y,z]`, `plane_normal: [x,y,z]` (¹)                | `input: <id>`       |
@@ -142,10 +144,16 @@ a time. `axis` is the edge direction; `edge_min` is one endpoint;
 `quadrant` is two characters indicating which way the body extends from
 the edge in the two perpendicular axes (canonical perp-axis order is
 `(y, z)` for axis `x`; `(z, x)` for axis `y`; `(x, y)` for axis `z`).
-**Stacking multiple `Fillet`s on the same body sometimes trips the
-boolean engine** at the corners where a fillet's wedge cutter meets a
-prior fillet's curved face — split the body and union the parts, or
-fillet a single edge and post-process in your slicer for now.
+**Stacking multiple `Fillet`s on the same body** works when the two
+filleted edges don't share a face (e.g., diagonally opposite z-edges
+of a box are fine — they share only the top and bottom faces but the
+fillet cutters never meet there). It fails when adjacent edges share
+a face that both fillets cut into (e.g., all four z-edges of a box,
+which share the front/back/left/right faces in pairs); the second
+fillet's cutter meets the first fillet's curved face and trips a
+non-manifold check in stitch. Workarounds: fillet only opposite
+corners, split the body and union pre-filleted parts, or
+post-process in your slicer.
 
 ### Conventions
 
@@ -186,9 +194,10 @@ fillet a single edge and post-process in your slicer for now.
 
 See [examples/](./examples/) for `bracket.json`, `hollow_box.json`,
 `multi_stage_carve.json`, `hex_prism.json`, `bolt_circle.json` (`PolarPattern`
-driving a 6-bolt-hole circle), `bracket_filleted.json` (a single-edge
-`Fillet`), `chamfered_block.json`, `slot.json`, and `hex_nut.json` (a
-`RegularPrism` body with a centered `Cylinder` thread bore).
+driving a 6-bolt-hole circle), `bracket_filleted.json` (two diagonally-
+opposite `Fillet`s on a plate), `chamfered_block.json`, `slot.json`,
+`hex_nut.json` (a `RegularPrism` body with a centered `Cylinder` thread
+bore), and `star.json` (a 5-pointed star).
 
 ## Limitations (inherited from kerf)
 

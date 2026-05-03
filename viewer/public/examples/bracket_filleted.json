@@ -7,12 +7,19 @@
   },
   "features": [
     {"kind": "Box", "id": "body", "extents": ["$plate_x", "$plate_y", "$plate_z"]},
-    {"kind": "Fillet", "id": "out", "input": "body",
+    {"kind": "Fillet", "id": "f1", "input": "body",
       "axis": "z",
       "edge_min": [0.0, 0.0, 0.0],
       "edge_length": "$plate_z",
       "radius": "$fillet_r",
       "quadrant": "pp",
+      "segments": 16},
+    {"kind": "Fillet", "id": "out", "input": "f1",
+      "axis": "z",
+      "edge_min": ["$plate_x", "$plate_y", 0.0],
+      "edge_length": "$plate_z",
+      "radius": "$fillet_r",
+      "quadrant": "nn",
       "segments": 16}
   ]
 }
