@@ -4,6 +4,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import init, {
   evaluate_to_mesh,
   evaluate_with_params,
+  evaluate_with_face_ids,
   parameters_of,
   target_ids_of,
 } from "./wasm/kerf_cad_wasm.js";
@@ -52,15 +53,20 @@ const grid = new THREE.GridHelper(200, 20, 0x222933, 0x1a1f26);
 scene.add(grid);
 
 const meshMaterial = new THREE.MeshStandardMaterial({
-  color: 0x6ea8ff,
+  color: 0xffffff,
   metalness: 0.2,
   roughness: 0.55,
   flatShading: true,
   side: THREE.DoubleSide,
+  vertexColors: true,
 });
 
 let currentMesh: THREE.Mesh | null = null;
 let currentWireframe: THREE.LineSegments | null = null;
+let currentFaceIds: Uint32Array | null = null;
+let currentFaceCount = 0;
+let highlightedFace = -1;
+let hoveredFace = -1;
 
 function fitToView(box: THREE.Box3) {
   const center = box.getCenter(new THREE.Vector3());
@@ -74,7 +80,12 @@ function fitToView(box: THREE.Box3) {
   controls.update();
 }
 
-function setMesh(triangles: Float32Array, fit: boolean) {
+function setMesh(
+  triangles: Float32Array,
+  faceIds: Uint32Array,
+  faceCount: number,
+  fit: boolean,
+) {
   if (currentMesh) {
     scene.remove(currentMesh);
     currentMesh.geometry.dispose();
@@ -85,16 +96,58 @@ function setMesh(triangles: Float32Array, fit: boolean) {
     currentWireframe.geometry.dispose();
     currentWireframe = null;
   }
+  currentFaceIds = faceIds;
+  currentFaceCount = faceCount;
+  highlightedFace = -1;
+  hoveredFace = -1;
+
   if (triangles.length === 0) return;
 
   const geom = new THREE.BufferGeometry();
   geom.setAttribute("position", new THREE.BufferAttribute(triangles, 3));
   geom.computeVertexNormals();
   geom.computeBoundingBox();
+
+  // Per-vertex color buffer used to highlight picked faces by tinting their
+  // triangles. Three.js chooses the vertex shader path that multiplies
+  // vertexColor with material.color.
+  const colors = new Float32Array(triangles.length); // 3 floats per vertex
+  resetColors(colors, faceIds);
+  geom.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
   currentMesh = new THREE.Mesh(geom, meshMaterial);
   scene.add(currentMesh);
   refreshWireframe();
   if (fit && geom.boundingBox) fitToView(geom.boundingBox);
+}
+
+const BASE_COLOR = new THREE.Color(0x6ea8ff);
+const HIGHLIGHT_COLOR = new THREE.Color(0xffb84d);
+const HOVER_COLOR = new THREE.Color(0xa8c7ff);
+
+function resetColors(colors: Float32Array, faceIds: Uint32Array) {
+  for (let tri = 0; tri < faceIds.length; tri++) {
+    const c = colorForFace(faceIds[tri]!);
+    for (let v = 0; v < 3; v++) {
+      const off = (tri * 3 + v) * 3;
+      colors[off] = c.r;
+      colors[off + 1] = c.g;
+      colors[off + 2] = c.b;
+    }
+  }
+}
+
+function colorForFace(faceId: number): THREE.Color {
+  if (faceId === highlightedFace) return HIGHLIGHT_COLOR;
+  if (faceId === hoveredFace) return HOVER_COLOR;
+  return BASE_COLOR;
+}
+
+function refreshFaceColors() {
+  if (!currentMesh || !currentFaceIds) return;
+  const attr = currentMesh.geometry.getAttribute("color") as THREE.BufferAttribute;
+  resetColors(attr.array as Float32Array, currentFaceIds);
+  attr.needsUpdate = true;
 }
 
 function refreshWireframe() {
@@ -120,6 +173,41 @@ function resize() {
 }
 resize();
 window.addEventListener("resize", resize);
+
+// --- raycast picking ---
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+
+function pickFaceAt(clientX: number, clientY: number): number {
+  if (!currentMesh || !currentFaceIds) return -1;
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  const hits = raycaster.intersectObject(currentMesh, false);
+  if (hits.length === 0 || hits[0]!.faceIndex === undefined) return -1;
+  const tri = hits[0]!.faceIndex!;
+  return tri < currentFaceIds.length ? currentFaceIds[tri]! : -1;
+}
+
+renderer.domElement.addEventListener("click", (e) => {
+  const fid = pickFaceAt(e.clientX, e.clientY);
+  highlightedFace = fid;
+  refreshFaceColors();
+  if (fid >= 0) {
+    ok(`selected face #${fid} (of ${currentFaceCount})`);
+  }
+});
+
+renderer.domElement.addEventListener("pointermove", (e) => {
+  // Throttle hover detection by skipping when no model.
+  if (!currentMesh) return;
+  const fid = pickFaceAt(e.clientX, e.clientY);
+  if (fid !== hoveredFace) {
+    hoveredFace = fid;
+    refreshFaceColors();
+  }
+});
 
 function tick() {
   controls.update();
@@ -152,16 +240,18 @@ function rebuild(fit: boolean = false) {
   if (!model) return;
   try {
     const t0 = performance.now();
-    const tris = evaluate_with_params(
+    const result = evaluate_with_face_ids(
       model.json,
       model.targetId,
       JSON.stringify(model.parameters),
       SEGMENTS,
-    );
+    ) as { triangles: number[]; face_ids: number[]; face_count: number };
+    const tris = new Float32Array(result.triangles);
+    const faceIds = new Uint32Array(result.face_ids);
     const dt = performance.now() - t0;
-    setMesh(new Float32Array(tris), fit);
+    setMesh(tris, faceIds, result.face_count, fit);
     ok(
-      `target='${model.targetId}'  triangles=${tris.length / 9}  eval=${dt.toFixed(1)}ms`,
+      `target='${model.targetId}'  triangles=${tris.length / 9}  faces=${result.face_count}  eval=${dt.toFixed(1)}ms`,
     );
   } catch (e) {
     err(String(e));

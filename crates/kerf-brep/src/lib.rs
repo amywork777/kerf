@@ -21,4 +21,4 @@ pub use serde_io::{read_json, write_json};
 pub use solid::{try_boolean_solid, BooleanError, Solid};
 pub use step::write_step;
 pub use stl::{write_ascii, write_binary};
-pub use tessellate::tessellate;
+pub use tessellate::{tessellate, tessellate_with_face_index};
