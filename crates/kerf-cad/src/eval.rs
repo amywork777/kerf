@@ -600,6 +600,124 @@ fn build(
             ];
             Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
         }
+        Feature::Nut {
+            inscribed_radius,
+            bore_radius,
+            thickness,
+            segments,
+            ..
+        } => {
+            let ir = resolve_one(id, inscribed_radius, params)?;
+            let br = resolve_one(id, bore_radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if ir <= 0.0 || br <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Nut requires positive inscribed_radius, bore_radius, thickness (got {ir}, {br}, {t})"
+                    ),
+                });
+            }
+            if br >= ir {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Nut bore_radius ({br}) must be < inscribed_radius ({ir})"),
+                });
+            }
+            let _ = segments;
+            let head_circumradius = ir / (std::f64::consts::PI / 6.0).cos();
+            let body = cylinder_faceted(head_circumradius, t, 6);
+            let bore_raw = cylinder_faceted(br, t + 2.0, 24);
+            let bore = translate_solid(&bore_raw, Vec3::new(0.0, 0.0, -1.0));
+            body.try_difference(&bore).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "nut",
+                message: e.message,
+            })
+        }
+        Feature::Washer {
+            outer_radius,
+            inner_radius,
+            thickness,
+            segments,
+            ..
+        } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r_out <= 0.0 || r_in <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Washer requires positive outer/inner_radius and thickness (got {r_out}, {r_in}, {t})"
+                    ),
+                });
+            }
+            if r_in >= r_out {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Washer inner_radius ({r_in}) must be < outer_radius ({r_out})"),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Washer segments must be >= 3 (got {segments})"),
+                });
+            }
+            let outer = cylinder_faceted(r_out, t, *segments);
+            let bore_raw = cylinder_faceted(r_in, t + 2.0, *segments);
+            let bore = translate_solid(&bore_raw, Vec3::new(0.0, 0.0, -1.0));
+            outer.try_difference(&bore).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "washer",
+                message: e.message,
+            })
+        }
+        Feature::RoundBoss {
+            base,
+            radius,
+            height,
+            segments,
+            ..
+        } => {
+            let b = resolve3(id, base, params)?;
+            let r = resolve_one(id, radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            if r <= 0.0 || h <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("RoundBoss requires positive radius and height (got {r}, {h})"),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("RoundBoss segments must be >= 3 (got {segments})"),
+                });
+            }
+            let cyl = cylinder_faceted(r, h, *segments);
+            Ok(translate_solid(&cyl, Vec3::new(b[0], b[1], b[2])))
+        }
+        Feature::RectBoss {
+            corner, extents, ..
+        } => {
+            let c = resolve3(id, corner, params)?;
+            let e = resolve3(id, extents, params)?;
+            if e[0] <= 0.0 || e[1] <= 0.0 || e[2] <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "RectBoss extents must all be positive (got [{}, {}, {}])",
+                        e[0], e[1], e[2]
+                    ),
+                });
+            }
+            Ok(box_at(
+                Vec3::new(e[0], e[1], e[2]),
+                Point3::new(c[0], c[1], c[2]),
+            ))
+        }
         Feature::Bolt {
             head_inscribed_radius,
             head_thickness,

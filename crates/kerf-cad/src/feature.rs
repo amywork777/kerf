@@ -327,6 +327,48 @@ pub enum Feature {
         depth: Scalar,
     },
 
+    /// Hex nut: hexagonal prism (apothem `inscribed_radius`,
+    /// `thickness`) with a centered through-hole of `bore_radius`.
+    /// Sits at z ∈ [0, thickness].
+    Nut {
+        id: String,
+        inscribed_radius: Scalar,
+        bore_radius: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
+    /// Flat washer: outer cylinder of `outer_radius` and `thickness`
+    /// minus a centered bore of `inner_radius`. Sits at z ∈ [0, thickness].
+    Washer {
+        id: String,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
+    /// Cylindrical boss raised from xy plane: a Cylinder of `radius`
+    /// and `height`, positioned at `base` (center of the bottom cap).
+    /// Provided as a feature for ergonomics — equivalent to
+    /// `Translate(Cylinder(...), base)`.
+    RoundBoss {
+        id: String,
+        base: [Scalar; 3],
+        radius: Scalar,
+        height: Scalar,
+        segments: usize,
+    },
+
+    /// Rectangular boss raised from xy plane: a Box of `extents`
+    /// positioned at `corner`. Provided as a feature for ergonomics —
+    /// equivalent to `BoxAt(extents, corner)`.
+    RectBoss {
+        id: String,
+        corner: [Scalar; 3],
+        extents: [Scalar; 3],
+    },
+
     /// Hex-head bolt: hexagonal head + cylindrical shaft, both along
     /// +z. The head is a `RegularPrism { sides: 6 }` of `head_inscribed_radius`
     /// (apothem) and `head_thickness`, sitting at z ∈ [0, head_thickness].
@@ -507,6 +549,10 @@ impl Feature {
             | Feature::IBeam { id, .. }
             | Feature::Bolt { id, .. }
             | Feature::CapScrew { id, .. }
+            | Feature::Nut { id, .. }
+            | Feature::Washer { id, .. }
+            | Feature::RoundBoss { id, .. }
+            | Feature::RectBoss { id, .. }
             | Feature::HoleArray { id, .. }
             | Feature::BoltCircle { id, .. }
             | Feature::HexHole { id, .. }
@@ -549,7 +595,11 @@ impl Feature {
             | Feature::TBeam { .. }
             | Feature::IBeam { .. }
             | Feature::Bolt { .. }
-            | Feature::CapScrew { .. } => Vec::new(),
+            | Feature::CapScrew { .. }
+            | Feature::Nut { .. }
+            | Feature::Washer { .. }
+            | Feature::RoundBoss { .. }
+            | Feature::RectBoss { .. } => Vec::new(),
             Feature::HoleArray { input, .. }
             | Feature::BoltCircle { input, .. }
             | Feature::HexHole { input, .. }

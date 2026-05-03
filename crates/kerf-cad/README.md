@@ -131,6 +131,10 @@ offending name.
 | `IBeam`          | `flange_width`, `flange_thickness`, `web_thickness`, `total_height`, `depth` — I/H cross-section (symmetric flanges) extruded along +z | — |
 | `Bolt`           | `head_inscribed_radius` (apothem), `head_thickness`, `shaft_radius`, `shaft_length`, `segments` (≥3) — hex-head bolt along +z | — |
 | `CapScrew`       | `head_radius`, `head_thickness`, `shaft_radius`, `shaft_length`, `segments` (≥3) — socket-head cap screw along +z | — |
+| `Nut`            | `inscribed_radius` (apothem), `bore_radius`, `thickness`, `segments` (≥3) — hex nut along +z | — |
+| `Washer`         | `outer_radius`, `inner_radius`, `thickness`, `segments` (≥3) — flat washer along +z | — |
+| `RoundBoss`      | `base: [x,y,z]`, `radius`, `height`, `segments` (≥3) — cylindrical boss positioned at `base` | — |
+| `RectBoss`       | `corner: [x,y,z]`, `extents: [x,y,z]` — rectangular boss positioned at `corner` (alias of `BoxAt`) | — |
 | `Translate`      | `offset: [x,y,z]`                                                  | `input: <id>`       |
 | `Scale`          | `factor` (>0) — uniform scale around origin                         | `input: <id>`       |
 | `Rotate`         | `axis: [x,y,z]`, `angle_deg`, `center: [x,y,z]`                    | `input: <id>`       |
