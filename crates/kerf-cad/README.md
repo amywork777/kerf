@@ -129,7 +129,10 @@ offending name.
 | `UChannel`       | `width`, `height`, `thickness`, `depth` — U cross-section (web at y=0, legs along +y) extruded along +z | — |
 | `TBeam`          | `flange_width`, `flange_thickness`, `web_thickness`, `total_height`, `depth` — T cross-section extruded along +z | — |
 | `IBeam`          | `flange_width`, `flange_thickness`, `web_thickness`, `total_height`, `depth` — I/H cross-section (symmetric flanges) extruded along +z | — |
+| `Bolt`           | `head_inscribed_radius` (apothem), `head_thickness`, `shaft_radius`, `shaft_length`, `segments` (≥3) — hex-head bolt along +z | — |
+| `CapScrew`       | `head_radius`, `head_thickness`, `shaft_radius`, `shaft_length`, `segments` (≥3) — socket-head cap screw along +z | — |
 | `Translate`      | `offset: [x,y,z]`                                                  | `input: <id>`       |
+| `Scale`          | `factor` (>0) — uniform scale around origin                         | `input: <id>`       |
 | `Rotate`         | `axis: [x,y,z]`, `angle_deg`, `center: [x,y,z]`                    | `input: <id>`       |
 | `Mirror`         | `plane_origin: [x,y,z]`, `plane_normal: [x,y,z]` (¹)                | `input: <id>`       |
 | `CornerCut`      | `corner: [x,y,z]`, `extents: [x,y,z]` — subtract a box at a corner  | `input: <id>`       |

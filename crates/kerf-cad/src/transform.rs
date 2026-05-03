@@ -11,6 +11,86 @@ use kerf_brep::{
 use kerf_geom::{Frame, Plane, Point3, Vec3};
 use nalgebra::{Rotation3, Unit};
 
+/// Uniform scale of `s` around the origin by `factor`. `factor` must be
+/// positive (negative would invert chirality and break loop walks).
+pub fn scale_solid(s: &Solid, factor: f64) -> Solid {
+    debug_assert!(factor > 0.0, "scale factor must be positive");
+    let mut out = s.clone();
+    for (_, p) in out.vertex_geom.iter_mut() {
+        // Point3::new(p.x * factor, p.y * factor, p.z * factor)
+        p.x *= factor;
+        p.y *= factor;
+        p.z *= factor;
+    }
+    for (_, surf) in out.face_geom.iter_mut() {
+        scale_surface(surf, factor);
+    }
+    for (_, seg) in out.edge_geom.iter_mut() {
+        scale_curve(&mut seg.curve, factor);
+    }
+    out
+}
+
+fn scale_surface(surf: &mut SurfaceKind, factor: f64) {
+    use kerf_brep::geometry::SurfaceKind as SK;
+    match surf {
+        SK::Plane(p) => {
+            p.frame.origin.x *= factor;
+            p.frame.origin.y *= factor;
+            p.frame.origin.z *= factor;
+        }
+        SK::Cylinder(c) => {
+            c.frame.origin.x *= factor;
+            c.frame.origin.y *= factor;
+            c.frame.origin.z *= factor;
+            c.radius *= factor;
+        }
+        SK::Sphere(s) => {
+            s.frame.origin.x *= factor;
+            s.frame.origin.y *= factor;
+            s.frame.origin.z *= factor;
+            s.radius *= factor;
+        }
+        SK::Cone(c) => {
+            c.frame.origin.x *= factor;
+            c.frame.origin.y *= factor;
+            c.frame.origin.z *= factor;
+            // half_angle is dimensionless under uniform scale.
+        }
+        SK::Torus(t) => {
+            t.frame.origin.x *= factor;
+            t.frame.origin.y *= factor;
+            t.frame.origin.z *= factor;
+            t.major_radius *= factor;
+            t.minor_radius *= factor;
+        }
+    }
+}
+
+fn scale_curve(curve: &mut CurveKind, factor: f64) {
+    match curve {
+        CurveKind::Line(l) => {
+            l.origin.x *= factor;
+            l.origin.y *= factor;
+            l.origin.z *= factor;
+            // direction stays unit; line length is implicit.
+        }
+        CurveKind::Circle(c) => {
+            c.frame.origin.x *= factor;
+            c.frame.origin.y *= factor;
+            c.frame.origin.z *= factor;
+            c.radius *= factor;
+        }
+        CurveKind::Ellipse(e) => {
+            e.frame.origin.x *= factor;
+            e.frame.origin.y *= factor;
+            e.frame.origin.z *= factor;
+            e.semi_major *= factor;
+            e.semi_minor *= factor;
+        }
+    }
+}
+
 pub fn translate_solid(s: &Solid, offset: Vec3) -> Solid {
     let mut out = s.clone();
     for (_, p) in out.vertex_geom.iter_mut() {

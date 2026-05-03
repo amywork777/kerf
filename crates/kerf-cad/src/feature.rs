@@ -327,6 +327,34 @@ pub enum Feature {
         depth: Scalar,
     },
 
+    /// Hex-head bolt: hexagonal head + cylindrical shaft, both along
+    /// +z. The head is a `RegularPrism { sides: 6 }` of `head_inscribed_radius`
+    /// (apothem) and `head_thickness`, sitting at z ∈ [0, head_thickness].
+    /// The shaft is a Cylinder of `shaft_radius` and `shaft_length`,
+    /// sitting at z ∈ [head_thickness, head_thickness + shaft_length].
+    /// Result is a single solid: head ∪ shaft.
+    Bolt {
+        id: String,
+        head_inscribed_radius: Scalar,
+        head_thickness: Scalar,
+        shaft_radius: Scalar,
+        shaft_length: Scalar,
+        segments: usize,
+    },
+
+    /// Socket-head cap screw (SHCS): cylindrical head + cylindrical
+    /// shaft. Head is at z ∈ [0, head_thickness] with radius
+    /// `head_radius`; shaft is at z ∈ [head_thickness, head_thickness +
+    /// shaft_length] with `shaft_radius`. Result is head ∪ shaft.
+    CapScrew {
+        id: String,
+        head_radius: Scalar,
+        head_thickness: Scalar,
+        shaft_radius: Scalar,
+        shaft_length: Scalar,
+        segments: usize,
+    },
+
     /// I-beam (H-section) cross-section extruded along +z. Symmetric
     /// top and bottom flanges of `flange_width` × `flange_thickness`,
     /// centered web of `web_thickness` × (`total_height` − 2 ×
@@ -387,6 +415,13 @@ pub enum Feature {
         id: String,
         input: String,
         offset: [Scalar; 3],
+    },
+    /// Uniform scale of `input` around the origin. `factor` must be > 0.
+    /// Volume scales as `factor³`.
+    Scale {
+        id: String,
+        input: String,
+        factor: Scalar,
     },
     Rotate {
         id: String,
@@ -470,11 +505,14 @@ impl Feature {
             | Feature::UChannel { id, .. }
             | Feature::TBeam { id, .. }
             | Feature::IBeam { id, .. }
+            | Feature::Bolt { id, .. }
+            | Feature::CapScrew { id, .. }
             | Feature::HoleArray { id, .. }
             | Feature::BoltCircle { id, .. }
             | Feature::HexHole { id, .. }
             | Feature::SquareHole { id, .. }
             | Feature::Translate { id, .. }
+            | Feature::Scale { id, .. }
             | Feature::Rotate { id, .. }
             | Feature::Mirror { id, .. }
             | Feature::LinearPattern { id, .. }
@@ -509,12 +547,15 @@ impl Feature {
             | Feature::LBracket { .. }
             | Feature::UChannel { .. }
             | Feature::TBeam { .. }
-            | Feature::IBeam { .. } => Vec::new(),
+            | Feature::IBeam { .. }
+            | Feature::Bolt { .. }
+            | Feature::CapScrew { .. } => Vec::new(),
             Feature::HoleArray { input, .. }
             | Feature::BoltCircle { input, .. }
             | Feature::HexHole { input, .. }
             | Feature::SquareHole { input, .. } => vec![input.as_str()],
             Feature::Translate { input, .. }
+            | Feature::Scale { input, .. }
             | Feature::Rotate { input, .. }
             | Feature::Mirror { input, .. }
             | Feature::LinearPattern { input, .. }

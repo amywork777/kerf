@@ -15,7 +15,7 @@ use thiserror::Error;
 use crate::feature::{Feature, FilletEdge, Profile2D};
 use crate::model::Model;
 use crate::scalar::{resolve_arr, Scalar};
-use crate::transform::{mirror_solid, rotate_solid, translate_solid};
+use crate::transform::{mirror_solid, rotate_solid, scale_solid, translate_solid};
 
 #[derive(Debug, Error)]
 pub enum EvalError {
@@ -600,6 +600,85 @@ fn build(
             ];
             Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
         }
+        Feature::Bolt {
+            head_inscribed_radius,
+            head_thickness,
+            shaft_radius,
+            shaft_length,
+            segments,
+            ..
+        } => {
+            let hir = resolve_one(id, head_inscribed_radius, params)?;
+            let ht = resolve_one(id, head_thickness, params)?;
+            let sr = resolve_one(id, shaft_radius, params)?;
+            let sl = resolve_one(id, shaft_length, params)?;
+            if hir <= 0.0 || ht <= 0.0 || sr <= 0.0 || sl <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Bolt requires positive head_inscribed_radius, head_thickness, shaft_radius, shaft_length (got {hir}, {ht}, {sr}, {sl})"
+                    ),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Bolt segments must be >= 3 (got {segments})"),
+                });
+            }
+            // Hex circumradius = inscribed_radius / cos(π/6).
+            let head_circumradius = hir / (std::f64::consts::PI / 6.0).cos();
+            let head = cylinder_faceted(head_circumradius, ht, 6);
+            let _ = head_circumradius;
+            let shaft_raw = cylinder_faceted(sr, sl, *segments);
+            let shaft = translate_solid(&shaft_raw, Vec3::new(0.0, 0.0, ht));
+            head.try_union(&shaft).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "bolt_union",
+                message: e.message,
+            })
+        }
+        Feature::CapScrew {
+            head_radius,
+            head_thickness,
+            shaft_radius,
+            shaft_length,
+            segments,
+            ..
+        } => {
+            let hr = resolve_one(id, head_radius, params)?;
+            let ht = resolve_one(id, head_thickness, params)?;
+            let sr = resolve_one(id, shaft_radius, params)?;
+            let sl = resolve_one(id, shaft_length, params)?;
+            if hr <= 0.0 || ht <= 0.0 || sr <= 0.0 || sl <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "CapScrew requires positive head_radius, head_thickness, shaft_radius, shaft_length (got {hr}, {ht}, {sr}, {sl})"
+                    ),
+                });
+            }
+            if hr <= sr {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("CapScrew head_radius ({hr}) must be > shaft_radius ({sr})"),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("CapScrew segments must be >= 3 (got {segments})"),
+                });
+            }
+            let head = cylinder_faceted(hr, ht, *segments);
+            let shaft_raw = cylinder_faceted(sr, sl, *segments);
+            let shaft = translate_solid(&shaft_raw, Vec3::new(0.0, 0.0, ht));
+            head.try_union(&shaft).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "cap_screw_union",
+                message: e.message,
+            })
+        }
         Feature::IBeam {
             flange_width,
             flange_thickness,
@@ -973,6 +1052,17 @@ fn build(
             let base = cache_get(cache, input)?;
             let o = resolve3(id, offset, params)?;
             Ok(translate_solid(base, Vec3::new(o[0], o[1], o[2])))
+        }
+        Feature::Scale { input, factor, .. } => {
+            let base = cache_get(cache, input)?;
+            let f = resolve_one(id, factor, params)?;
+            if f <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Scale factor must be > 0 (got {f})"),
+                });
+            }
+            Ok(scale_solid(base, f))
         }
         Feature::Mirror {
             input,
