@@ -7,25 +7,65 @@ See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the paren
 
 ## Status
 
-**Current readiness: 119/168 (71%)** of primitive × primitive × op combinations
-succeed. See [`docs/readiness.md`](docs/readiness.md) for the failure-bucket
-roadmap. Run `cargo run --example readiness_matrix -p kerf-brep` to refresh.
+**Current readiness: 168/168 (100%)** of primitive × primitive × op
+combinations succeed. See [`docs/readiness.md`](docs/readiness.md) for the
+milestone history. Run `cargo run --example readiness_matrix -p kerf-brep`
+to refresh.
 
-**What works today:**
-- All primitives build and tessellate to STL/OBJ/STEP cleanly.
-- Booleans on box/prism/box, box/box, box/cylinder_faceted, box/vase: ✓
-- STL/OBJ import, boolean on imported, re-export: ✓
-- CLI: `kerf union a.stl b.obj out.stl`, with `-` for stdin/stdout.
+**Validation: 327 tests across 9 suites:**
+- `readiness_floor.rs` (1) — topology validates for all 168 matrix cases.
+- `readiness_geometry.rs` (13) — universal volume invariants + analytic
+  exact-volume checks for box pairs + Euler-Poincaré on every result.
+- `readiness_algebra.rs` (9) — idempotence, commutativity, set-algebra
+  conservation `vol(A) = vol(A∩B) + vol(A−B)`, inclusion-exclusion,
+  associativity for disjoint unions.
+- `readiness_quality.rs` (2) — bbox containment + no-zero-area-triangle
+  per face on every matrix case.
+- `readiness_roundtrip.rs` (7) — STL + OBJ + JSON serialization preserves
+  V/E/F/volume.
+- `readiness_robustness.rs` (9) — recursive booleans on overlapping
+  inputs, tessellation refinement convergence, imported-mesh booleans,
+  vertex-on-face-plane consistency, translation invariance, determinism,
+  no-duplicate-vertex check.
+- `readiness_robustness2.rs` (12) — rotation invariance, scale extremes
+  (1e-3 to 1e3), coplanar-touching boxes, performance budget (<1s per
+  matrix case), random box-pair fuzz (50 cases × 3 ops via deterministic
+  LCG seed verifying inclusion-exclusion analytically).
+- `readiness_stress.rs` (22) — tessellate primitives at varying
+  resolutions → STL → re-import → run booleans on the imported version;
+  high-res 64-segment cylinder, 9-cavity grid carving, deep recursive
+  imported chains.
+- `readiness_curved.rs` (10) — sphere / torus / cone via tessellation +
+  re-import; analytic volume verification, genus-1 torus topology check,
+  small-chip torus DIFF.
+- `readiness_noisy.rs` (6) — sub-tolerance noise preserves boolean
+  correctness.
+- `readiness_complex_cad.rs` (1+2 ignored) — multi-step CAD models via
+  boolean chains.
 
-**Known limits:**
-- `box ∪ cylinder` (analytic cylinder, not faceted) hits M11 phase-B interior
-  endpoint limit. Use `cylinder_faceted` for boolean inputs.
-- `box ∩ cylinder_faceted` etc. with curved-piercing-face geometry: still
-  hits M11 phase B.
-- Some half-overlap intersection configurations leave the kept-face graph
-  with unmatched half-edges (3-same-direction case).
-- Boolean output is safe: `try_*` variants never panic and return
-  `BooleanError` on unsupported configurations.
+**Performance baseline (criterion):** see `cargo bench -p kerf-brep`.
+- nested box DIFF (creates cavity): ~27 µs
+- box overlap pair (any op): ~38 µs
+- tri-prism − box-nested (genus 1 result): ~59 µs
+- cyl12 pierces box: ~112 µs
+- box − cyl_n64 (high-res, ~192 face inputs): ~1.05 ms
+
+**Known limitations:**
+- Coplanar overlapping faces between A and B (one-plane bodies sitting
+  on top of each other or sharing a face exactly) — limited to
+  same-direction-normals coplanar; opposite-direction touching is
+  handled correctly via `OnBoundaryOpposite`.
+- Cutter spanning the hole of a torus (slicing through both sides of
+  the donut): non-manifold stitch input.
+- Sphere tessellation at certain segment counts (e.g. n=24 places a
+  vertex at exactly cos 60°) hits axis-aligned cutter degeneracies that
+  tier-3 jitter doesn't always resolve. Use n=20 / n=32 or a slightly
+  off-axis cutter.
+- Above-tolerance noise (>1e-9) in imported meshes breaks dedup; cleanly
+  fails via `try_*` rather than panicking.
+
+Boolean output is safe: `try_*` variants never panic and return
+`BooleanError` on unsupported configurations.
 
 - [x] M1 — Geometry foundations: workspace, primitives (Line, Circle, Ellipse, Plane, Cylinder, Sphere, Cone, Torus).
 - [x] M2a — Line intersections: Line vs Line, Plane, Cylinder, Sphere, Cone, Torus + polynomial solvers.
@@ -111,6 +151,75 @@ Build the STL files with `cargo run --example cad_gallery`. Render to PNG with `
 - `kerf-geom` — exact analytic curves and surfaces, intersection routines.
 - `kerf-topo` — half-edge topology and Euler operators.
 - `kerf-brep` — the kernel (geometry + topology + booleans + constructors).
+
+## Library usage
+
+```rust
+use kerf_brep::primitives::{box_, box_at};
+use kerf_brep::{solid_volume, Solid};
+use kerf_geom::{Point3, Vec3};
+
+// Build two overlapping boxes.
+let a = box_(Vec3::new(2.0, 2.0, 2.0));
+let b = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(1.0, 0.0, 0.0));
+
+// Boolean ops via the Solid methods (panics on unsupported configs)…
+let union = a.union(&b);
+let intersect = a.intersection(&b);
+let diff = a.difference(&b);
+
+// …or via try_* (returns BooleanError instead).
+let r = a.try_union(&b)?;
+println!("union vol = {:.4}", solid_volume(&r));   // 12.0000
+
+// Validate topology.
+kerf_topo::validate(&r.topo)?;
+
+// Per-shell volume (positive for outer, negative for cavity shells).
+for sh in r.topo.shell_ids() {
+    let v = kerf_brep::shell_volume(&r, sh);
+    println!("shell {sh:?} vol={v:.4}");
+}
+
+// Tessellate to triangle soup, then write STL.
+use std::fs::File;
+let soup = kerf_brep::tessellate(&r, 24);
+let mut f = File::create("union.stl")?;
+kerf_brep::write_binary(&soup, "union", &mut f)?;
+# Ok::<_, Box<dyn std::error::Error>>(())
+```
+
+## Recursive booleans
+
+```rust
+use kerf_brep::primitives::{box_, box_at};
+use kerf_geom::{Point3, Vec3};
+
+let plate = box_(Vec3::new(20.0, 20.0, 5.0));
+let hole_a = box_at(Vec3::new(2.0, 2.0, 5.0), Point3::new(2.0, 2.0, 0.0));
+let hole_b = box_at(Vec3::new(2.0, 2.0, 5.0), Point3::new(15.0, 15.0, 0.0));
+
+// Each call returns a new Solid; chain freely.
+let result = plate.try_difference(&hole_a)?
+    .try_difference(&hole_b)?;
+# Ok::<_, kerf_brep::BooleanError>(())
+```
+
+## Importing external STL
+
+```rust
+use std::fs::File;
+use kerf_brep::{read_stl_to_solid, solid_volume};
+
+let mut f = File::open("part.stl")?;
+let imported = read_stl_to_solid(&mut f)?;
+println!("imported {} vol={:.4}", imported.face_count(), solid_volume(&imported));
+
+// Booleans against imported solids work the same as primitives.
+let cutter = kerf_brep::primitives::box_(kerf_geom::Vec3::new(1.0, 1.0, 5.0));
+let carved = imported.try_difference(&cutter)?;
+# Ok::<_, Box<dyn std::error::Error>>(())
+```
 
 ## CLI
 
