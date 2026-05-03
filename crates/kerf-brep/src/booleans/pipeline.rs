@@ -68,6 +68,26 @@ pub fn boolean(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> FaceSoup
     soup
 }
 
+/// Flip a surface's outward normal direction. Used when a kept-and-flipped
+/// face's polygon was reversed (DIFF B-Inside) so its surface frame.z still
+/// points outward from the post-flip orientation. Without this, recursive
+/// booleans on a DIFF result misread the cavity-face direction.
+fn flip_surface_normal(s: crate::geometry::SurfaceKind) -> crate::geometry::SurfaceKind {
+    use crate::geometry::SurfaceKind;
+    use kerf_geom::{Frame, Plane};
+    match s {
+        SurfaceKind::Plane(p) => {
+            // Negate frame.z and swap fx/fy to keep the frame right-handed
+            // (z = x × y must hold). New frame: x = old.y, y = old.x, z = -old.z
+            // → x × y = old.y × old.x = -(old.x × old.y) = -old.z = new.z. ✓
+            let new_frame = Frame::from_x_yhint(p.frame.origin, p.frame.y, p.frame.x)
+                .expect("flipped frame is non-degenerate");
+            SurfaceKind::Plane(Plane::new(new_frame))
+        }
+        other => other, // curved surfaces: no flip helper yet, return as-is
+    }
+}
+
 /// End-to-end boolean returning a connected Solid (not just a triangle soup).
 /// Recursive booleans are now possible:
 /// `boolean_solid(boolean_solid(a, b, op), c, op2)`.
@@ -129,12 +149,19 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
         let Some(mut polygon) = face_polygon(&b, face_id) else {
             continue;
         };
-        let surface = b.face_geom.get(face_id).cloned().unwrap();
+        let mut surface = b.face_geom.get(face_id).cloned().unwrap();
         let ancestor = b.face_ancestor(face_id);
         let anc_key = (1u8, ancestor.data().as_ffi());
         let face_kept = keep_b_face(cls, op);
         if face_kept && flip_b {
             polygon.reverse();
+            // Also flip the surface's outward normal — the polygon now
+            // walks CCW from the OPPOSITE of frame.z. Without this fix,
+            // the result face has misaligned surface vs polygon
+            // orientation, which breaks downstream consumers
+            // (recursive booleans, anyone reading surface frame.z to
+            // recover outward direction).
+            surface = flip_surface_normal(surface);
         }
         let face = KeptFace { polygon, surface };
         if face_kept {
