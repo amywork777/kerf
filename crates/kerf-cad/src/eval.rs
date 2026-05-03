@@ -3,7 +3,10 @@
 use std::collections::HashMap;
 
 use kerf_brep::{
-    primitives::{box_, box_at, cone, cylinder_faceted, extrude_polygon, frustum, sphere, torus},
+    primitives::{
+        box_, box_at, cone, cylinder_faceted, extrude_polygon, frustum, revolve_polyline, sphere,
+        torus,
+    },
     Solid,
 };
 use kerf_geom::{Point3, Vec3};
@@ -126,6 +129,8 @@ fn build(
             direction,
             ..
         } => build_extrude(id, profile, direction, params),
+
+        Feature::Revolve { profile, .. } => build_revolve(id, profile, params),
 
         Feature::Tube {
             outer_radius,
@@ -324,6 +329,32 @@ fn resolve3(
         id: id.into(),
         message,
     })
+}
+
+fn build_revolve(
+    id: &str,
+    profile: &Profile2D,
+    params: &HashMap<String, f64>,
+) -> Result<Solid, EvalError> {
+    if profile.points.len() < 3 {
+        return Err(EvalError::Invalid {
+            id: id.into(),
+            reason: format!(
+                "revolve profile needs at least 3 points (got {})",
+                profile.points.len()
+            ),
+        });
+    }
+    // Profile2D points are (x, z) pairs in the xz half-plane (y = 0).
+    let mut pts: Vec<Point3> = Vec::with_capacity(profile.points.len());
+    for p in &profile.points {
+        let xz = resolve_arr(p, params).map_err(|message| EvalError::Parameter {
+            id: id.into(),
+            message,
+        })?;
+        pts.push(Point3::new(xz[0], 0.0, xz[1]));
+    }
+    Ok(revolve_polyline(&pts))
 }
 
 fn build_extrude(

@@ -109,6 +109,7 @@ Supported operators: `+ - * /` and parentheses. Supported builtins:
 | `Cone`           | `radius`, `height`                                                 | —                   |
 | `Frustum`        | `top_radius`, `bottom_radius`, `height`                            | —                   |
 | `ExtrudePolygon` | `profile: { points: [[x,y], ...] }`, `direction: [x,y,z]`          | —                   |
+| `Revolve`        | `profile: { points: [[x,z], ...] }` — revolved around z-axis        | —                   |
 | `Tube`           | `outer_radius`, `inner_radius`, `height`, `segments` (≥3)          | —                   |
 | `HollowBox`      | `extents: [x,y,z]`, `wall_thickness`                               | —                   |
 | `Translate`      | `offset: [x,y,z]`                                                  | `input: <id>`       |

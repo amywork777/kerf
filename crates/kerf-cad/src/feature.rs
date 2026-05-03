@@ -65,6 +65,13 @@ pub enum Feature {
         profile: Profile2D,
         direction: [Scalar; 3],
     },
+    /// Revolve an open polyline in the xz-plane around the z-axis. The first
+    /// and last points must lie on the z-axis (x = 0); all interior points
+    /// must have x > 0. Produces a closed axisymmetric solid.
+    Revolve {
+        id: String,
+        profile: Profile2D,
+    },
 
     /// Hollow circular tube: outer cylinder minus a centered inner cylinder.
     /// Both share the same axis (origin, +z direction) and height.
@@ -141,6 +148,7 @@ impl Feature {
             | Feature::Cone { id, .. }
             | Feature::Frustum { id, .. }
             | Feature::ExtrudePolygon { id, .. }
+            | Feature::Revolve { id, .. }
             | Feature::Tube { id, .. }
             | Feature::HollowBox { id, .. }
             | Feature::Translate { id, .. }
@@ -164,6 +172,7 @@ impl Feature {
             | Feature::Cone { .. }
             | Feature::Frustum { .. }
             | Feature::ExtrudePolygon { .. }
+            | Feature::Revolve { .. }
             | Feature::Tube { .. }
             | Feature::HollowBox { .. } => Vec::new(),
             Feature::Translate { input, .. }
