@@ -159,15 +159,19 @@ pub fn tessellate(solid: &Solid, lateral_segments: usize) -> FaceSoup {
                         let p10 = sph.point_at(u1, v0);
                         let p11 = sph.point_at(u1, v1);
                         let p01 = sph.point_at(u0, v1);
+                        // CCW from outward (the radial outward normal at each
+                        // sphere point): u goes CCW around z-axis as seen from
+                        // +z, and v increases going from north pole (v=0) to
+                        // south pole (v=π). At the equator looking outward we
+                        // see u to the LEFT and v DOWN, so CCW order is
+                        // p00 → p01 → p11 → p10.
                         if north {
-                            // p00 == p10 (both north pole). Single triangle: pole, p11, p01.
-                            soup.triangles.push([p00, p11, p01]);
+                            soup.triangles.push([p00, p01, p11]);
                         } else if south {
-                            // p11 == p01 (both south pole). Single triangle: p00, p10, p01.
-                            soup.triangles.push([p00, p10, p01]);
+                            soup.triangles.push([p00, p01, p10]);
                         } else {
-                            soup.triangles.push([p00, p10, p11]);
-                            soup.triangles.push([p00, p11, p01]);
+                            soup.triangles.push([p00, p01, p11]);
+                            soup.triangles.push([p00, p11, p10]);
                         }
                     }
                 }
