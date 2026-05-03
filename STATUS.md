@@ -19,16 +19,17 @@ cd viewer && pnpm install && ./build-wasm.sh && pnpm dev
 A typical model is ~10 lines of JSON declaring a tree of:
 - **Geometric primitives**: `Box`, `BoxAt`, `Cylinder`, `CylinderAt`,
   `Sphere`, `Torus`, `Cone`, `Frustum`, `Tube`, `TubeAt`, `HollowBox`,
-  `HollowCylinder`, `Slot`, `Wedge`, `RegularPrism`, `Star`,
-  `ExtrudePolygon`, `Revolve`.
+  `HollowCylinder`, `Slot`, `Wedge`, `RegularPrism`, `Pyramid`, `Star`,
+  `ExtrudePolygon`, `Loft`, `TaperedExtrude`, `Revolve`.
 - **Standard structural shapes**: `LBracket`, `UChannel`, `TBeam`, `IBeam`.
 - **Standard fasteners and bosses**: `Bolt`, `CapScrew`, `Nut`,
   `Washer`, `RoundBoss`, `RectBoss`.
+- **Machining cutters**: `DovetailSlot`, `VeeGroove`.
 - **Transforms**: `Translate`, `Scale`, `Rotate`, `Mirror`,
   `LinearPattern`, `PolarPattern`.
 - **Manufacturing operations**: `CornerCut`, `Fillet`, `Fillets`
-  (multi-edge), `Chamfer`, `Counterbore`, `HoleArray`, `BoltCircle`,
-  `HexHole`, `SquareHole`.
+  (multi-edge), `Chamfer`, `Counterbore`, `Countersink`, `HoleArray`,
+  `BoltCircle`, `HexHole`, `SquareHole`.
 - **Booleans**: `Union`, `Intersection`, `Difference`.
 
 Every numeric field accepts literals, `$param` references, or arbitrary
@@ -52,22 +53,38 @@ kernel + authoring + viewer + production output).
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
-| Sweep / loft (Revolve only)               | 6%        | 15%      | 0.9    |
-| Manufacturing features (CornerCut, Fillet, Fillets, Chamfer, Counterbore, hole patterns, hex/square holes) | 12% | 40%  | 4.8    |
+| Sweep / loft (Revolve, Loft, TaperedExtrude) | 6%     | 35%      | 2.1    |
+| Manufacturing features (CornerCut, Fillet, Fillets, Chamfer, Counterbore, Countersink, hole patterns, hex/square holes, dovetail, vee-groove) | 12% | 50%  | 6.0    |
 | Reference geometry (Mirror is adjacent)   | 3%        | 5%       | 0.15   |
 | Curved-surface analytic booleans          | 8%        | 0%       | 0      |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~46.1%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~48.6%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~92%**   |
 
-Started this run at ~40.5% / 91%. Shipped 26 new features:
-manufacturing (Fillet, Fillets, Chamfer, Counterbore, HoleArray,
-BoltCircle, HexHole, SquareHole), composed primitives (Slot,
-HollowCylinder, Wedge, RegularPrism, Star, CylinderAt, TubeAt),
-structural shapes (LBracket, UChannel, TBeam, IBeam), fasteners and
-bosses (Bolt, CapScrew, Nut, Washer, RoundBoss, RectBoss), one new
-transform (Scale), and 14 expression builtins. 462 tests pass.
+Started this run at ~40.5% / 91%. Shipped 32 new features and three
+real kernel additions:
+
+- **Kernel**: `cone_faceted` (n-sided pyramid, direct topology
+  construction), `frustum_faceted` (n-sided faceted frustum), and a
+  refactor of `extrude_polygon` to expose `extrude_lofted` (two
+  arbitrary parallel polygons of same vertex count). The boolean
+  retry loop also got 6 jitter directions instead of 1.
+- **Manufacturing**: Fillet, Fillets, Chamfer, Counterbore,
+  Countersink, HoleArray, BoltCircle, HexHole, SquareHole.
+- **Composed primitives**: Slot, HollowCylinder, Wedge, RegularPrism,
+  Pyramid, Star, CylinderAt, TubeAt.
+- **Structural shapes**: LBracket, UChannel, TBeam, IBeam.
+- **Fasteners + bosses**: Bolt, CapScrew, Nut, Washer, RoundBoss,
+  RectBoss.
+- **Sweep/loft**: Loft (between two parallel polygons),
+  TaperedExtrude (draft-angle extrude).
+- **Machining cutters**: DovetailSlot, VeeGroove.
+- **Transform**: Scale (uniform).
+- **Expression builtins**: 14 new (asin/acos/atan/atan2, pow, exp,
+  ln, log, sign, clamp, mod, hypot, if_pos, pi/tau/e constants).
+
+488 tests pass.
 
 The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
 are real manufacturing features even if multi-edge fillet is still
@@ -111,28 +128,35 @@ proprietary product): years.
 
 **Real:**
 - The kernel handles planar booleans for arbitrary tree depth.
+- `cone_faceted` (n-sided pyramid) and `frustum_faceted` ship as
+  real planar primitives that compose with booleans (the analytic
+  `cone` and `frustum` did not).
+- `extrude_lofted` is the foundation for true Loft and TaperedExtrude
+  features — both verified against the analytic frustum-volume
+  formula.
 - Parameters + expressions make the model authoring loop tight, with
   a 24-builtin expression language including conditionals (`if_pos`)
   and constants (`pi()`, `tau()`, `e()`).
 - The viewer is genuinely usable — drop a JSON, scrub sliders, see the
   mesh, export STL.
-- Mirror works including downstream Union composition.
-- Scale (uniform) works for any input.
-- Single-edge axis-aligned Fillet + Chamfer ship and survive into the
-  STL/STEP exports. Fillets (plural) handles multi-edge cases that
-  share only "irrelevant" body faces (diagonally-opposite z-edges).
-- Counterbore drills socket-head fastener pockets in any axis.
-- Cylinders, tubes, and polygon-pocket cutters can be positioned
-  along any of three axes using exact cyclic-permutation orientation
-  (no sin/cos noise).
-- 12 standard structural / fastener primitives ship: LBracket,
-  UChannel, TBeam, IBeam, Bolt, CapScrew, Nut, Washer, RoundBoss,
-  RectBoss, Star, RegularPrism.
+- Mirror and Scale (uniform) work for any input.
+- Single-edge axis-aligned Fillet, Chamfer, Counterbore, Countersink
+  ship and survive into the STL/STEP exports.
+- Fillets (plural) handles multi-edge cases that share only
+  "irrelevant" body faces (diagonally-opposite z-edges of a box).
+- Cylinders, tubes, polygon-pocket cutters, and frustum cutters can
+  be positioned along any of three axes using exact cyclic-permutation
+  orientation (no sin/cos noise that would trip the boolean engine).
 - HoleArray and BoltCircle drill arbitrary linear/polar arrays of
   through-pockets.
 - HexHole and SquareHole drill non-circular pockets via the
   build_polygon_pocket helper.
-- 462 tests pass, 1 ignored (4-corner Fillets, kernel limitation).
+- DovetailSlot and VeeGroove provide common machining-cutter
+  cross-sections.
+- Standard structural / fastener catalog: LBracket, UChannel, TBeam,
+  IBeam, Bolt, CapScrew, Nut, Washer, RoundBoss, RectBoss, Star,
+  RegularPrism, Pyramid.
+- 488 tests pass, 1 ignored (4-corner Fillets, kernel limitation).
 
 **Brittle:**
 - Coplanar overlapping faces still trip the boolean engine in some
