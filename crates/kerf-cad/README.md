@@ -112,10 +112,16 @@ Supported operators: `+ - * /` and parentheses. Supported builtins:
 | `Revolve`        | `profile: { points: [[x,z], ...] }` — revolved around z-axis        | —                   |
 | `Tube`           | `outer_radius`, `inner_radius`, `height`, `segments` (≥3)          | —                   |
 | `HollowBox`      | `extents: [x,y,z]`, `wall_thickness`                               | —                   |
+| `HollowCylinder` | `outer_radius`, `inner_radius`, `height`, `end_thickness`, `segments` (≥3) | —           |
+| `Slot`           | `length` (≥0), `radius`, `height`, `segments` (≥3) — stadium-shape extrude in xy | —     |
+| `Wedge`          | `width`, `depth`, `height` — right-triangular prism (legs along x and z, extrudes along y) | — |
+| `RegularPrism`   | `radius`, `height`, `segments` (≥3) — n-gon prism (alias of `cylinder_faceted`) | —      |
 | `Translate`      | `offset: [x,y,z]`                                                  | `input: <id>`       |
 | `Rotate`         | `axis: [x,y,z]`, `angle_deg`, `center: [x,y,z]`                    | `input: <id>`       |
 | `Mirror`         | `plane_origin: [x,y,z]`, `plane_normal: [x,y,z]` (¹)                | `input: <id>`       |
 | `CornerCut`      | `corner: [x,y,z]`, `extents: [x,y,z]` — subtract a box at a corner  | `input: <id>`       |
+| `Fillet`         | `axis: "x"\|"y"\|"z"`, `edge_min: [x,y,z]`, `edge_length`, `radius`, `quadrant: "pp"\|"pn"\|"np"\|"nn"`, `segments` (≥3) (²) | `input: <id>` |
+| `Chamfer`        | `axis`, `edge_min`, `edge_length`, `setback`, `quadrant` — 45° flat cut (²) | `input: <id>` |
 | `LinearPattern`  | `count` (≥1), `offset: [x,y,z]`                                    | `input: <id>`       |
 | `PolarPattern`   | `count` (≥1), `axis: [x,y,z]`, `center: [x,y,z]`, `total_angle_deg` | `input: <id>`      |
 | `Union`          | —                                                                  | `inputs: [<id>, …]` |
@@ -129,6 +135,17 @@ evaluates as `(a − b) − c`.
 result is a fully-valid solid: volume comes out positive, and the
 mirrored body composes cleanly with `Union` of the original to make
 symmetric designs.
+
+(²) `Fillet` and `Chamfer` operate on **a single axis-aligned 90° edge** at
+a time. `axis` is the edge direction; `edge_min` is one endpoint;
+`edge_length` is the distance to the other endpoint along `+axis`;
+`quadrant` is two characters indicating which way the body extends from
+the edge in the two perpendicular axes (canonical perp-axis order is
+`(y, z)` for axis `x`; `(z, x)` for axis `y`; `(x, y)` for axis `z`).
+**Stacking multiple `Fillet`s on the same body sometimes trips the
+boolean engine** at the corners where a fillet's wedge cutter meets a
+prior fillet's curved face — split the body and union the parts, or
+fillet a single edge and post-process in your slicer for now.
 
 ### Conventions
 
@@ -168,8 +185,10 @@ symmetric designs.
 ```
 
 See [examples/](./examples/) for `bracket.json`, `hollow_box.json`,
-`multi_stage_carve.json`, `hex_prism.json`, and `bolt_circle.json` (the
-last shows `PolarPattern` driving a 6-bolt-hole circle).
+`multi_stage_carve.json`, `hex_prism.json`, `bolt_circle.json` (`PolarPattern`
+driving a 6-bolt-hole circle), `bracket_filleted.json` (a single-edge
+`Fillet`), `chamfered_block.json`, `slot.json`, and `hex_nut.json` (a
+`RegularPrism` body with a centered `Cylinder` thread bore).
 
 ## Limitations (inherited from kerf)
 

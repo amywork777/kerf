@@ -189,6 +189,146 @@ fn build(
                 message: e.message,
             })
         }
+        Feature::Fillet {
+            input,
+            axis,
+            edge_min,
+            edge_length,
+            radius,
+            quadrant,
+            segments,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let em = resolve3(id, edge_min, params)?;
+            let len = resolve_one(id, edge_length, params)?;
+            let r = resolve_one(id, radius, params)?;
+            build_fillet(id, base, axis, em, len, r, quadrant, *segments)
+        }
+        Feature::Chamfer {
+            input,
+            axis,
+            edge_min,
+            edge_length,
+            setback,
+            quadrant,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let em = resolve3(id, edge_min, params)?;
+            let len = resolve_one(id, edge_length, params)?;
+            let s = resolve_one(id, setback, params)?;
+            build_chamfer(id, base, axis, em, len, s, quadrant)
+        }
+        Feature::Slot {
+            length,
+            radius,
+            height,
+            segments,
+            ..
+        } => {
+            let l = resolve_one(id, length, params)?;
+            let r = resolve_one(id, radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            build_slot(id, l, r, h, *segments)
+        }
+        Feature::HollowCylinder {
+            outer_radius,
+            inner_radius,
+            height,
+            end_thickness,
+            segments,
+            ..
+        } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            let t = resolve_one(id, end_thickness, params)?;
+            if r_out <= 0.0 || r_in <= 0.0 || h <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "HollowCylinder requires positive r_out, r_in, height, end_thickness \
+                         (got {r_out}, {r_in}, {h}, {t})"
+                    ),
+                });
+            }
+            if r_in >= r_out {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "HollowCylinder inner_radius ({r_in}) must be < outer_radius ({r_out})"
+                    ),
+                });
+            }
+            if 2.0 * t >= h {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "HollowCylinder 2 * end_thickness ({}) must be < height ({h})",
+                        2.0 * t
+                    ),
+                });
+            }
+            let outer = cylinder_faceted(r_out, h, *segments);
+            let cavity_h = h - 2.0 * t;
+            let cavity_raw = cylinder_faceted(r_in, cavity_h, *segments);
+            let cavity = translate_solid(&cavity_raw, Vec3::new(0.0, 0.0, t));
+            outer.try_difference(&cavity).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "hollow_cylinder",
+                message: e.message,
+            })
+        }
+        Feature::Wedge {
+            width,
+            depth,
+            height,
+            ..
+        } => {
+            let w = resolve_one(id, width, params)?;
+            let d = resolve_one(id, depth, params)?;
+            let h = resolve_one(id, height, params)?;
+            if w <= 0.0 || d <= 0.0 || h <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Wedge requires positive width, depth, height (got {w}, {d}, {h})"),
+                });
+            }
+            // Right-triangle profile in xz plane (y = 0). For extrude_polygon
+            // CCW-from-+direction with +direction = +y, the polygon walked in
+            // increasing-angle order around +y must satisfy
+            // (p1-p0) × (p2-p0) · ŷ > 0. That requires (0,0,h) BEFORE (w,0,0).
+            let prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(0.0, 0.0, h),
+                Point3::new(w, 0.0, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, d, 0.0)))
+        }
+        Feature::RegularPrism {
+            radius,
+            height,
+            segments,
+            ..
+        } => {
+            let r = resolve_one(id, radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            if r <= 0.0 || h <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("RegularPrism requires positive radius, height (got {r}, {h})"),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("RegularPrism segments must be >= 3 (got {})", segments),
+                });
+            }
+            // Same as cylinder_faceted but renamed for intent.
+            Ok(cylinder_faceted(r, h, *segments))
+        }
         Feature::HollowBox {
             extents,
             wall_thickness,
@@ -494,3 +634,377 @@ fn cache_get<'a>(cache: &'a HashMap<String, Solid>, id: &str) -> Result<&'a Soli
         .get(id)
         .ok_or_else(|| EvalError::UnknownId(id.into()))
 }
+
+/// Parse a single-axis label ("x" | "y" | "z") to an index 0/1/2.
+fn parse_axis(id: &str, axis: &str) -> Result<usize, EvalError> {
+    match axis.to_ascii_lowercase().as_str() {
+        "x" => Ok(0),
+        "y" => Ok(1),
+        "z" => Ok(2),
+        other => Err(EvalError::Invalid {
+            id: id.into(),
+            reason: format!("axis must be 'x', 'y', or 'z' (got {other:?})"),
+        }),
+    }
+}
+
+/// Parse a quadrant code ("pp" | "pn" | "np" | "nn") to two signs.
+fn parse_quadrant(id: &str, q: &str) -> Result<(f64, f64), EvalError> {
+    let bytes = q.as_bytes();
+    let to_sign = |b: u8| match b {
+        b'p' | b'P' | b'+' => Some(1.0_f64),
+        b'n' | b'N' | b'-' => Some(-1.0_f64),
+        _ => None,
+    };
+    if bytes.len() == 2 {
+        if let (Some(a), Some(b)) = (to_sign(bytes[0]), to_sign(bytes[1])) {
+            return Ok((a, b));
+        }
+    }
+    Err(EvalError::Invalid {
+        id: id.into(),
+        reason: format!("quadrant must be one of 'pp', 'pn', 'np', 'nn' (got {q:?})"),
+    })
+}
+
+/// For an edge along `axis_idx`, return the indices of the two perpendicular
+/// axes in canonical (a, b) order:
+///   axis x → (y, z)
+///   axis y → (z, x)
+///   axis z → (x, y)
+fn perpendicular_axes(axis_idx: usize) -> (usize, usize) {
+    match axis_idx {
+        0 => (1, 2),
+        1 => (2, 0),
+        2 => (0, 1),
+        _ => unreachable!(),
+    }
+}
+
+/// Build an axis-aligned box that occupies the half-open region between
+/// edge_min and edge_min + axis_extent along `axis_idx`, and extends by
+/// signed amounts along the two perpendicular axes.
+fn axis_aligned_box_at_edge(
+    edge_min: [f64; 3],
+    axis_idx: usize,
+    axis_extent: f64,
+    perp_extents: (f64, f64),
+) -> Solid {
+    let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+    let mut origin = edge_min;
+    let mut extents = [0.0_f64; 3];
+    extents[axis_idx] = axis_extent;
+    // Place the box so its perpendicular extents point in the requested
+    // direction from edge_min. Negative extent → shift origin by the extent
+    // and flip sign so box_at gets a positive size.
+    let (ext_a, ext_b) = perp_extents;
+    if ext_a >= 0.0 {
+        extents[a_idx] = ext_a;
+    } else {
+        origin[a_idx] += ext_a;
+        extents[a_idx] = -ext_a;
+    }
+    if ext_b >= 0.0 {
+        extents[b_idx] = ext_b;
+    } else {
+        origin[b_idx] += ext_b;
+        extents[b_idx] = -ext_b;
+    }
+    box_at(
+        Vec3::new(extents[0], extents[1], extents[2]),
+        Point3::new(origin[0], origin[1], origin[2]),
+    )
+}
+
+/// Build a cylinder of `r`, `h` whose axis runs along `axis_idx` starting at
+/// `axis_origin` along that axis (in world coordinates), and centered at
+/// `(perp_a_center, perp_b_center)` in the two perpendicular axes.
+///
+/// To avoid floating-point noise from sin/cos in 90° rotations (which trips
+/// the boolean engine's coplanarity tests later), this function uses exact
+/// coordinate permutation/sign-flip rather than `rotate_solid`.
+fn cylinder_along_axis(
+    r: f64,
+    h: f64,
+    segments: usize,
+    axis_idx: usize,
+    axis_origin: f64,
+    perp_a_center: f64,
+    perp_b_center: f64,
+) -> Solid {
+    let local = cylinder_faceted(r, h, segments);
+    // Reorient so the cylinder axis aligns with axis_idx (was +z).
+    //   axis_idx=2 (z): identity.
+    //   axis_idx=0 (x): map (x, y, z) -> (z, y, -x)  (rot +y by +π/2)
+    //   axis_idx=1 (y): map (x, y, z) -> (x, z, -y)  (rot +x by -π/2)
+    let oriented = match axis_idx {
+        2 => local,
+        0 => axis_swap_xz_to_x(&local),
+        1 => axis_swap_yz_to_y(&local),
+        _ => unreachable!(),
+    };
+    let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+    let mut offset = [0.0_f64; 3];
+    offset[axis_idx] = axis_origin;
+    offset[a_idx] = perp_a_center;
+    offset[b_idx] = perp_b_center;
+    translate_solid(&oriented, Vec3::new(offset[0], offset[1], offset[2]))
+}
+
+/// Apply the exact rotation (x, y, z) -> (z, y, -x) (rot +y by +π/2) to
+/// every point and frame in `s`. Preserves topology and orientation.
+fn axis_swap_xz_to_x(s: &Solid) -> Solid {
+    apply_orthonormal_remap(s, |p| Point3::new(p.z, p.y, -p.x), |v| {
+        Vec3::new(v.z, v.y, -v.x)
+    })
+}
+
+/// Apply the exact rotation (x, y, z) -> (x, z, -y) (rot +x by -π/2) to
+/// every point and frame in `s`. Preserves topology and orientation.
+fn axis_swap_yz_to_y(s: &Solid) -> Solid {
+    apply_orthonormal_remap(s, |p| Point3::new(p.x, p.z, -p.y), |v| {
+        Vec3::new(v.x, v.z, -v.y)
+    })
+}
+
+fn apply_orthonormal_remap(
+    s: &Solid,
+    remap_p: impl Fn(Point3) -> Point3,
+    remap_v: impl Fn(Vec3) -> Vec3,
+) -> Solid {
+    use kerf_brep::geometry::{CurveKind, SurfaceKind};
+    let mut out = s.clone();
+    for (_, p) in out.vertex_geom.iter_mut() {
+        *p = remap_p(*p);
+    }
+    let remap_frame = |f: &mut kerf_geom::Frame| {
+        f.origin = remap_p(f.origin);
+        f.x = remap_v(f.x);
+        f.y = remap_v(f.y);
+        f.z = remap_v(f.z);
+    };
+    for (_, surf) in out.face_geom.iter_mut() {
+        match surf {
+            SurfaceKind::Plane(p) => remap_frame(&mut p.frame),
+            SurfaceKind::Cylinder(c) => remap_frame(&mut c.frame),
+            SurfaceKind::Sphere(s) => remap_frame(&mut s.frame),
+            SurfaceKind::Cone(c) => remap_frame(&mut c.frame),
+            SurfaceKind::Torus(t) => remap_frame(&mut t.frame),
+        }
+    }
+    for (_, seg) in out.edge_geom.iter_mut() {
+        match &mut seg.curve {
+            CurveKind::Line(l) => {
+                l.origin = remap_p(l.origin);
+                l.direction = remap_v(l.direction);
+            }
+            CurveKind::Circle(c) => remap_frame(&mut c.frame),
+            CurveKind::Ellipse(e) => remap_frame(&mut e.frame),
+        }
+    }
+    out
+}
+
+fn build_fillet(
+    id: &str,
+    base: &Solid,
+    axis: &str,
+    edge_min: [f64; 3],
+    edge_length: f64,
+    radius: f64,
+    quadrant: &str,
+    segments: usize,
+) -> Result<Solid, EvalError> {
+    if radius <= 0.0 {
+        return Err(EvalError::Invalid {
+            id: id.into(),
+            reason: format!("Fillet radius must be > 0 (got {radius})"),
+        });
+    }
+    if edge_length <= 0.0 {
+        return Err(EvalError::Invalid {
+            id: id.into(),
+            reason: format!("Fillet edge_length must be > 0 (got {edge_length})"),
+        });
+    }
+    if segments < 3 {
+        return Err(EvalError::Invalid {
+            id: id.into(),
+            reason: format!("Fillet segments must be >= 3 (got {segments})"),
+        });
+    }
+    let axis_idx = parse_axis(id, axis)?;
+    let (sa, sb) = parse_quadrant(id, quadrant)?;
+    // Overhang: extend cutter past the edge ends along the edge axis to
+    // dodge coplanar caps with body faces.
+    let eps = (radius * 0.25).max(1e-3).min(edge_length * 0.5);
+    let overhang_h = edge_length + 2.0 * eps;
+    let cb_extent_along = overhang_h;
+    let cb_axis_origin = edge_min[axis_idx] - eps;
+    // Corner box: extends `radius` in each perpendicular direction from the
+    // edge into the body's quadrant.
+    let mut corner_origin = edge_min;
+    corner_origin[axis_idx] = cb_axis_origin;
+    let corner_box = axis_aligned_box_at_edge(
+        corner_origin,
+        axis_idx,
+        cb_extent_along,
+        (sa * radius, sb * radius),
+    );
+    // Cylinder centered at edge_min ± (radius, radius) in the two perps.
+    let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+    let cyl = cylinder_along_axis(
+        radius,
+        overhang_h,
+        segments,
+        axis_idx,
+        cb_axis_origin,
+        edge_min[a_idx] + sa * radius,
+        edge_min[b_idx] + sb * radius,
+    );
+    let wedge = corner_box
+        .try_difference(&cyl)
+        .map_err(|e| EvalError::Boolean {
+            id: id.into(),
+            op: "fillet_wedge",
+            message: e.message,
+        })?;
+    base.try_difference(&wedge).map_err(|e| EvalError::Boolean {
+        id: id.into(),
+        op: "fillet",
+        message: e.message,
+    })
+}
+
+fn build_chamfer(
+    id: &str,
+    base: &Solid,
+    axis: &str,
+    edge_min: [f64; 3],
+    edge_length: f64,
+    setback: f64,
+    quadrant: &str,
+) -> Result<Solid, EvalError> {
+    if setback <= 0.0 {
+        return Err(EvalError::Invalid {
+            id: id.into(),
+            reason: format!("Chamfer setback must be > 0 (got {setback})"),
+        });
+    }
+    if edge_length <= 0.0 {
+        return Err(EvalError::Invalid {
+            id: id.into(),
+            reason: format!("Chamfer edge_length must be > 0 (got {edge_length})"),
+        });
+    }
+    let axis_idx = parse_axis(id, axis)?;
+    let (sa, sb) = parse_quadrant(id, quadrant)?;
+    let eps = (setback * 0.25).max(1e-3).min(edge_length * 0.5);
+    let overhang_h = edge_length + 2.0 * eps;
+    let axis_origin = edge_min[axis_idx] - eps;
+    let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+    // Triangle in the perpendicular plane (a, b), CCW when viewed from +axis.
+    // Vertices (in (a, b) plane, relative to edge_min):
+    //   (0, 0)
+    //   (sa * setback, 0)
+    //   (0, sb * setback)
+    // Ordering: walk CCW from +axis = chosen so (0,0) → (a,0) → (0,b) is
+    // CCW ⇔ sa*sb > 0; otherwise reverse to keep CCW.
+    let p0 = (0.0, 0.0);
+    let p1 = (sa * setback, 0.0);
+    let p2 = (0.0, sb * setback);
+    // Compute orientation (cross of (p1-p0) × (p2-p0)) in (a, b) → if
+    // negative, reverse.
+    let cross = (p1.0 - p0.0) * (p2.1 - p0.1) - (p1.1 - p0.1) * (p2.0 - p0.0);
+    let pts_ab = if cross >= 0.0 {
+        [p0, p1, p2]
+    } else {
+        [p0, p2, p1]
+    };
+    // Build 3D points in axis-canonical frame: axis along axis_idx with
+    // value axis_origin (the bottom of the prism); perp coordinates from
+    // edge_min[a_idx] + dx, etc.
+    let mut prof = Vec::with_capacity(3);
+    for (da, db) in pts_ab {
+        let mut p = [0.0_f64; 3];
+        p[axis_idx] = axis_origin;
+        p[a_idx] = edge_min[a_idx] + da;
+        p[b_idx] = edge_min[b_idx] + db;
+        prof.push(Point3::new(p[0], p[1], p[2]));
+    }
+    let mut dir = [0.0_f64; 3];
+    dir[axis_idx] = overhang_h;
+    let cutter = extrude_polygon(&prof, Vec3::new(dir[0], dir[1], dir[2]));
+    base.try_difference(&cutter)
+        .map_err(|e| EvalError::Boolean {
+            id: id.into(),
+            op: "chamfer",
+            message: e.message,
+        })
+}
+
+fn build_slot(
+    id: &str,
+    length: f64,
+    radius: f64,
+    height: f64,
+    segments: usize,
+) -> Result<Solid, EvalError> {
+    if length < 0.0 || radius <= 0.0 || height <= 0.0 {
+        return Err(EvalError::Invalid {
+            id: id.into(),
+            reason: format!(
+                "Slot requires length >= 0, positive radius and height (got {length}, {radius}, {height})"
+            ),
+        });
+    }
+    if segments < 3 {
+        return Err(EvalError::Invalid {
+            id: id.into(),
+            reason: format!("Slot segments must be >= 3 (got {segments})"),
+        });
+    }
+    // Length-zero stadium degenerates to a circle — use cylinder_faceted.
+    if length < 1e-12 {
+        return Ok(cylinder_faceted(radius, height, 2 * segments));
+    }
+    // Stadium shape in xy plane, centered on origin: rectangle of length x
+    // diameter (length along x, 2*radius along y), bookended by two
+    // semicircles of radius. Total length along x = length + 2*radius.
+    //
+    // Build profile CCW starting at right semicircle bottom (length/2, -radius):
+    //   right semicircle from angle = -π/2 to +π/2 around (length/2, 0)
+    //   top edge to (-length/2, +radius)
+    //   left semicircle from +π/2 to +3π/2 around (-length/2, 0)
+    //   bottom edge back to (length/2, -radius)
+    let mut prof = Vec::with_capacity(2 * segments + 2);
+    let half_l = length / 2.0;
+    let n = segments; // arc subdivisions per semicircle
+    // Right semicircle, theta from -π/2 to +π/2 inclusive of both endpoints.
+    for i in 0..=n {
+        let t = -std::f64::consts::FRAC_PI_2
+            + (std::f64::consts::PI * i as f64 / n as f64);
+        prof.push(Point3::new(
+            half_l + radius * t.cos(),
+            radius * t.sin(),
+            0.0,
+        ));
+    }
+    // Left semicircle, theta from π/2 to 3π/2 inclusive.
+    for i in 0..=n {
+        let t = std::f64::consts::FRAC_PI_2
+            + (std::f64::consts::PI * i as f64 / n as f64);
+        prof.push(Point3::new(
+            -half_l + radius * t.cos(),
+            radius * t.sin(),
+            0.0,
+        ));
+    }
+    // Both semicircles include their endpoints, and the right one ends at
+    // (half_l, +radius) which equals the start of the top edge — but the
+    // left one starts there too (its first point at theta=π/2 is
+    // (-half_l + 0, +radius)). They share a Y coordinate but X differs
+    // unless length=0; the polygon walks them as straight edges between.
+    Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, height)))
+}
+

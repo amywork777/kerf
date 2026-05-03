@@ -1,0 +1,18 @@
+{
+  "parameters": {
+    "plate_x": 100.0,
+    "plate_y": 60.0,
+    "plate_z": 8.0,
+    "fillet_r": 5.0
+  },
+  "features": [
+    {"kind": "Box", "id": "body", "extents": ["$plate_x", "$plate_y", "$plate_z"]},
+    {"kind": "Fillet", "id": "out", "input": "body",
+      "axis": "z",
+      "edge_min": [0.0, 0.0, 0.0],
+      "edge_length": "$plate_z",
+      "radius": "$fillet_r",
+      "quadrant": "pp",
+      "segments": 16}
+  ]
+}

@@ -84,6 +84,90 @@ pub enum Feature {
         extents: [Scalar; 3],
     },
 
+    /// Round an axis-aligned 90° edge of `input` with a quarter-circle of
+    /// radius `radius`.
+    ///
+    /// `axis` is the edge direction ("x" | "y" | "z"). `edge_min` is one
+    /// endpoint of the edge (the start in +axis direction); `edge_length` is
+    /// the distance to the other endpoint. `quadrant` is two characters,
+    /// each "p" or "n", giving the body's direction relative to the edge in
+    /// the two perpendicular axes (in canonical (a, b) order — for axis "z"
+    /// that's (x, y); for axis "x" that's (y, z); for axis "y" that's (z, x)).
+    /// `segments` is the polygonal approximation count for the rounded
+    /// arc (≥ 3).
+    Fillet {
+        id: String,
+        input: String,
+        axis: String,
+        edge_min: [Scalar; 3],
+        edge_length: Scalar,
+        radius: Scalar,
+        quadrant: String,
+        segments: usize,
+    },
+
+    /// Bevel an axis-aligned 90° edge of `input` by a 45° flat cut of
+    /// `setback` (distance from the edge that the cut starts on each face).
+    ///
+    /// Same `axis`, `edge_min`, `edge_length`, `quadrant` semantics as
+    /// `Fillet`. The cutter is a triangular prism (no rounding, no
+    /// `segments`).
+    Chamfer {
+        id: String,
+        input: String,
+        axis: String,
+        edge_min: [Scalar; 3],
+        edge_length: Scalar,
+        setback: Scalar,
+        quadrant: String,
+    },
+
+    /// Stadium-shaped slot: a rounded-rectangle profile extruded along
+    /// `direction`. The slot has axis-aligned (in the local profile frame)
+    /// straight sides of `length` connecting two semicircles of `radius`.
+    /// Currently fixed to lie in the xy plane, extruded in +z.
+    Slot {
+        id: String,
+        length: Scalar,
+        radius: Scalar,
+        height: Scalar,
+        segments: usize,
+    },
+
+    /// Closed-end hollow cylinder: tube with `end_thickness`-thick caps.
+    /// `outer_radius`, `inner_radius`, `height`, `end_thickness`,
+    /// `segments`. Inner cavity has length `height - 2 * end_thickness`.
+    HollowCylinder {
+        id: String,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        height: Scalar,
+        end_thickness: Scalar,
+        segments: usize,
+    },
+
+    /// Right-triangular prism: triangular cross-section with legs of
+    /// length `width` (along x) and `height` (along z), extruded along
+    /// `depth` (along y). Hypotenuse runs in the xz-plane from
+    /// (width, 0, 0) to (0, 0, height).
+    Wedge {
+        id: String,
+        width: Scalar,
+        depth: Scalar,
+        height: Scalar,
+    },
+
+    /// Regular `n`-gon prism: base is a regular polygon of `segments` sides
+    /// inscribed in a circle of `radius`, extruded along +z by `height`.
+    /// At `segments = 4` the result is a square prism (rotated by π/4 of
+    /// the n-gon phase, like cylinder_faceted's convention).
+    RegularPrism {
+        id: String,
+        radius: Scalar,
+        height: Scalar,
+        segments: usize,
+    },
+
     /// Hollow circular tube: outer cylinder minus a centered inner cylinder.
     /// Both share the same axis (origin, +z direction) and height.
     Tube {
@@ -173,6 +257,12 @@ impl Feature {
             | Feature::Tube { id, .. }
             | Feature::HollowBox { id, .. }
             | Feature::CornerCut { id, .. }
+            | Feature::Fillet { id, .. }
+            | Feature::Chamfer { id, .. }
+            | Feature::Slot { id, .. }
+            | Feature::HollowCylinder { id, .. }
+            | Feature::Wedge { id, .. }
+            | Feature::RegularPrism { id, .. }
             | Feature::Translate { id, .. }
             | Feature::Rotate { id, .. }
             | Feature::Mirror { id, .. }
@@ -197,13 +287,19 @@ impl Feature {
             | Feature::ExtrudePolygon { .. }
             | Feature::Revolve { .. }
             | Feature::Tube { .. }
-            | Feature::HollowBox { .. } => Vec::new(),
+            | Feature::HollowBox { .. }
+            | Feature::Slot { .. }
+            | Feature::HollowCylinder { .. }
+            | Feature::Wedge { .. }
+            | Feature::RegularPrism { .. } => Vec::new(),
             Feature::Translate { input, .. }
             | Feature::Rotate { input, .. }
             | Feature::Mirror { input, .. }
             | Feature::LinearPattern { input, .. }
             | Feature::PolarPattern { input, .. }
-            | Feature::CornerCut { input, .. } => {
+            | Feature::CornerCut { input, .. }
+            | Feature::Fillet { input, .. }
+            | Feature::Chamfer { input, .. } => {
                 vec![input.as_str()]
             }
             Feature::Union { inputs, .. }
