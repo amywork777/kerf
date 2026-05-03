@@ -114,6 +114,7 @@ Supported operators: `+ - * /` and parentheses. Supported builtins:
 | `HollowBox`      | `extents: [x,y,z]`, `wall_thickness`                               | —                   |
 | `Translate`      | `offset: [x,y,z]`                                                  | `input: <id>`       |
 | `Rotate`         | `axis: [x,y,z]`, `angle_deg`, `center: [x,y,z]`                    | `input: <id>`       |
+| `CornerCut`      | `corner: [x,y,z]`, `extents: [x,y,z]` — subtract a box at a corner  | `input: <id>`       |
 | `LinearPattern`  | `count` (≥1), `offset: [x,y,z]`                                    | `input: <id>`       |
 | `PolarPattern`   | `count` (≥1), `axis: [x,y,z]`, `center: [x,y,z]`, `total_angle_deg` | `input: <id>`      |
 | `Union`          | —                                                                  | `inputs: [<id>, …]` |

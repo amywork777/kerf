@@ -489,6 +489,42 @@ viewsEl.querySelectorAll<HTMLButtonElement>("button[data-view]").forEach((b) => 
   b.addEventListener("click", () => setView(b.dataset.view as any));
 });
 
+// --- keyboard shortcuts ---
+window.addEventListener("keydown", (e) => {
+  // Don't intercept while typing in a slider/input.
+  const t = e.target as HTMLElement | null;
+  if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) {
+    return;
+  }
+  switch (e.key) {
+    case "1": setView("iso"); break;
+    case "2": setView("front"); break;
+    case "3": setView("top"); break;
+    case "4": setView("side"); break;
+    case "w":
+    case "W":
+      wireframeToggle.checked = !wireframeToggle.checked;
+      refreshWireframe();
+      break;
+    case "r":
+    case "R":
+      resetBtn.click();
+      break;
+    case "d":
+    case "D":
+      drawingBtn.click();
+      break;
+    case "s":
+    case "S":
+      downloadBtn.click();
+      break;
+    case "Escape":
+      highlightedFace = -1;
+      refreshFaceColors();
+      break;
+  }
+});
+
 // --- file drop / picker ---
 fileInput.addEventListener("change", () => {
   const f = fileInput.files?.[0];

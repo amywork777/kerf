@@ -127,6 +127,36 @@ fn hollow_box_rejects_too_thick_wall() {
 }
 
 #[test]
+fn corner_cut_subtracts_a_corner() {
+    let m = Model::new()
+        .add(Feature::Box { id: "block".into(), extents: lits([10.0, 10.0, 10.0]) })
+        .add(Feature::CornerCut {
+            id: "out".into(),
+            input: "block".into(),
+            corner: lits([8.0, 8.0, 8.0]),
+            extents: lits([3.0, 3.0, 3.0]),
+        });
+    let s = m.evaluate("out").unwrap();
+    let v = kerf_brep::solid_volume(&s);
+    // 1000 minus 2x2x2 corner = 992 (cutter [8,8,8] to [11,11,11] but block goes to 10,10,10
+    // so only the 2x2x2 portion inside the block is subtracted)
+    assert!((v - 992.0).abs() < 1e-9, "v={v}");
+}
+
+#[test]
+fn corner_cut_rejects_zero_extent() {
+    let m = Model::new()
+        .add(Feature::Box { id: "block".into(), extents: lits([10.0, 10.0, 10.0]) })
+        .add(Feature::CornerCut {
+            id: "out".into(),
+            input: "block".into(),
+            corner: lits([0.0, 0.0, 0.0]),
+            extents: lits([0.0, 1.0, 1.0]),
+        });
+    assert!(m.evaluate("out").is_err());
+}
+
+#[test]
 fn polar_pattern_round_trips_via_json() {
     let m = Model::new()
         .add(Feature::BoxAt {

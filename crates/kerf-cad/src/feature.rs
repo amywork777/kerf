@@ -73,6 +73,17 @@ pub enum Feature {
         profile: Profile2D,
     },
 
+    /// Subtract an axis-aligned box (a "corner cutter") from `input`. The
+    /// cutter has its `min` corner at `corner` and the given `extents`. Useful
+    /// as quick-and-dirty chamfer-by-cut or "flatten this corner of a
+    /// bounding box". Composes as `Difference(input, BoxAt(extents, corner))`.
+    CornerCut {
+        id: String,
+        input: String,
+        corner: [Scalar; 3],
+        extents: [Scalar; 3],
+    },
+
     /// Hollow circular tube: outer cylinder minus a centered inner cylinder.
     /// Both share the same axis (origin, +z direction) and height.
     Tube {
@@ -151,6 +162,7 @@ impl Feature {
             | Feature::Revolve { id, .. }
             | Feature::Tube { id, .. }
             | Feature::HollowBox { id, .. }
+            | Feature::CornerCut { id, .. }
             | Feature::Translate { id, .. }
             | Feature::Rotate { id, .. }
             | Feature::LinearPattern { id, .. }
@@ -178,7 +190,8 @@ impl Feature {
             Feature::Translate { input, .. }
             | Feature::Rotate { input, .. }
             | Feature::LinearPattern { input, .. }
-            | Feature::PolarPattern { input, .. } => {
+            | Feature::PolarPattern { input, .. }
+            | Feature::CornerCut { input, .. } => {
                 vec![input.as_str()]
             }
             Feature::Union { inputs, .. }

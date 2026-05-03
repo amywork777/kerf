@@ -48,6 +48,11 @@
   #views label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 12px; }
   #views label.checkbox { margin-top: 10px; color: var(--fg); cursor: pointer; }
   #views .view-row { display: flex; gap: 4px; }
+  .hotkeys { margin-top: 10px; color: var(--muted); font-size: 11px;
+    line-height: 1.6; }
+  .hotkeys code { background: var(--bg); padding: 1px 5px; border-radius: 3px;
+    border: 1px solid var(--line); margin-right: 4px; color: var(--fg);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10px; }
   #feature-tree { margin-top: 14px; }
   #feature-tree label { display: block; color: var(--muted); margin-bottom: 4px;
     font-size: 12px; }
@@ -121,6 +126,10 @@
         <input type="checkbox" id="wireframe-toggle" />
         wireframe overlay
       </label>
+      <div class="hotkeys">
+        <code>1</code>iso <code>2</code>front <code>3</code>top <code>4</code>side<br>
+        <code>W</code>wireframe <code>R</code>reset <code>D</code>drawing <code>S</code>save
+      </div>
     </div>
     <div id="status">no model loaded</div>
   </aside>

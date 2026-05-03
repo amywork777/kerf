@@ -161,6 +161,34 @@ fn build(
                 message: e.message,
             })
         }
+        Feature::CornerCut {
+            input,
+            corner,
+            extents,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let c = resolve3(id, corner, params)?;
+            let e = resolve3(id, extents, params)?;
+            if e[0] <= 0.0 || e[1] <= 0.0 || e[2] <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "CornerCut extents must all be positive (got [{}, {}, {}])",
+                        e[0], e[1], e[2]
+                    ),
+                });
+            }
+            let cutter = box_at(
+                Vec3::new(e[0], e[1], e[2]),
+                Point3::new(c[0], c[1], c[2]),
+            );
+            base.try_difference(&cutter).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "corner_cut",
+                message: e.message,
+            })
+        }
         Feature::HollowBox {
             extents,
             wall_thickness,
