@@ -82,6 +82,11 @@ impl Solid {
         self.faces.iter().map(|(id, _)| id)
     }
 
+    /// Iterate over all shell IDs.
+    pub fn shell_ids(&self) -> impl Iterator<Item = crate::id::ShellId> + '_ {
+        self.shells.iter().map(|(id, _)| id)
+    }
+
     /// Iterate over (edge_id, &Edge) pairs.
     pub fn edges_iter(&self) -> impl Iterator<Item = (EdgeId, &crate::entity::Edge)> + '_ {
         self.edges.iter()
