@@ -125,11 +125,10 @@ Supported operators: `+ - * /` and parentheses. Supported builtins:
 Booleans take 2+ inputs and fold left: `Difference` with inputs `[a, b, c]`
 evaluates as `(a − b) − c`.
 
-(¹) `Mirror` reflects geometry across the plane but does not reverse the
-B-rep loop walks — the result is topologically valid for tessellation /
-viewing but unsuitable for downstream booleans (it would appear inside-
-out to the boolean engine). Loop reversal is a planned kerf-topo
-addition.
+(¹) `Mirror` reflects geometry AND reverses face loop walks so the
+result is a fully-valid solid: volume comes out positive, and the
+mirrored body composes cleanly with `Union` of the original to make
+symmetric designs.
 
 ### Conventions
 

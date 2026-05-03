@@ -26,10 +26,10 @@ pub fn translate_solid(s: &Solid, offset: Vec3) -> Solid {
 }
 
 /// Reflect `s` across the plane through `plane_origin` with unit normal
-/// `plane_normal`. Volume is preserved; chirality flips. Surface frames
-/// have their z (outward normal) negated; loop walks become CW-from-outside,
-/// but [`face_polygon`] normalises winding via signed area against frame.z,
-/// so downstream consumers see CCW polygons w.r.t. the new (flipped) z.
+/// `plane_normal`. Volume is preserved; chirality flips. After reflection
+/// every face's outer loop is also reversed so loop walk direction stays
+/// CCW-from-outward (where outward is the new flipped frame.z) — this
+/// keeps the result composable with downstream booleans.
 pub fn mirror_solid(s: &Solid, plane_origin: Point3, plane_normal: Vec3) -> Solid {
     let n = plane_normal.normalize();
     let reflect_p = |p: Point3| -> Point3 {
@@ -47,7 +47,53 @@ pub fn mirror_solid(s: &Solid, plane_origin: Point3, plane_normal: Vec3) -> Soli
     for (_, seg) in out.edge_geom.iter_mut() {
         mirror_curve(&mut seg.curve, &reflect_p, &reflect_v);
     }
+    reverse_all_loops(&mut out);
     out
+}
+
+/// Reverse the half-edge walk direction of every outer loop in the solid.
+/// Walks each loop, collects its half-edges in order, then swaps each
+/// half-edge's next/prev so the walk runs the opposite way.
+fn reverse_all_loops(s: &mut Solid) {
+    let face_ids: Vec<_> = s.topo.face_ids().collect();
+    for face_id in face_ids {
+        let outer = match s.topo.face(face_id) {
+            Some(f) => f.outer_loop(),
+            None => continue,
+        };
+        let lp = match s.topo.loop_(outer) {
+            Some(l) => l,
+            None => continue,
+        };
+        let start = match lp.half_edge() {
+            Some(h) => h,
+            None => continue,
+        };
+        let mut he_ids = Vec::new();
+        let mut cur = start;
+        loop {
+            he_ids.push(cur);
+            let he = match s.topo.half_edge(cur) {
+                Some(h) => h,
+                None => break,
+            };
+            cur = he.next();
+            if cur == start {
+                break;
+            }
+        }
+        let n = he_ids.len();
+        if n < 2 {
+            continue;
+        }
+        // Reversed walk: he_ids[i].next was he_ids[(i+1)%n]; now make it
+        // he_ids[(i+n-1)%n] (i.e., the previous in old order).
+        for i in 0..n {
+            let cur = he_ids[i];
+            let new_next = he_ids[(i + n - 1) % n];
+            s.topo.build_set_half_edge_next_prev(cur, new_next);
+        }
+    }
 }
 
 fn mirror_frame(
@@ -56,14 +102,13 @@ fn mirror_frame(
     reflect_v: &impl Fn(Vec3) -> Vec3,
 ) {
     frame.origin = reflect_p(frame.origin);
-    // Reflect each basis vector. The result is a left-handed frame; restore
-    // right-handedness by recomputing y = z × x. (Negating z while keeping
-    // reflected x and y would be wrong because reflection generally tilts
-    // the basis non-uniformly.)
-    let zr = reflect_v(frame.z);
+    // Reflect each basis vector. Keep z = reflected z (the new outward
+    // direction of the mirrored face — material side is on the opposite side
+    // of the reflected plane, so the reflected normal stays "outward").
+    // The frame would be left-handed after pure reflection; restore right-
+    // handedness by recomputing y = z × x from the reflected x.
+    let z = reflect_v(frame.z).normalize();
     let xr = reflect_v(frame.x);
-    let z = -zr; // negate so the polygon (now CW-from-outside in old frame) lines
-                 //  up CCW-from-outside under the new outward direction.
     let x = (xr - z * xr.dot(&z)).normalize();
     let y = z.cross(&x);
     frame.x = x;
