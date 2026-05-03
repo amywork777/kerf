@@ -117,6 +117,64 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// Subtract a linear array of through-holes from `input`. The
+    /// first hole is at `start` (center of the +axis-facing opening);
+    /// successive holes are spaced by `offset` (3D vector). `count` ≥ 1.
+    /// Each hole is a cylinder of `radius`, axis along `axis`, length
+    /// equal to `depth` extending in -axis direction (with overhang).
+    HoleArray {
+        id: String,
+        input: String,
+        axis: String,
+        start: [Scalar; 3],
+        offset: [Scalar; 3],
+        count: usize,
+        radius: Scalar,
+        depth: Scalar,
+        segments: usize,
+    },
+
+    /// Subtract a polar array of through-holes around `center`. Each
+    /// hole is at `bolt_circle_radius` from center, distributed evenly
+    /// around `axis` ("x"|"y"|"z"). `count` ≥ 1 holes, `radius` each,
+    /// length `depth` along -axis from `center` (which sits on the
+    /// +axis-facing opening surface).
+    BoltCircle {
+        id: String,
+        input: String,
+        axis: String,
+        center: [Scalar; 3],
+        bolt_circle_radius: Scalar,
+        count: usize,
+        radius: Scalar,
+        depth: Scalar,
+        segments: usize,
+    },
+
+    /// Subtract a hex-shaped through-pocket. `top_center` is the center
+    /// of the opening on the +axis-facing surface. `inscribed_radius`
+    /// (apothem) sets the hex size — distance from center to flat side.
+    /// `depth` is the pocket length along -axis.
+    HexHole {
+        id: String,
+        input: String,
+        axis: String,
+        top_center: [Scalar; 3],
+        inscribed_radius: Scalar,
+        depth: Scalar,
+    },
+
+    /// Subtract a square through-pocket. `top_center` on the +axis
+    /// surface, `side` length, `depth` along -axis.
+    SquareHole {
+        id: String,
+        input: String,
+        axis: String,
+        top_center: [Scalar; 3],
+        side: Scalar,
+        depth: Scalar,
+    },
+
     /// Counterbore: subtract a stepped hole from `input`. The "drill"
     /// portion has `drill_radius` and runs full `total_depth`. The
     /// "counterbore" portion is a wider cylinder of `cbore_radius` and
@@ -269,6 +327,19 @@ pub enum Feature {
         depth: Scalar,
     },
 
+    /// I-beam (H-section) cross-section extruded along +z. Symmetric
+    /// top and bottom flanges of `flange_width` × `flange_thickness`,
+    /// centered web of `web_thickness` × (`total_height` − 2 ×
+    /// `flange_thickness`). `depth` is the extrusion length.
+    IBeam {
+        id: String,
+        flange_width: Scalar,
+        flange_thickness: Scalar,
+        web_thickness: Scalar,
+        total_height: Scalar,
+        depth: Scalar,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -398,6 +469,11 @@ impl Feature {
             | Feature::LBracket { id, .. }
             | Feature::UChannel { id, .. }
             | Feature::TBeam { id, .. }
+            | Feature::IBeam { id, .. }
+            | Feature::HoleArray { id, .. }
+            | Feature::BoltCircle { id, .. }
+            | Feature::HexHole { id, .. }
+            | Feature::SquareHole { id, .. }
             | Feature::Translate { id, .. }
             | Feature::Rotate { id, .. }
             | Feature::Mirror { id, .. }
@@ -432,7 +508,12 @@ impl Feature {
             | Feature::Star { .. }
             | Feature::LBracket { .. }
             | Feature::UChannel { .. }
-            | Feature::TBeam { .. } => Vec::new(),
+            | Feature::TBeam { .. }
+            | Feature::IBeam { .. } => Vec::new(),
+            Feature::HoleArray { input, .. }
+            | Feature::BoltCircle { input, .. }
+            | Feature::HexHole { input, .. }
+            | Feature::SquareHole { input, .. } => vec![input.as_str()],
             Feature::Translate { input, .. }
             | Feature::Rotate { input, .. }
             | Feature::Mirror { input, .. }

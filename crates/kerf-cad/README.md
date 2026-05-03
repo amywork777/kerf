@@ -128,6 +128,7 @@ offending name.
 | `LBracket`       | `width`, `height`, `thickness`, `depth` — L cross-section extruded along +z | — |
 | `UChannel`       | `width`, `height`, `thickness`, `depth` — U cross-section (web at y=0, legs along +y) extruded along +z | — |
 | `TBeam`          | `flange_width`, `flange_thickness`, `web_thickness`, `total_height`, `depth` — T cross-section extruded along +z | — |
+| `IBeam`          | `flange_width`, `flange_thickness`, `web_thickness`, `total_height`, `depth` — I/H cross-section (symmetric flanges) extruded along +z | — |
 | `Translate`      | `offset: [x,y,z]`                                                  | `input: <id>`       |
 | `Rotate`         | `axis: [x,y,z]`, `angle_deg`, `center: [x,y,z]`                    | `input: <id>`       |
 | `Mirror`         | `plane_origin: [x,y,z]`, `plane_normal: [x,y,z]` (¹)                | `input: <id>`       |
@@ -136,6 +137,10 @@ offending name.
 | `Fillets`        | `edges: [{axis, edge_min, edge_length, radius, quadrant, segments}, …]` — multi-edge Fillet via composite cutter union (²) | `input: <id>` |
 | `Chamfer`        | `axis`, `edge_min`, `edge_length`, `setback`, `quadrant` — 45° flat cut (²) | `input: <id>` |
 | `Counterbore`    | `axis: "x"\|"y"\|"z"`, `top_center: [x,y,z]`, `drill_radius`, `cbore_radius`, `cbore_depth`, `total_depth`, `segments` (≥3) — stepped hole for socket-head fasteners; `top_center` is the center of the cbore opening on the +axis-facing surface, hole goes INTO the body in -axis direction | `input: <id>` |
+| `HoleArray`      | `axis`, `start: [x,y,z]`, `offset: [x,y,z]`, `count`, `radius`, `depth`, `segments` (≥3) — drill a linear array of through-pockets | `input: <id>` |
+| `BoltCircle`     | `axis`, `center: [x,y,z]`, `bolt_circle_radius`, `count`, `radius`, `depth`, `segments` (≥3) — drill a polar array of through-pockets around `center` | `input: <id>` |
+| `HexHole`        | `axis`, `top_center: [x,y,z]`, `inscribed_radius` (apothem), `depth` — drill a hex-shaped through-pocket | `input: <id>` |
+| `SquareHole`     | `axis`, `top_center: [x,y,z]`, `side`, `depth` — drill a square through-pocket | `input: <id>` |
 | `LinearPattern`  | `count` (≥1), `offset: [x,y,z]`                                    | `input: <id>`       |
 | `PolarPattern`   | `count` (≥1), `axis: [x,y,z]`, `center: [x,y,z]`, `total_angle_deg` | `input: <id>`      |
 | `Union`          | —                                                                  | `inputs: [<id>, …]` |

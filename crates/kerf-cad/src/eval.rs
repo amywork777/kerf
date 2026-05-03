@@ -600,6 +600,232 @@ fn build(
             ];
             Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
         }
+        Feature::IBeam {
+            flange_width,
+            flange_thickness,
+            web_thickness,
+            total_height,
+            depth,
+            ..
+        } => {
+            let fw = resolve_one(id, flange_width, params)?;
+            let ft = resolve_one(id, flange_thickness, params)?;
+            let wt = resolve_one(id, web_thickness, params)?;
+            let th = resolve_one(id, total_height, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if fw <= 0.0 || ft <= 0.0 || wt <= 0.0 || th <= 0.0 || d <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "IBeam requires positive flange_width, flange_thickness, web_thickness, total_height, depth (got {fw}, {ft}, {wt}, {th}, {d})"
+                    ),
+                });
+            }
+            if wt >= fw {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "IBeam web_thickness ({wt}) must be < flange_width ({fw})"
+                    ),
+                });
+            }
+            if 2.0 * ft >= th {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "IBeam 2*flange_thickness ({}) must be < total_height ({th})",
+                        2.0 * ft
+                    ),
+                });
+            }
+            // I profile CCW. Bottom flange y=[0, ft], top flange
+            // y=[th-ft, th], web in middle centered on x.
+            let wx_min = (fw - wt) / 2.0;
+            let wx_max = wx_min + wt;
+            let wy_bot = ft;
+            let wy_top = th - ft;
+            let prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(fw, 0.0, 0.0),
+                Point3::new(fw, wy_bot, 0.0),
+                Point3::new(wx_max, wy_bot, 0.0),
+                Point3::new(wx_max, wy_top, 0.0),
+                Point3::new(fw, wy_top, 0.0),
+                Point3::new(fw, th, 0.0),
+                Point3::new(0.0, th, 0.0),
+                Point3::new(0.0, wy_top, 0.0),
+                Point3::new(wx_min, wy_top, 0.0),
+                Point3::new(wx_min, wy_bot, 0.0),
+                Point3::new(0.0, wy_bot, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
+        Feature::HoleArray {
+            input,
+            axis,
+            start,
+            offset,
+            count,
+            radius,
+            depth,
+            segments,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let s = resolve3(id, start, params)?;
+            let off = resolve3(id, offset, params)?;
+            let r = resolve_one(id, radius, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if *count == 0 || r <= 0.0 || d <= 0.0 || *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "HoleArray requires count>=1, positive radius, depth, and segments>=3 (got count={count}, r={r}, d={d}, segments={segments})"
+                    ),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            let eps = (r * 0.1).max(1e-3).min(d * 0.1);
+            // Subtract cylinders sequentially. Disjoint cylinders inside
+            // a box subtract independently; this avoids the multi-cylinder
+            // union limitation in the kernel.
+            let mut acc = base.clone();
+            for k in 0..*count {
+                let cx = s[0] + off[0] * k as f64;
+                let cy = s[1] + off[1] * k as f64;
+                let cz = s[2] + off[2] * k as f64;
+                let center = [cx, cy, cz];
+                let cyl = cylinder_along_axis(
+                    r,
+                    d + eps,
+                    *segments,
+                    axis_idx,
+                    center[axis_idx] - d,
+                    center[a_idx],
+                    center[b_idx],
+                );
+                acc = acc.try_difference(&cyl).map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "hole_array",
+                    message: format!("drilling hole {k}: {}", e.message),
+                })?;
+            }
+            Ok(acc)
+        }
+        Feature::BoltCircle {
+            input,
+            axis,
+            center,
+            bolt_circle_radius,
+            count,
+            radius,
+            depth,
+            segments,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let ctr = resolve3(id, center, params)?;
+            let bcr = resolve_one(id, bolt_circle_radius, params)?;
+            let r = resolve_one(id, radius, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if *count == 0 || r <= 0.0 || d <= 0.0 || bcr <= 0.0 || *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "BoltCircle requires count>=1, positive bolt_circle_radius/radius/depth, segments>=3"
+                    ),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            let eps = (r * 0.1).max(1e-3).min(d * 0.1);
+            let mut acc = base.clone();
+            for k in 0..*count {
+                let theta = 2.0 * std::f64::consts::PI * k as f64 / *count as f64;
+                let pa = ctr[a_idx] + bcr * theta.cos();
+                let pb = ctr[b_idx] + bcr * theta.sin();
+                let cyl = cylinder_along_axis(
+                    r,
+                    d + eps,
+                    *segments,
+                    axis_idx,
+                    ctr[axis_idx] - d,
+                    pa,
+                    pb,
+                );
+                acc = acc.try_difference(&cyl).map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "bolt_circle",
+                    message: format!("drilling hole {k}: {}", e.message),
+                })?;
+            }
+            Ok(acc)
+        }
+        Feature::HexHole {
+            input,
+            axis,
+            top_center,
+            inscribed_radius,
+            depth,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let tc = resolve3(id, top_center, params)?;
+            let ir = resolve_one(id, inscribed_radius, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if ir <= 0.0 || d <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "HexHole requires positive inscribed_radius and depth (got {ir}, {d})"
+                    ),
+                });
+            }
+            let cutter = build_polygon_pocket(id, tc, axis, ir / (std::f64::consts::PI / 6.0).cos(), d, 6, 0.0)?;
+            base.try_difference(&cutter).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "hex_hole",
+                message: e.message,
+            })
+        }
+        Feature::SquareHole {
+            input,
+            axis,
+            top_center,
+            side,
+            depth,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let tc = resolve3(id, top_center, params)?;
+            let s = resolve_one(id, side, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if s <= 0.0 || d <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "SquareHole requires positive side and depth (got {s}, {d})"
+                    ),
+                });
+            }
+            // Square inscribed in circle of radius s/sqrt(2), starting
+            // at angle pi/4 so it's axis-aligned.
+            let cutter = build_polygon_pocket(
+                id,
+                tc,
+                axis,
+                s * std::f64::consts::SQRT_2 / 2.0,
+                d,
+                4,
+                std::f64::consts::FRAC_PI_4,
+            )?;
+            base.try_difference(&cutter).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "square_hole",
+                message: e.message,
+            })
+        }
         Feature::TubeAt {
             base,
             axis,
@@ -1012,6 +1238,51 @@ fn cache_get<'a>(cache: &'a HashMap<String, Solid>, id: &str) -> Result<&'a Soli
     cache
         .get(id)
         .ok_or_else(|| EvalError::UnknownId(id.into()))
+}
+
+/// Build a regular n-gon pocket cutter — useful for HexHole, SquareHole,
+/// etc. `top_center` is on the +axis-facing surface; pocket runs `depth`
+/// in -axis direction. `circumradius` is the polygon's vertex radius.
+/// `phase` is an angular offset (0 places first vertex at angle 0 in the
+/// (a, b) perpendicular plane).
+fn build_polygon_pocket(
+    id: &str,
+    top_center: [f64; 3],
+    axis: &str,
+    circumradius: f64,
+    depth: f64,
+    sides: usize,
+    phase: f64,
+) -> Result<Solid, EvalError> {
+    let axis_idx = parse_axis(id, axis)?;
+    let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+    let eps = (circumradius * 0.1).max(1e-3).min(depth * 0.1);
+    // Build polygon profile in xy plane (CCW), then extrude along +z by
+    // depth + eps, then reorient via cyclic permutation so the extrusion
+    // direction is +axis. Place so its top sits at top_center along axis.
+    let prof: Vec<Point3> = (0..sides)
+        .map(|i| {
+            let theta = phase + 2.0 * std::f64::consts::PI * i as f64 / sides as f64;
+            Point3::new(circumradius * theta.cos(), circumradius * theta.sin(), 0.0)
+        })
+        .collect();
+    let local = extrude_polygon(&prof, Vec3::new(0.0, 0.0, depth + eps));
+    let oriented = match axis_idx {
+        2 => local,
+        0 => axis_swap_xz_to_x(&local),
+        1 => axis_swap_yz_to_y(&local),
+        _ => unreachable!(),
+    };
+    // Translate so the cutter's top (+axis end) sits at top_center, with
+    // body extending in -axis direction by depth (+ eps overhang past top).
+    let mut translation = [0.0_f64; 3];
+    translation[axis_idx] = top_center[axis_idx] - depth;
+    translation[a_idx] = top_center[a_idx];
+    translation[b_idx] = top_center[b_idx];
+    Ok(translate_solid(
+        &oriented,
+        Vec3::new(translation[0], translation[1], translation[2]),
+    ))
 }
 
 /// Parse a single-axis label ("x" | "y" | "z") to an index 0/1/2.
