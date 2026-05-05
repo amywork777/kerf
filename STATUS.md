@@ -53,14 +53,14 @@ kernel + authoring + viewer + production output).
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
-| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring) | 6% | 65% | 3.9 |
-| Manufacturing features (CornerCut, Fillet, Fillets, Chamfer, Counterbore, Countersink, hole patterns, hex/square holes, dovetail, vee-groove, T-slot, Keyway, RoundedRect, MountingFlange, GearBlank, KnurledGrip, Pipe) | 12% | 70% | 8.4 |
-| Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint) | 3% | 60% | 1.8 |
-| Curved-surface analytic booleans (faceted spheres + faceted torus + Hemisphere + SphericalCap + Bowl compose for simple cases) | 8% | 35% | 2.8 |
+| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
+| Manufacturing features (40+ — see catalog) | 12% | 80% | 9.6 |
+| Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc) | 3% | 75% | 2.25 |
+| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone compose for simple cases) | 8% | 40% | 3.2 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~58.0%** |
-| **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~96%**   |
+| **Solidworks-tier total**                 | **100%**  |          | **~62.0%** |
+| **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~98%**   |
 
 ## Latest session (2026-05-06)
 
@@ -106,6 +106,14 @@ tests → 538 tests, 0 failed.
   and Tier 5) to `try_boolean_solid`. Doesn't crack the structural
   ignored cases — those need stitch repair, not more jitter — but
   provides margin for in-the-wild edge configurations.
+- **Joinery batch**: Mortise, Tenon, FingerJoint, DovetailRail.
+- **Mechanical batch**: Pulley, Bushing, Sprocket, Obelisk, AxleShaft.
+- **Architectural batch**: Column, TriPrism, Diamond (ignored union),
+  PerforatedPlate, ChamferedPlate, ReducerCone, Elbow90.
+- **Sheet/truss batch**: SheetBend, TrussMember, Hinge, Cleat, Lattice.
+- **Reference batch 2**: DistanceRod, AngleArc.
+
+Total feature catalog: 70+ Features.
 
 ## Earlier (pre-2026-05-06)
 
@@ -143,7 +151,7 @@ real kernel additions:
 - **Decorative composites**: Arrow, Funnel, TruncatedPyramid.
 - **Transforms**: ScaleXYZ.
 
-559 tests pass, 7 ignored.
+584 tests pass, 8 ignored.
 
 The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
 are real manufacturing features even if multi-edge fillet is still
