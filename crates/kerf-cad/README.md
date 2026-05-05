@@ -125,6 +125,9 @@ offending name.
 | `Wedge`          | `width`, `depth`, `height` — right-triangular prism (legs along x and z, extrudes along y) | — |
 | `RegularPrism`   | `radius`, `height`, `segments` (≥3) — n-gon prism (alias of `cylinder_faceted`) | —      |
 | `Pyramid`        | `radius` (base circumradius), `height`, `segments` (≥3) — n-sided pyramid via faceted-cone primitive | — |
+| `SphereFaceted`  | `radius`, `stacks` (≥2), `slices` (≥3) — UV sphere with planar facets (composes with booleans, unlike analytic `Sphere`) | — |
+| `HollowSphere`   | `outer_radius`, `inner_radius`, `stacks` (≥2), `slices` (≥3) — concentric spherical shell | — |
+| `Dome`           | `radius`, `stacks` (≥2), `slices` (≥3) — hemisphere sitting on the xy plane | — |
 | `CylinderAt`     | `base: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `radius`, `height`, `segments` (≥3) — cylinder positioned at `base` with cap-axis along `axis` | — |
 | `Star`           | `points` (≥3), `outer_radius`, `inner_radius`, `height` — n-pointed star prism extruded along +z | — |
 | `TubeAt`         | `base: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `outer_radius`, `inner_radius`, `height`, `segments` (≥3) | — |

@@ -324,6 +324,40 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// UV-style faceted sphere centered on the origin. Use this instead
+    /// of the analytic `Sphere` whenever you want to compose with
+    /// booleans (`Sphere`'s 1-face/0-edges topology breaks the engine).
+    /// `stacks` is the number of latitude bands (≥ 2), `slices` is the
+    /// longitude segments (≥ 3). Topology is V = 2 + (stacks-1) * slices.
+    SphereFaceted {
+        id: String,
+        radius: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// Hollow spherical shell: outer faceted sphere of `outer_radius`
+    /// minus an inner faceted sphere of `inner_radius`. Concentric on
+    /// the origin. `stacks` and `slices` apply to both spheres for
+    /// matching topology.
+    HollowSphere {
+        id: String,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// Hemisphere (dome): top half of a faceted sphere of `radius`,
+    /// sitting on the xy plane. Built as `sphere_faceted - cutter_box`
+    /// where the cutter clips everything below z=0.
+    Dome {
+        id: String,
+        radius: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
     /// Cylinder at an axis-aligned position with chosen edge axis. The
     /// cylinder runs along `axis` ("x" | "y" | "z") starting from
     /// `base[axis_idx]` and extending by `height` in +axis direction.
@@ -621,6 +655,9 @@ impl Feature {
             | Feature::Wedge { id, .. }
             | Feature::RegularPrism { id, .. }
             | Feature::Pyramid { id, .. }
+            | Feature::SphereFaceted { id, .. }
+            | Feature::HollowSphere { id, .. }
+            | Feature::Dome { id, .. }
             | Feature::CylinderAt { id, .. }
             | Feature::TubeAt { id, .. }
             | Feature::Star { id, .. }
@@ -673,6 +710,9 @@ impl Feature {
             | Feature::Wedge { .. }
             | Feature::RegularPrism { .. }
             | Feature::Pyramid { .. }
+            | Feature::SphereFaceted { .. }
+            | Feature::HollowSphere { .. }
+            | Feature::Dome { .. }
             | Feature::CylinderAt { .. }
             | Feature::TubeAt { .. }
             | Feature::Star { .. }

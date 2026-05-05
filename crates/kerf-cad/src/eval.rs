@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use kerf_brep::{
     primitives::{
         box_, box_at, cone, cone_faceted, cylinder_faceted, extrude_lofted, extrude_polygon,
-        frustum, frustum_faceted, revolve_polyline, sphere, torus,
+        frustum, frustum_faceted, revolve_polyline, sphere, sphere_faceted, torus,
     },
     Solid,
 };
@@ -619,6 +619,104 @@ fn build(
                 });
             }
             Ok(cone_faceted(r, h, *segments))
+        }
+        Feature::SphereFaceted {
+            radius,
+            stacks,
+            slices,
+            ..
+        } => {
+            let r = resolve_one(id, radius, params)?;
+            if r <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("SphereFaceted radius must be > 0 (got {r})"),
+                });
+            }
+            if *stacks < 2 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("SphereFaceted stacks must be >= 2 (got {stacks})"),
+                });
+            }
+            if *slices < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("SphereFaceted slices must be >= 3 (got {slices})"),
+                });
+            }
+            Ok(sphere_faceted(r, *stacks, *slices))
+        }
+        Feature::HollowSphere {
+            outer_radius,
+            inner_radius,
+            stacks,
+            slices,
+            ..
+        } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            if r_out <= 0.0 || r_in <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "HollowSphere requires positive outer and inner radii (got {r_out}, {r_in})"
+                    ),
+                });
+            }
+            if r_in >= r_out {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "HollowSphere inner_radius ({r_in}) must be < outer_radius ({r_out})"
+                    ),
+                });
+            }
+            if *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("HollowSphere needs stacks >= 2 and slices >= 3"),
+                });
+            }
+            let outer = sphere_faceted(r_out, *stacks, *slices);
+            let inner = sphere_faceted(r_in, *stacks, *slices);
+            outer.try_difference(&inner).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "hollow_sphere",
+                message: e.message,
+            })
+        }
+        Feature::Dome {
+            radius,
+            stacks,
+            slices,
+            ..
+        } => {
+            let r = resolve_one(id, radius, params)?;
+            if r <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Dome radius must be > 0 (got {r})"),
+                });
+            }
+            if *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Dome needs stacks >= 2 and slices >= 3"),
+                });
+            }
+            let s = sphere_faceted(r, *stacks, *slices);
+            // Cutter: a box covering everything below z=0 (with margin).
+            let m = r * 1.5;
+            let cutter = box_at(
+                Vec3::new(2.0 * m, 2.0 * m, m + 0.1),
+                Point3::new(-m, -m, -m - 0.05),
+            );
+            s.try_difference(&cutter).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "dome",
+                message: e.message,
+            })
         }
         Feature::CylinderAt {
             base,

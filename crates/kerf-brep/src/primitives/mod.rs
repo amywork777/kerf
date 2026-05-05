@@ -10,6 +10,7 @@ pub mod frustum;
 pub mod frustum_faceted;
 pub mod revolve;
 pub mod sphere;
+pub mod sphere_faceted;
 pub mod torus;
 
 pub use box_::{box_, box_at};
@@ -22,4 +23,5 @@ pub use frustum::frustum;
 pub use frustum_faceted::frustum_faceted;
 pub use revolve::revolve_polyline;
 pub use sphere::sphere;
+pub use sphere_faceted::sphere_faceted;
 pub use torus::torus;
