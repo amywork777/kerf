@@ -620,6 +620,90 @@ fn build(
             }
             Ok(cone_faceted(r, h, *segments))
         }
+        Feature::RefPoint {
+            position,
+            marker_radius,
+            ..
+        } => {
+            let p = resolve3(id, position, params)?;
+            let r = resolve_one(id, marker_radius, params)?;
+            if r <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("RefPoint marker_radius must be > 0 (got {r})"),
+                });
+            }
+            let sph = sphere_faceted(r, 4, 6);
+            Ok(translate_solid(&sph, Vec3::new(p[0], p[1], p[2])))
+        }
+        Feature::RefAxis {
+            position,
+            axis,
+            length,
+            marker_radius,
+            ..
+        } => {
+            let p = resolve3(id, position, params)?;
+            let l = resolve_one(id, length, params)?;
+            let r = resolve_one(id, marker_radius, params)?;
+            if l <= 0.0 || r <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("RefAxis length and marker_radius must be > 0"),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            // Center the cylinder at position along the axis.
+            Ok(cylinder_along_axis(
+                r,
+                l,
+                12,
+                axis_idx,
+                p[axis_idx] - l / 2.0,
+                p[a_idx],
+                p[b_idx],
+            ))
+        }
+        Feature::RefPlane {
+            position,
+            axis,
+            extents,
+            marker_thickness,
+            ..
+        } => {
+            let p = resolve3(id, position, params)?;
+            let e = resolve3(
+                id,
+                &[extents[0].clone(), extents[1].clone(), Scalar::lit(0.0)],
+                params,
+            )?;
+            let t = resolve_one(id, marker_thickness, params)?;
+            if e[0] <= 0.0 || e[1] <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "RefPlane extents and marker_thickness must be > 0"
+                    ),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            // Build a thin Box centered at position. Extents: t along axis,
+            // e[0] along a_idx, e[1] along b_idx.
+            let mut box_extents = [0.0_f64; 3];
+            box_extents[axis_idx] = t;
+            box_extents[a_idx] = e[0];
+            box_extents[b_idx] = e[1];
+            let mut origin = [0.0_f64; 3];
+            origin[axis_idx] = p[axis_idx] - t / 2.0;
+            origin[a_idx] = p[a_idx] - e[0] / 2.0;
+            origin[b_idx] = p[b_idx] - e[1] / 2.0;
+            Ok(box_at(
+                Vec3::new(box_extents[0], box_extents[1], box_extents[2]),
+                Point3::new(origin[0], origin[1], origin[2]),
+            ))
+        }
         Feature::Capsule {
             radius,
             height,

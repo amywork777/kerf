@@ -131,6 +131,9 @@ offending name.
 | `Dome`           | `radius`, `stacks` (≥2), `slices` (≥3) — hemisphere sitting on the xy plane | — |
 | `Capsule`        | `radius`, `height`, `stacks`, `slices` — cylinder along +z with hemispherical caps | — |
 | `PipeRun`        | `points: [[x,y,z], …]` (≥2 points, axis-aligned segments), `radius`, `segments` (≥3) — chain of cylindrical pipe segments along an axis-aligned polyline | — |
+| `RefPoint`       | `position: [x,y,z]`, `marker_radius` — visible reference point (tiny faceted sphere) | — |
+| `RefAxis`        | `position: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `length`, `marker_radius` — visible reference axis (thin centered cylinder) | — |
+| `RefPlane`       | `position: [x,y,z]`, `axis`, `extents: [w, h]`, `marker_thickness` — visible reference plane (thin centered box) | — |
 | `CylinderAt`     | `base: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `radius`, `height`, `segments` (≥3) — cylinder positioned at `base` with cap-axis along `axis` | — |
 | `Star`           | `points` (≥3), `outer_radius`, `inner_radius`, `height` — n-pointed star prism extruded along +z | — |
 | `TubeAt`         | `base: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `outer_radius`, `inner_radius`, `height`, `segments` (≥3) | — |

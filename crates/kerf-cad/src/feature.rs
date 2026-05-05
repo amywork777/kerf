@@ -351,6 +351,39 @@ pub enum Feature {
         slices: usize,
     },
 
+    /// Reference point marker: a tiny faceted sphere at `position` of
+    /// `marker_radius`. Visual aid for marking locations in a model
+    /// (mounting holes, datum points, etc.). Does not bind to constraints.
+    RefPoint {
+        id: String,
+        position: [Scalar; 3],
+        marker_radius: Scalar,
+    },
+
+    /// Reference axis marker: a thin faceted cylinder running along
+    /// `axis` ("x" | "y" | "z") for `length`, centered at `position`.
+    /// Visual aid for marking axes (rotation axes, alignment lines).
+    RefAxis {
+        id: String,
+        position: [Scalar; 3],
+        axis: String,
+        length: Scalar,
+        marker_radius: Scalar,
+    },
+
+    /// Reference plane marker: a thin faceted box marking a planar
+    /// region. `position` is the center; `axis` is the normal direction
+    /// ("x" | "y" | "z"); `extents` is the (width, height) of the
+    /// rectangular marker (in the perpendicular axes); `marker_thickness`
+    /// is the thickness along the normal.
+    RefPlane {
+        id: String,
+        position: [Scalar; 3],
+        axis: String,
+        extents: [Scalar; 2],
+        marker_thickness: Scalar,
+    },
+
     /// PipeRun: a chain of cylindrical pipe segments along a polyline of
     /// axis-aligned points. Each consecutive pair of points must differ in
     /// EXACTLY ONE coordinate (i.e., the segment is axis-aligned). At each
@@ -713,6 +746,9 @@ impl Feature {
             | Feature::Dome { id, .. }
             | Feature::Capsule { id, .. }
             | Feature::PipeRun { id, .. }
+            | Feature::RefPoint { id, .. }
+            | Feature::RefAxis { id, .. }
+            | Feature::RefPlane { id, .. }
             | Feature::CylinderAt { id, .. }
             | Feature::TubeAt { id, .. }
             | Feature::Star { id, .. }
@@ -772,6 +808,9 @@ impl Feature {
             | Feature::Dome { .. }
             | Feature::Capsule { .. }
             | Feature::PipeRun { .. }
+            | Feature::RefPoint { .. }
+            | Feature::RefAxis { .. }
+            | Feature::RefPlane { .. }
             | Feature::CylinderAt { .. }
             | Feature::TubeAt { .. }
             | Feature::Star { .. }
