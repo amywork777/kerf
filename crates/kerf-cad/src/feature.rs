@@ -60,6 +60,19 @@ pub enum Feature {
         major_radius: Scalar,
         minor_radius: Scalar,
     },
+    /// Donut: faceted torus suitable for boolean composition. Unlike the
+    /// analytic [`Feature::Torus`], its faces are planar quads, so it works
+    /// with the kerf boolean engine. `major_segs` is the toroidal
+    /// subdivision count (≥ 3), `minor_segs` the poloidal (≥ 3). Centered
+    /// on the origin, axis along +z. `major_radius` must exceed
+    /// `minor_radius` (otherwise the torus self-intersects).
+    Donut {
+        id: String,
+        major_radius: Scalar,
+        minor_radius: Scalar,
+        major_segs: usize,
+        minor_segs: usize,
+    },
     Cone {
         id: String,
         radius: Scalar,
@@ -424,6 +437,22 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// SweepPath: like PipeRun but accepts arbitrary polylines (segments
+    /// in ANY direction, not just axis-aligned). Each segment becomes a
+    /// cylinder of `radius` whose axis runs along (p[i+1] - p[i]).
+    /// Axis-aligned segments use the exact cyclic-permutation reorientation
+    /// (no sin/cos noise); diagonal segments use a Rotation3 via
+    /// face_towards, which introduces ~1e-15 floating-point noise. Single
+    /// diagonals are robust; chained-diagonal differences are NOT — see
+    /// the kernel's `cylinder_along_axis` rationale. Sharp miters between
+    /// segments (no rounded joints).
+    SweepPath {
+        id: String,
+        points: Vec<[Scalar; 3]>,
+        radius: Scalar,
+        segments: usize,
+    },
+
     /// UV-style faceted sphere centered on the origin. Use this instead
     /// of the analytic `Sphere` whenever you want to compose with
     /// booleans (`Sphere`'s 1-face/0-edges topology breaks the engine).
@@ -748,6 +777,7 @@ impl Feature {
             | Feature::Cylinder { id, .. }
             | Feature::Sphere { id, .. }
             | Feature::Torus { id, .. }
+            | Feature::Donut { id, .. }
             | Feature::Cone { id, .. }
             | Feature::Frustum { id, .. }
             | Feature::ExtrudePolygon { id, .. }
@@ -773,6 +803,7 @@ impl Feature {
             | Feature::Dome { id, .. }
             | Feature::Capsule { id, .. }
             | Feature::PipeRun { id, .. }
+            | Feature::SweepPath { id, .. }
             | Feature::RefPoint { id, .. }
             | Feature::RefAxis { id, .. }
             | Feature::RefPlane { id, .. }
@@ -818,6 +849,7 @@ impl Feature {
             | Feature::Cylinder { .. }
             | Feature::Sphere { .. }
             | Feature::Torus { .. }
+            | Feature::Donut { .. }
             | Feature::Cone { .. }
             | Feature::Frustum { .. }
             | Feature::ExtrudePolygon { .. }
@@ -837,6 +869,7 @@ impl Feature {
             | Feature::Dome { .. }
             | Feature::Capsule { .. }
             | Feature::PipeRun { .. }
+            | Feature::SweepPath { .. }
             | Feature::RefPoint { .. }
             | Feature::RefAxis { .. }
             | Feature::RefPlane { .. }

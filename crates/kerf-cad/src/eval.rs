@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use kerf_brep::{
     primitives::{
         box_, box_at, cone, cone_faceted, cylinder_faceted, extrude_lofted, extrude_polygon,
-        frustum, frustum_faceted, revolve_polyline, sphere, sphere_faceted, torus,
+        frustum, frustum_faceted, revolve_polyline, sphere, sphere_faceted, torus, torus_faceted,
     },
     Solid,
 };
@@ -122,6 +122,31 @@ fn build(
             resolve_one(id, major_radius, params)?,
             resolve_one(id, minor_radius, params)?,
         )),
+        Feature::Donut {
+            major_radius,
+            minor_radius,
+            major_segs,
+            minor_segs,
+            ..
+        } => {
+            let r_maj = resolve_one(id, major_radius, params)?;
+            let r_min = resolve_one(id, minor_radius, params)?;
+            if r_maj <= r_min || r_min <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Donut requires major > minor > 0 (got major={r_maj}, minor={r_min})"
+                    ),
+                });
+            }
+            if *major_segs < 3 || *minor_segs < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "Donut requires major_segs >= 3 and minor_segs >= 3".into(),
+                });
+            }
+            Ok(torus_faceted(r_maj, r_min, *major_segs, *minor_segs))
+        }
         Feature::Cone { radius, height, .. } => Ok(cone(
             resolve_one(id, radius, params)?,
             resolve_one(id, height, params)?,
@@ -915,6 +940,62 @@ fn build(
             // tends to trip the boolean engine on the multi-cylinder-and-
             // sphere overlap. Users wanting rounded joints can compose
             // PipeRun with explicit SphereFaceted unions in JSON.
+            Ok(acc.unwrap())
+        }
+        Feature::SweepPath {
+            points,
+            radius,
+            segments,
+            ..
+        } => {
+            if points.len() < 2 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "SweepPath needs at least 2 points (got {})",
+                        points.len()
+                    ),
+                });
+            }
+            let r = resolve_one(id, radius, params)?;
+            if r <= 0.0 || *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "SweepPath requires positive radius and segments >= 3".into(),
+                });
+            }
+            let resolved: Vec<[f64; 3]> = points
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    resolve_arr(p, params).map_err(|message| EvalError::Parameter {
+                        id: id.into(),
+                        message: format!("point {i}: {message}"),
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            let mut acc: Option<Solid> = None;
+            for i in 0..resolved.len() - 1 {
+                let p0 = resolved[i];
+                let p1 = resolved[i + 1];
+                let cyl = sweep_cylinder_segment(p0, p1, r, *segments).ok_or_else(|| {
+                    EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!(
+                            "SweepPath segment {i}→{} has zero length ({:?} == {:?})",
+                            i + 1, p0, p1
+                        ),
+                    }
+                })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "sweep_path_segment_union",
+                        message: format!("segment {i}: {}", e.message),
+                    })?,
+                });
+            }
             Ok(acc.unwrap())
         }
         Feature::TruncatedPyramid {
@@ -2305,6 +2386,69 @@ fn cylinder_along_axis(
     offset[a_idx] = perp_a_center;
     offset[b_idx] = perp_b_center;
     translate_solid(&oriented, Vec3::new(offset[0], offset[1], offset[2]))
+}
+
+/// Build a cylinder of `r`, `segments` whose axis runs from `p0` to `p1`
+/// (any direction). Returns `None` if `p0 == p1`.
+///
+/// Strategy:
+/// - For axis-aligned segments (differ in exactly one coordinate), use the
+///   exact cyclic-permutation reorientation via `cylinder_along_axis` —
+///   no sin/cos noise, robust under booleans.
+/// - For diagonal segments, build a +z cylinder of length |p1-p0|, rotate
+///   it so its +z axis aligns with (p1-p0), and translate to the start.
+///   Introduces ~1e-15 floating-point noise in the rotated frame, which
+///   is fine for single segments and most non-coplanar configurations.
+fn sweep_cylinder_segment(
+    p0: [f64; 3],
+    p1: [f64; 3],
+    r: f64,
+    segments: usize,
+) -> Option<Solid> {
+    let d = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+    let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    if len < 1e-12 {
+        return None;
+    }
+    // Axis-aligned fast path: differ in exactly one coordinate.
+    let abs = [d[0].abs(), d[1].abs(), d[2].abs()];
+    let nonzero: Vec<usize> = (0..3).filter(|&k| abs[k] > 1e-12).collect();
+    if nonzero.len() == 1 {
+        let axis_idx = nonzero[0];
+        let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+        let axis_origin = p0[axis_idx].min(p1[axis_idx]);
+        return Some(cylinder_along_axis(
+            r,
+            len,
+            segments,
+            axis_idx,
+            axis_origin,
+            p0[a_idx],
+            p0[b_idx],
+        ));
+    }
+    // Diagonal: rotate +z cylinder onto the segment direction, then translate.
+    let local = cylinder_faceted(r, len, segments);
+    let dir = Vec3::new(d[0] / len, d[1] / len, d[2] / len);
+    let z_axis = Vec3::new(0.0, 0.0, 1.0);
+    let cos_theta = z_axis.dot(&dir).clamp(-1.0, 1.0);
+    let oriented = if (cos_theta - 1.0).abs() < 1e-12 {
+        // Already +z; no rotation.
+        local
+    } else if (cos_theta + 1.0).abs() < 1e-12 {
+        // Antiparallel: rotate 180° about +x. (Picking +x as the rotation
+        // axis is arbitrary — any axis perpendicular to +z works.)
+        rotate_solid(&local, Vec3::new(1.0, 0.0, 0.0), std::f64::consts::PI, Point3::origin())
+    } else {
+        // General case: rotate around (z × dir) by angle = acos(z·dir).
+        let axis = z_axis.cross(&dir);
+        let angle = cos_theta.acos();
+        rotate_solid(&local, axis, angle, Point3::origin())
+    };
+    Some(translate_solid(
+        &oriented,
+        Vec3::new(p0[0], p0[1], p0[2]),
+    ))
 }
 
 /// Apply the cyclic permutation (x, y, z) -> (z, x, y) — a det=+1
