@@ -963,6 +963,118 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// Column: classical column with a wider base, narrower shaft, and
+    /// wider capital. base/capital are short cylinders; shaft is the
+    /// main cylinder. `base_radius` >= `shaft_radius` <= `capital_radius`.
+    Column {
+        id: String,
+        base_radius: Scalar,
+        base_height: Scalar,
+        shaft_radius: Scalar,
+        shaft_height: Scalar,
+        capital_radius: Scalar,
+        capital_height: Scalar,
+        segments: usize,
+    },
+
+    /// Diamond: regular octahedron — 6 vertices, 8 triangular faces.
+    /// Built as two pyramids joined base-to-base. `radius` is the
+    /// distance from center to each of the 6 vertices.
+    Diamond {
+        id: String,
+        radius: Scalar,
+    },
+
+    /// TriPrism: a triangular prism. `a`, `b`, `c` are the side lengths
+    /// of the triangular profile (must satisfy triangle inequality);
+    /// triangle is positioned with side a along +x. `length` is the
+    /// extrusion along +z.
+    TriPrism {
+        id: String,
+        a: Scalar,
+        b: Scalar,
+        c: Scalar,
+        length: Scalar,
+    },
+
+    /// PerforatedPlate: rectangular plate with a regular grid of
+    /// circular through-holes. `nx` × `ny` grid; first hole at
+    /// `(margin, margin)`; spacing `dx` along x, `dy` along y.
+    PerforatedPlate {
+        id: String,
+        plate_width: Scalar,
+        plate_height: Scalar,
+        plate_thickness: Scalar,
+        margin: Scalar,
+        hole_radius: Scalar,
+        nx: usize,
+        ny: usize,
+        dx: Scalar,
+        dy: Scalar,
+        segments: usize,
+    },
+
+    /// ChamferedPlate: rectangular plate where all 4 corners are
+    /// chamfered (cut at 45°) instead of rounded. `chamfer` is the
+    /// distance from each corner the chamfer cuts.
+    ChamferedPlate {
+        id: String,
+        width: Scalar,
+        height: Scalar,
+        thickness: Scalar,
+        chamfer: Scalar,
+    },
+
+    /// ReducerCone: a hollow frustum (a tapered tube). Concentric outer
+    /// and inner cones — outer goes from `outer_bottom` radius to
+    /// `outer_top` over `height`; inner same shape but smaller. Used for
+    /// pipe reducers.
+    ReducerCone {
+        id: String,
+        outer_bottom: Scalar,
+        outer_top: Scalar,
+        inner_bottom: Scalar,
+        inner_top: Scalar,
+        height: Scalar,
+        segments: usize,
+    },
+
+    /// Elbow90: two perpendicular cylinders joined at right angle (an
+    /// L-shaped pipe section). Each leg has the same radius. The first
+    /// leg runs along +x for `leg_length`, the second from the corner
+    /// along +y for the same length.
+    Elbow90 {
+        id: String,
+        radius: Scalar,
+        leg_length: Scalar,
+        segments: usize,
+    },
+
+    /// Reference: a thin rod between two world-space points, drawn as
+    /// a small-radius cylinder. Useful for visualising distances and
+    /// constraint relationships in the rendered model.
+    DistanceRod {
+        id: String,
+        from: [Scalar; 3],
+        to: [Scalar; 3],
+        radius: Scalar,
+        segments: usize,
+    },
+
+    /// Reference: angular arc — a thin curved rod sweeping through a
+    /// given angle in the xy plane. Used for visualising angle
+    /// relationships. Center at (cx, cy, z), radius `r`, from angle
+    /// `start_deg` to `start_deg + sweep_deg`.
+    AngleArc {
+        id: String,
+        center: [Scalar; 3],
+        radius: Scalar,
+        start_deg: Scalar,
+        sweep_deg: Scalar,
+        rod_radius: Scalar,
+        segments: usize,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -1155,6 +1267,15 @@ impl Feature {
             | Feature::Sprocket { id, .. }
             | Feature::Obelisk { id, .. }
             | Feature::AxleShaft { id, .. }
+            | Feature::Column { id, .. }
+            | Feature::Diamond { id, .. }
+            | Feature::TriPrism { id, .. }
+            | Feature::PerforatedPlate { id, .. }
+            | Feature::ChamferedPlate { id, .. }
+            | Feature::ReducerCone { id, .. }
+            | Feature::Elbow90 { id, .. }
+            | Feature::DistanceRod { id, .. }
+            | Feature::AngleArc { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -1245,6 +1366,15 @@ impl Feature {
             | Feature::Sprocket { .. }
             | Feature::Obelisk { .. }
             | Feature::AxleShaft { .. }
+            | Feature::Column { .. }
+            | Feature::Diamond { .. }
+            | Feature::TriPrism { .. }
+            | Feature::PerforatedPlate { .. }
+            | Feature::ChamferedPlate { .. }
+            | Feature::ReducerCone { .. }
+            | Feature::Elbow90 { .. }
+            | Feature::DistanceRod { .. }
+            | Feature::AngleArc { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }

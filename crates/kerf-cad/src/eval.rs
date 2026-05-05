@@ -2316,6 +2316,230 @@ fn build(
             let lower = bottom_neck.try_union(&body).map_err(|e| EvalError::Boolean { id: id.into(), op: "axle_lower_join", message: e.message })?;
             lower.try_union(&top_neck).map_err(|e| EvalError::Boolean { id: id.into(), op: "axle_upper_join", message: e.message })
         }
+        Feature::Column {
+            base_radius, base_height, shaft_radius, shaft_height, capital_radius, capital_height, segments, ..
+        } => {
+            let r_b = resolve_one(id, base_radius, params)?;
+            let h_b = resolve_one(id, base_height, params)?;
+            let r_s = resolve_one(id, shaft_radius, params)?;
+            let h_s = resolve_one(id, shaft_height, params)?;
+            let r_c = resolve_one(id, capital_radius, params)?;
+            let h_c = resolve_one(id, capital_height, params)?;
+            if r_b <= 0.0 || h_b <= 0.0 || r_s <= 0.0 || h_s <= 0.0 || r_c <= 0.0 || h_c <= 0.0 || r_s > r_b || r_s > r_c || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Column requires shaft_radius <= base & capital, all positive, segments >= 6 (got rb={r_b}, rs={r_s}, rc={r_c})") });
+            }
+            // Slight overlap between sections breaks the coplanar shared
+            // face that trips the boolean engine.
+            let eps = (h_b.min(h_s).min(h_c) * 0.05).max(1e-3);
+            let base = cylinder_along_axis(r_b, h_b, *segments, 2, 0.0, 0.0, 0.0);
+            let shaft = cylinder_along_axis(r_s, h_s + 2.0 * eps, *segments, 2, h_b - eps, 0.0, 0.0);
+            let capital = cylinder_along_axis(r_c, h_c, *segments, 2, h_b + h_s, 0.0, 0.0);
+            let lower = base.try_union(&shaft).map_err(|e| EvalError::Boolean { id: id.into(), op: "column_base_shaft", message: e.message })?;
+            lower.try_union(&capital).map_err(|e| EvalError::Boolean { id: id.into(), op: "column_capital", message: e.message })
+        }
+        Feature::Diamond { radius, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            if r <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Diamond requires positive radius (got {r})") });
+            }
+            // Octahedron: 6 vertices on the principal axes, 8 triangular faces.
+            // Top pyramid vertices at (±r, 0, 0), (0, ±r, 0), apex (0, 0, r).
+            // Use Loft from a 4-vertex equator polygon to a degenerate top.
+            // Simplest construction: build 4-side pyramid (square base of side
+            // r*sqrt(2) at z=0 → apex at (0,0,r)) UNION its mirror (apex at
+            // (0,0,-r)).
+            // Build the octahedron in a single direct-construction step
+            // (no boolean union — joining two pyramids at a coplanar
+            // square face trips stitch). Use Loft with a thin overlap
+            // band: build the top cone (square base → apex) and embed
+            // the bottom apex INSIDE this same loft by routing the
+            // lower half as a single lofted shape from -z apex up
+            // through the base. We construct it as a 4-sided bipyramid
+            // by extruding the upper pyramid and lower pyramid with a
+            // shared overlap band.
+            // extrude_lofted requires non-degenerate top polygons (zero-
+            // area apex breaks its lateral-face construction), so use
+            // a tiny apex square as a proxy. Visually identical at
+            // human resolution.
+            let s_sz = r * std::f64::consts::SQRT_2;
+            let apex_sz = r * 1e-3; // tiny apex, not zero
+            let eps = r * 0.02; // overlap band so halves merge, don't share a face
+            let upper_base = vec![
+                Point3::new(-s_sz/2.0, -s_sz/2.0, -eps),
+                Point3::new( s_sz/2.0, -s_sz/2.0, -eps),
+                Point3::new( s_sz/2.0,  s_sz/2.0, -eps),
+                Point3::new(-s_sz/2.0,  s_sz/2.0, -eps),
+            ];
+            let upper_apex = vec![
+                Point3::new(-apex_sz/2.0, -apex_sz/2.0, r),
+                Point3::new( apex_sz/2.0, -apex_sz/2.0, r),
+                Point3::new( apex_sz/2.0,  apex_sz/2.0, r),
+                Point3::new(-apex_sz/2.0,  apex_sz/2.0, r),
+            ];
+            let upper = extrude_lofted(&upper_base, &upper_apex);
+            let lower_apex = vec![
+                Point3::new(-apex_sz/2.0, -apex_sz/2.0, -r),
+                Point3::new( apex_sz/2.0, -apex_sz/2.0, -r),
+                Point3::new( apex_sz/2.0,  apex_sz/2.0, -r),
+                Point3::new(-apex_sz/2.0,  apex_sz/2.0, -r),
+            ];
+            let lower_base = vec![
+                Point3::new(-s_sz/2.0, -s_sz/2.0,  eps),
+                Point3::new( s_sz/2.0, -s_sz/2.0,  eps),
+                Point3::new( s_sz/2.0,  s_sz/2.0,  eps),
+                Point3::new(-s_sz/2.0,  s_sz/2.0,  eps),
+            ];
+            let lower = extrude_lofted(&lower_apex, &lower_base);
+            upper.try_union(&lower).map_err(|e| EvalError::Boolean { id: id.into(), op: "diamond_join", message: e.message })
+        }
+        Feature::TriPrism { a, b, c, length, .. } => {
+            let a_v = resolve_one(id, a, params)?;
+            let b_v = resolve_one(id, b, params)?;
+            let c_v = resolve_one(id, c, params)?;
+            let l = resolve_one(id, length, params)?;
+            if a_v <= 0.0 || b_v <= 0.0 || c_v <= 0.0 || l <= 0.0
+                || a_v + b_v <= c_v || b_v + c_v <= a_v || a_v + c_v <= b_v
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("TriPrism requires positive sides satisfying triangle inequality (got a={a_v}, b={b_v}, c={c_v})") });
+            }
+            // Place A at origin along +x; A=(0,0), B=(a,0). C is the
+            // intersection of two circles. From A, |C| = c. From B, |B-C| = b.
+            // Solve: cx = (a² + c² - b²) / (2a); cy = sqrt(c² - cx²).
+            let cx = (a_v * a_v + c_v * c_v - b_v * b_v) / (2.0 * a_v);
+            let cy = (c_v * c_v - cx * cx).max(0.0).sqrt();
+            let prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(a_v, 0.0, 0.0),
+                Point3::new(cx, cy, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, l)))
+        }
+        Feature::PerforatedPlate {
+            plate_width, plate_height, plate_thickness, margin, hole_radius, nx, ny, dx, dy, segments, ..
+        } => {
+            let pw = resolve_one(id, plate_width, params)?;
+            let ph = resolve_one(id, plate_height, params)?;
+            let pt = resolve_one(id, plate_thickness, params)?;
+            let mg = resolve_one(id, margin, params)?;
+            let hr = resolve_one(id, hole_radius, params)?;
+            let dxv = resolve_one(id, dx, params)?;
+            let dyv = resolve_one(id, dy, params)?;
+            if pw <= 0.0 || ph <= 0.0 || pt <= 0.0 || hr <= 0.0 || mg < 0.0 || dxv < 2.0 * hr || dyv < 2.0 * hr || *nx == 0 || *ny == 0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("PerforatedPlate requires positive dims, dx&dy >= 2*hr, nx&ny>=1 (got pw={pw}, ph={ph})") });
+            }
+            let mut acc = box_at(Vec3::new(pw, ph, pt), Point3::new(0.0, 0.0, 0.0));
+            let eps = (pt * 0.05).max(1e-3);
+            for j in 0..*ny {
+                for i in 0..*nx {
+                    let cx = mg + (i as f64) * dxv;
+                    let cy = mg + (j as f64) * dyv;
+                    if cx + hr > pw - mg + 1e-9 || cy + hr > ph - mg + 1e-9 {
+                        continue;
+                    }
+                    let hole = cylinder_along_axis(hr, pt + 2.0 * eps, *segments, 2, -eps, cx, cy);
+                    acc = acc.try_difference(&hole).map_err(|e| EvalError::Boolean { id: id.into(), op: "perforated_drill", message: format!("hole ({i},{j}): {}", e.message) })?;
+                }
+            }
+            Ok(acc)
+        }
+        Feature::ChamferedPlate { width, height, thickness, chamfer, .. } => {
+            let w = resolve_one(id, width, params)?;
+            let h = resolve_one(id, height, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            let c = resolve_one(id, chamfer, params)?;
+            if w <= 0.0 || h <= 0.0 || t <= 0.0 || c < 0.0 || 2.0 * c >= w || 2.0 * c >= h {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ChamferedPlate requires 2c<w&h, all positive (got w={w}, h={h}, c={c})") });
+            }
+            // Octagonal profile (rectangle with corners cut at 45°).
+            let prof = vec![
+                Point3::new(c, 0.0, 0.0),
+                Point3::new(w - c, 0.0, 0.0),
+                Point3::new(w, c, 0.0),
+                Point3::new(w, h - c, 0.0),
+                Point3::new(w - c, h, 0.0),
+                Point3::new(c, h, 0.0),
+                Point3::new(0.0, h - c, 0.0),
+                Point3::new(0.0, c, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, t)))
+        }
+        Feature::ReducerCone {
+            outer_bottom, outer_top, inner_bottom, inner_top, height, segments, ..
+        } => {
+            let ob = resolve_one(id, outer_bottom, params)?;
+            let ot = resolve_one(id, outer_top, params)?;
+            let ib = resolve_one(id, inner_bottom, params)?;
+            let it = resolve_one(id, inner_top, params)?;
+            let h = resolve_one(id, height, params)?;
+            if ob <= 0.0 || ot <= 0.0 || ib <= 0.0 || it <= 0.0 || h <= 0.0
+                || ib >= ob || it >= ot || *segments < 6
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ReducerCone requires inner < outer at both ends (got ob={ob}, ot={ot}, ib={ib}, it={it})") });
+            }
+            let outer = frustum_faceted(ot, ob, h, *segments);
+            let eps = (h * 0.05).max(1e-3);
+            // Inner needs to be slightly taller to ensure clean through-bore.
+            let inner = frustum_faceted(it, ib, h + 2.0 * eps, *segments);
+            let inner_translated = translate_solid(&inner, Vec3::new(0.0, 0.0, -eps));
+            outer.try_difference(&inner_translated).map_err(|e| EvalError::Boolean { id: id.into(), op: "reducer_bore", message: e.message })
+        }
+        Feature::Elbow90 { radius, leg_length, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let ll = resolve_one(id, leg_length, params)?;
+            if r <= 0.0 || ll <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Elbow90 requires positive radius/leg_length, segments>=6 (got r={r}, ll={ll})") });
+            }
+            // Two perpendicular cylinders, joined as a polyline (same
+            // strategy PipeRun uses — a sequence of axis-aligned cylinder
+            // unions). A direct two-cylinder union trips the boolean
+            // engine on the cylinder-cylinder intersection curve, but a
+            // single axis change with disjoint axis spans (small overlap
+            // at the corner) survives.
+            let leg_x = cylinder_along_axis(r, ll, *segments, 0, 0.0, 0.0, 0.0);
+            let leg_y = cylinder_along_axis(r, ll + r, *segments, 1, -r, 0.0, 0.0);
+            leg_x.try_union(&leg_y).map_err(|e| EvalError::Boolean { id: id.into(), op: "elbow90_union", message: e.message })
+        }
+        Feature::DistanceRod { from, to, radius, segments, .. } => {
+            let f = resolve3(id, from, params)?;
+            let t = resolve3(id, to, params)?;
+            let r = resolve_one(id, radius, params)?;
+            if r <= 0.0 || *segments < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("DistanceRod requires positive radius, segments>=3 (got r={r})") });
+            }
+            sweep_cylinder_segment(f, t, r, *segments).ok_or_else(|| EvalError::Invalid {
+                id: id.into(),
+                reason: "DistanceRod has zero-length segment".into(),
+            })
+        }
+        Feature::AngleArc { center, radius, start_deg, sweep_deg, rod_radius, segments, .. } => {
+            let c = resolve3(id, center, params)?;
+            let r = resolve_one(id, radius, params)?;
+            let sa = resolve_one(id, start_deg, params)?;
+            let sw = resolve_one(id, sweep_deg, params)?;
+            let rr = resolve_one(id, rod_radius, params)?;
+            if r <= 0.0 || rr <= 0.0 || sw == 0.0 || *segments < 4 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("AngleArc requires positive radii, non-zero sweep, segments>=4 (got r={r}, sweep={sw})") });
+            }
+            // Sample the arc at `segments` points and chain SweepPath-style cylinders.
+            let total_rad = sw.to_radians();
+            let start_rad = sa.to_radians();
+            let mut acc: Option<Solid> = None;
+            for i in 0..*segments {
+                let t0 = start_rad + total_rad * (i as f64) / (*segments as f64);
+                let t1 = start_rad + total_rad * ((i + 1) as f64) / (*segments as f64);
+                let p0 = [c[0] + r * t0.cos(), c[1] + r * t0.sin(), c[2]];
+                let p1 = [c[0] + r * t1.cos(), c[1] + r * t1.sin(), c[2]];
+                let cyl = sweep_cylinder_segment(p0, p1, rr, 8).ok_or_else(|| EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("AngleArc segment {i} has zero length"),
+                })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean { id: id.into(), op: "angle_arc_union", message: format!("seg {i}: {}", e.message) })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
         Feature::HoleArray {
             input,
             axis,
