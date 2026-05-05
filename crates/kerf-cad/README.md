@@ -125,6 +125,7 @@ offending name.
 | `Wedge`          | `width`, `depth`, `height` — right-triangular prism (legs along x and z, extrudes along y) | — |
 | `RegularPrism`   | `radius`, `height`, `segments` (≥3) — n-gon prism (alias of `cylinder_faceted`) | —      |
 | `Pyramid`        | `radius` (base circumradius), `height`, `segments` (≥3) — n-sided pyramid via faceted-cone primitive | — |
+| `TruncatedPyramid` | `bottom_radius`, `top_radius`, `height`, `segments` (≥3) — frustum-shaped n-gon prism (top n-gon at z=height, bottom at z=0) | — |
 | `SphereFaceted`  | `radius`, `stacks` (≥2), `slices` (≥3) — UV sphere with planar facets (composes with booleans, unlike analytic `Sphere`) | — |
 | `HollowSphere`   | `outer_radius`, `inner_radius`, `stacks` (≥2), `slices` (≥3) — concentric spherical shell | — |
 | `Dome`           | `radius`, `stacks` (≥2), `slices` (≥3) — hemisphere sitting on the xy plane | — |
@@ -147,6 +148,7 @@ offending name.
 | `RectBoss`       | `corner: [x,y,z]`, `extents: [x,y,z]` — rectangular boss positioned at `corner` (alias of `BoxAt`) | — |
 | `Translate`      | `offset: [x,y,z]`                                                  | `input: <id>`       |
 | `Scale`          | `factor` (>0) — uniform scale around origin                         | `input: <id>`       |
+| `ScaleXYZ`       | `factors: [sx, sy, sz]` (all >0) — non-uniform scale around origin (FACETED inputs only — SphereFaceted, Pyramid, Box, etc., not analytic Cone/Sphere/Frustum/Torus). Enables Ellipsoid via SphereFaceted + ScaleXYZ. | `input: <id>` |
 | `Rotate`         | `axis: [x,y,z]`, `angle_deg`, `center: [x,y,z]`                    | `input: <id>`       |
 | `Mirror`         | `plane_origin: [x,y,z]`, `plane_normal: [x,y,z]` (¹)                | `input: <id>`       |
 | `CornerCut`      | `corner: [x,y,z]`, `extents: [x,y,z]` — subtract a box at a corner  | `input: <id>`       |

@@ -69,6 +69,28 @@ fn pyramid_subtracts_from_box() {
 }
 
 #[test]
+fn truncated_pyramid_volume_matches_frustum_formula() {
+    let r_bot = 2.0;
+    let r_top = 1.0;
+    let h = 4.0;
+    let n = 32;
+    let m = Model::new().add(Feature::TruncatedPyramid {
+        id: "out".into(),
+        bottom_radius: Scalar::lit(r_bot),
+        top_radius: Scalar::lit(r_top),
+        height: Scalar::lit(h),
+        segments: n,
+    });
+    let v = solid_volume(&m.evaluate("out").unwrap());
+    let area_of = |r: f64| 0.5 * n as f64 * r * r * (2.0 * std::f64::consts::PI / n as f64).sin();
+    let a1 = area_of(r_bot);
+    let a2 = area_of(r_top);
+    let exp = h / 3.0 * (a1 + a2 + (a1 * a2).sqrt());
+    let rel = (v - exp).abs() / exp;
+    assert!(rel < 1e-9, "v={v}, exp={exp}, rel={rel}");
+}
+
+#[test]
 fn pyramid_round_trips_via_json() {
     let m = Model::new().add(Feature::Pyramid {
         id: "out".into(),

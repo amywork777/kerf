@@ -11,6 +11,128 @@ use kerf_brep::{
 use kerf_geom::{Frame, Plane, Point3, Vec3};
 use nalgebra::{Rotation3, Unit};
 
+/// Non-uniform scale of `s` around the origin: each axis scales
+/// independently. ALL THREE factors must be positive (negative or zero
+/// would invert chirality / collapse). Only valid for solids whose face
+/// surfaces are all `Plane` (faceted primitives) and whose edge curves
+/// are all `Line` — analytic Cylinder/Sphere/Cone/Torus surfaces and
+/// Circle/Ellipse curves can't be represented after non-uniform scale.
+/// Faces are re-framed from their first three vertices (planes only).
+pub fn scale_xyz_solid(s: &Solid, sx: f64, sy: f64, sz: f64) -> Solid {
+    debug_assert!(sx > 0.0 && sy > 0.0 && sz > 0.0);
+    let mut out = s.clone();
+    for (_, p) in out.vertex_geom.iter_mut() {
+        p.x *= sx;
+        p.y *= sy;
+        p.z *= sz;
+    }
+    // Rebuild face frames from the (already-scaled) vertex positions of
+    // each face's outer loop.
+    let face_ids: Vec<_> = out.topo.face_ids().collect();
+    for fid in face_ids {
+        let outer = match out.topo.face(fid) {
+            Some(f) => f.outer_loop(),
+            None => continue,
+        };
+        let lp = match out.topo.loop_(outer) {
+            Some(l) => l,
+            None => continue,
+        };
+        let start = match lp.half_edge() {
+            Some(h) => h,
+            None => continue,
+        };
+        // Walk the loop, collect vertex positions, fit a plane.
+        let mut pts: Vec<kerf_geom::Point3> = Vec::new();
+        let mut cur = start;
+        loop {
+            let he = match out.topo.half_edge(cur) {
+                Some(h) => h,
+                None => break,
+            };
+            let v = he.origin();
+            if let Some(p) = out.vertex_geom.get(v) {
+                pts.push(*p);
+            }
+            cur = he.next();
+            if cur == start || pts.len() > 100 {
+                break;
+            }
+        }
+        if pts.len() < 3 {
+            continue;
+        }
+        let p0 = pts[0];
+        let p1 = pts[1];
+        let p2 = pts[2];
+        let mut normal = (p1 - p0).cross(&(p2 - p0));
+        let nn = normal.norm();
+        if nn < 1e-12 {
+            continue;
+        }
+        normal /= nn;
+        // Preserve the OLD outward direction. If the old plane had a frame.z
+        // and the new normal flipped (could happen if first three points are
+        // colinear in the OLD frame), flip back.
+        if let Some(SurfaceKind::Plane(old_p)) = out.face_geom.get(fid) {
+            if old_p.frame.z.dot(&normal) < 0.0 {
+                normal = -normal;
+            }
+        }
+        let seed = if normal.dot(&kerf_geom::Vec3::x()).abs() < 0.9 {
+            kerf_geom::Vec3::x()
+        } else {
+            kerf_geom::Vec3::y()
+        };
+        let x = (seed - normal * seed.dot(&normal)).normalize();
+        let y = normal.cross(&x);
+        let frame = kerf_geom::Frame {
+            origin: p0,
+            x,
+            y,
+            z: normal,
+        };
+        out.face_geom.insert(fid, SurfaceKind::Plane(kerf_geom::Plane::new(frame)));
+    }
+    // Rebuild edge geometry as fresh line segments.
+    let edge_ids: Vec<_> = out.topo.edge_ids().collect();
+    for eid in edge_ids {
+        let edge = match out.topo.edge(eid) {
+            Some(e) => e,
+            None => continue,
+        };
+        let [he_a, _] = edge.half_edges();
+        let v0 = match out.topo.half_edge(he_a) {
+            Some(h) => h.origin(),
+            None => continue,
+        };
+        let twin = match out.topo.half_edge(he_a) {
+            Some(h) => h.twin(),
+            None => continue,
+        };
+        let v1 = match out.topo.half_edge(twin) {
+            Some(h) => h.origin(),
+            None => continue,
+        };
+        let p0 = match out.vertex_geom.get(v0) {
+            Some(p) => *p,
+            None => continue,
+        };
+        let p1 = match out.vertex_geom.get(v1) {
+            Some(p) => *p,
+            None => continue,
+        };
+        if let Some(line) = kerf_geom::Line::through(p0, p1) {
+            let length = (p1 - p0).norm();
+            out.edge_geom.insert(
+                eid,
+                kerf_brep::geometry::CurveSegment::line(line, 0.0, length),
+            );
+        }
+    }
+    out
+}
+
 /// Uniform scale of `s` around the origin by `factor`. `factor` must be
 /// positive (negative would invert chirality and break loop walks).
 pub fn scale_solid(s: &Solid, factor: f64) -> Solid {

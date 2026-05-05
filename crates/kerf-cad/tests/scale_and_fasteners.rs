@@ -59,6 +59,62 @@ fn scale_rejects_non_positive_factor() {
 }
 
 #[test]
+fn scale_xyz_box_volume_scales_componentwise() {
+    let m = Model::new()
+        .add(Feature::Box {
+            id: "body".into(),
+            extents: lits([1.0, 1.0, 1.0]),
+        })
+        .add(Feature::ScaleXYZ {
+            id: "out".into(),
+            input: "body".into(),
+            factors: [Scalar::lit(2.0), Scalar::lit(3.0), Scalar::lit(4.0)],
+        });
+    let v = solid_volume(&m.evaluate("out").unwrap());
+    assert!((v - 24.0).abs() < 1e-9, "v={v}");
+}
+
+#[test]
+fn scale_xyz_sphere_faceted_gives_ellipsoid() {
+    // Take a UV sphere of radius 1 and scale to (a, b, c). Volume should
+    // approach (4/3)*π*a*b*c.
+    let a = 2.0;
+    let b = 1.5;
+    let c = 1.0;
+    let m = Model::new()
+        .add(Feature::SphereFaceted {
+            id: "ball".into(),
+            radius: Scalar::lit(1.0),
+            stacks: 16,
+            slices: 24,
+        })
+        .add(Feature::ScaleXYZ {
+            id: "out".into(),
+            input: "ball".into(),
+            factors: [Scalar::lit(a), Scalar::lit(b), Scalar::lit(c)],
+        });
+    let v = solid_volume(&m.evaluate("out").unwrap());
+    let exp = (4.0 / 3.0) * std::f64::consts::PI * a * b * c;
+    let rel = (v - exp).abs() / exp;
+    assert!(rel < 0.05, "v={v}, exp={exp}, rel={rel}");
+}
+
+#[test]
+fn scale_xyz_rejects_zero_factor() {
+    let m = Model::new()
+        .add(Feature::Box {
+            id: "body".into(),
+            extents: lits([1.0, 1.0, 1.0]),
+        })
+        .add(Feature::ScaleXYZ {
+            id: "out".into(),
+            input: "body".into(),
+            factors: [Scalar::lit(2.0), Scalar::lit(0.0), Scalar::lit(2.0)],
+        });
+    assert!(m.evaluate("out").is_err());
+}
+
+#[test]
 fn scale_round_trips_via_json() {
     let m = Model::new()
         .add(Feature::Box {

@@ -15,7 +15,7 @@ use thiserror::Error;
 use crate::feature::{Feature, FilletEdge, Profile2D};
 use crate::model::Model;
 use crate::scalar::{resolve_arr, Scalar};
-use crate::transform::{mirror_solid, rotate_solid, scale_solid, translate_solid};
+use crate::transform::{mirror_solid, rotate_solid, scale_solid, scale_xyz_solid, translate_solid};
 
 #[derive(Debug, Error)]
 pub enum EvalError {
@@ -741,6 +741,32 @@ fn build(
             // sphere overlap. Users wanting rounded joints can compose
             // PipeRun with explicit SphereFaceted unions in JSON.
             Ok(acc.unwrap())
+        }
+        Feature::TruncatedPyramid {
+            bottom_radius,
+            top_radius,
+            height,
+            segments,
+            ..
+        } => {
+            let r_bot = resolve_one(id, bottom_radius, params)?;
+            let r_top = resolve_one(id, top_radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            if r_bot <= 0.0 || r_top <= 0.0 || h <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TruncatedPyramid requires positive radii and height (got {r_bot}, {r_top}, {h})"
+                    ),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("TruncatedPyramid segments must be >= 3 (got {segments})"),
+                });
+            }
+            Ok(frustum_faceted(r_bot, r_top, h, *segments))
         }
         Feature::SphereFaceted {
             radius,
@@ -1664,6 +1690,20 @@ fn build(
                 });
             }
             Ok(scale_solid(base, f))
+        }
+        Feature::ScaleXYZ { input, factors, .. } => {
+            let base = cache_get(cache, input)?;
+            let f = resolve3(id, factors, params)?;
+            if f[0] <= 0.0 || f[1] <= 0.0 || f[2] <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ScaleXYZ factors must all be > 0 (got [{}, {}, {}])",
+                        f[0], f[1], f[2]
+                    ),
+                });
+            }
+            Ok(scale_xyz_solid(base, f[0], f[1], f[2]))
         }
         Feature::Mirror {
             input,

@@ -324,6 +324,19 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// Truncated pyramid (frustum-shaped n-gon prism with two parallel
+    /// regular polygons). Bottom n-gon of `bottom_radius` at z=0, top
+    /// n-gon of `top_radius` at z=`height`. Both phase-shifted by π/n.
+    /// `segments` is the polygon sidedness (≥ 3). Both radii must be > 0
+    /// (use `Pyramid` for a true apex).
+    TruncatedPyramid {
+        id: String,
+        bottom_radius: Scalar,
+        top_radius: Scalar,
+        height: Scalar,
+        segments: usize,
+    },
+
     /// Capsule (cylinder with hemispherical caps) along +z. The
     /// cylindrical body has `radius` and `height`, sitting at z ∈ [0, h].
     /// Two hemispheres of `radius` cap the bottom (z=0) and top
@@ -603,6 +616,18 @@ pub enum Feature {
         input: String,
         factor: Scalar,
     },
+    /// Non-uniform scale: independent factors per axis. Only valid when
+    /// `input` is a fully-faceted solid (all faces planar, all edges
+    /// line segments). Faceted primitives like `Box`, `Cylinder`,
+    /// `SphereFaceted`, `Pyramid`, `RegularPrism`, `LBracket`,
+    /// `IBeam`, etc. are valid inputs; analytic primitives like
+    /// `Sphere`, `Cone`, `Frustum`, `Torus`, `Cylinder` (raw) are not.
+    /// Volume scales as `sx * sy * sz`.
+    ScaleXYZ {
+        id: String,
+        input: String,
+        factors: [Scalar; 3],
+    },
     Rotate {
         id: String,
         input: String,
@@ -682,6 +707,7 @@ impl Feature {
             | Feature::Wedge { id, .. }
             | Feature::RegularPrism { id, .. }
             | Feature::Pyramid { id, .. }
+            | Feature::TruncatedPyramid { id, .. }
             | Feature::SphereFaceted { id, .. }
             | Feature::HollowSphere { id, .. }
             | Feature::Dome { id, .. }
@@ -708,6 +734,7 @@ impl Feature {
             | Feature::SquareHole { id, .. }
             | Feature::Translate { id, .. }
             | Feature::Scale { id, .. }
+            | Feature::ScaleXYZ { id, .. }
             | Feature::Rotate { id, .. }
             | Feature::Mirror { id, .. }
             | Feature::LinearPattern { id, .. }
@@ -739,6 +766,7 @@ impl Feature {
             | Feature::Wedge { .. }
             | Feature::RegularPrism { .. }
             | Feature::Pyramid { .. }
+            | Feature::TruncatedPyramid { .. }
             | Feature::SphereFaceted { .. }
             | Feature::HollowSphere { .. }
             | Feature::Dome { .. }
@@ -765,6 +793,7 @@ impl Feature {
             | Feature::SquareHole { input, .. } => vec![input.as_str()],
             Feature::Translate { input, .. }
             | Feature::Scale { input, .. }
+            | Feature::ScaleXYZ { input, .. }
             | Feature::Rotate { input, .. }
             | Feature::Mirror { input, .. }
             | Feature::LinearPattern { input, .. }
