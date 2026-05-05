@@ -852,6 +852,117 @@ pub enum Feature {
         wire_segments: usize,
     },
 
+    /// Mortise: rectangular pocket cut into the +z face of a workpiece.
+    /// Centered on (cx, cy), spanning (width, length, depth) where depth
+    /// is along -z. Produces a freestanding pocket solid; subtract it
+    /// from your workpiece via Difference.
+    Mortise {
+        id: String,
+        center: [Scalar; 2],
+        width: Scalar,
+        length: Scalar,
+        depth: Scalar,
+    },
+
+    /// Tenon: rectangular tongue extending from the +z face of a
+    /// workpiece. Same parameter shape as Mortise; produces the
+    /// freestanding tongue solid for unioning onto the workpiece.
+    Tenon {
+        id: String,
+        center: [Scalar; 2],
+        width: Scalar,
+        length: Scalar,
+        height: Scalar,
+    },
+
+    /// FingerJoint: a row of `count` rectangular fingers extending in
+    /// +z from a base plate. Each finger is `finger_width` wide,
+    /// `finger_height` tall (in z), with `gap_width` between adjacent
+    /// fingers. Total row length = count * finger_width + (count-1) * gap_width.
+    /// Useful for box joints in woodworking.
+    FingerJoint {
+        id: String,
+        count: usize,
+        finger_width: Scalar,
+        finger_height: Scalar,
+        finger_depth: Scalar,
+        gap_width: Scalar,
+    },
+
+    /// DovetailRail: like DovetailSlot but extruded over a long length —
+    /// used as a sliding mate. `width` is the wider rail bottom,
+    /// `top_width` the narrower top, `height` the dovetail depth, and
+    /// `length` the extrude distance along +z.
+    DovetailRail {
+        id: String,
+        width: Scalar,
+        top_width: Scalar,
+        height: Scalar,
+        length: Scalar,
+    },
+
+    /// Pulley: a cylinder with a V-groove around its outer circumference.
+    /// `outer_radius` is the rim, `groove_depth` how deep the V cuts
+    /// inward, `groove_width` the V opening at the rim, `width` the
+    /// pulley thickness along +z.
+    Pulley {
+        id: String,
+        outer_radius: Scalar,
+        groove_depth: Scalar,
+        groove_width: Scalar,
+        width: Scalar,
+        segments: usize,
+    },
+
+    /// Bushing: a tube with a wider flange at one end (top-hat profile).
+    /// `inner_radius` is the bore, `outer_radius` the sleeve outside,
+    /// `flange_radius` the wider flange disk, `flange_thickness` the
+    /// flange's thickness, `body_length` the sleeve length below the
+    /// flange.
+    Bushing {
+        id: String,
+        inner_radius: Scalar,
+        outer_radius: Scalar,
+        flange_radius: Scalar,
+        flange_thickness: Scalar,
+        body_length: Scalar,
+        segments: usize,
+    },
+
+    /// Sprocket: a cylinder with `tooth_count` triangular teeth around its
+    /// perimeter. Same parameter shape as GearBlank but with a triangular
+    /// (instead of rectangular) tooth profile.
+    Sprocket {
+        id: String,
+        outer_radius: Scalar,
+        root_radius: Scalar,
+        tooth_count: usize,
+        thickness: Scalar,
+    },
+
+    /// Obelisk: 4-sided tapered prism with a square bottom and a smaller
+    /// square top. Centered on the origin, axis along +z. Special case of
+    /// TruncatedPyramid with 4 sides.
+    Obelisk {
+        id: String,
+        bottom_side: Scalar,
+        top_side: Scalar,
+        height: Scalar,
+    },
+
+    /// AxleShaft: a long cylinder with two reduced-diameter ends (the
+    /// "necks" that fit into bearings). Useful for shafts. The middle
+    /// section has `body_radius` and length `body_length`; each neck has
+    /// `neck_radius` and length `neck_length`.
+    AxleShaft {
+        id: String,
+        body_radius: Scalar,
+        body_length: Scalar,
+        neck_radius: Scalar,
+        neck_length: Scalar,
+        segments: usize,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -1035,6 +1146,15 @@ impl Feature {
             | Feature::KnurledGrip { id, .. }
             | Feature::Pipe { id, .. }
             | Feature::Spring { id, .. }
+            | Feature::Mortise { id, .. }
+            | Feature::Tenon { id, .. }
+            | Feature::FingerJoint { id, .. }
+            | Feature::DovetailRail { id, .. }
+            | Feature::Pulley { id, .. }
+            | Feature::Bushing { id, .. }
+            | Feature::Sprocket { id, .. }
+            | Feature::Obelisk { id, .. }
+            | Feature::AxleShaft { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -1116,6 +1236,15 @@ impl Feature {
             | Feature::KnurledGrip { .. }
             | Feature::Pipe { .. }
             | Feature::Spring { .. }
+            | Feature::Mortise { .. }
+            | Feature::Tenon { .. }
+            | Feature::FingerJoint { .. }
+            | Feature::DovetailRail { .. }
+            | Feature::Pulley { .. }
+            | Feature::Bushing { .. }
+            | Feature::Sprocket { .. }
+            | Feature::Obelisk { .. }
+            | Feature::AxleShaft { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }

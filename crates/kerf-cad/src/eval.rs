@@ -2155,6 +2155,167 @@ fn build(
             }
             Ok(acc.unwrap())
         }
+        Feature::Mortise { center, width, length, depth, .. } => {
+            let cx = resolve_one(id, &center[0], params)?;
+            let cy = resolve_one(id, &center[1], params)?;
+            let w = resolve_one(id, width, params)?;
+            let l = resolve_one(id, length, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if w <= 0.0 || l <= 0.0 || d <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Mortise requires positive dims (got w={w}, l={l}, d={d})") });
+            }
+            Ok(box_at(Vec3::new(w, l, d), Point3::new(cx - w/2.0, cy - l/2.0, -d)))
+        }
+        Feature::Tenon { center, width, length, height, .. } => {
+            let cx = resolve_one(id, &center[0], params)?;
+            let cy = resolve_one(id, &center[1], params)?;
+            let w = resolve_one(id, width, params)?;
+            let l = resolve_one(id, length, params)?;
+            let h = resolve_one(id, height, params)?;
+            if w <= 0.0 || l <= 0.0 || h <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Tenon requires positive dims (got w={w}, l={l}, h={h})") });
+            }
+            Ok(box_at(Vec3::new(w, l, h), Point3::new(cx - w/2.0, cy - l/2.0, 0.0)))
+        }
+        Feature::FingerJoint { count, finger_width, finger_height, finger_depth, gap_width, .. } => {
+            let fw = resolve_one(id, finger_width, params)?;
+            let fh = resolve_one(id, finger_height, params)?;
+            let fd = resolve_one(id, finger_depth, params)?;
+            let gw = resolve_one(id, gap_width, params)?;
+            if *count == 0 || fw <= 0.0 || fh <= 0.0 || fd <= 0.0 || gw <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("FingerJoint requires count >= 1 and positive dims (got count={count}, fw={fw}, fh={fh}, fd={fd}, gw={gw})") });
+            }
+            // Build a base plate (full row of count*fw + (count-1)*gw width, fd depth, 0.05*fh thick),
+            // then union finger-cubes on top.
+            let total_width = (*count as f64) * fw + ((*count as f64) - 1.0) * gw;
+            let base_thickness = (fh * 0.05).max(1e-3);
+            let base = box_at(
+                Vec3::new(total_width, fd, base_thickness),
+                Point3::new(0.0, 0.0, 0.0),
+            );
+            let mut acc = base;
+            for k in 0..*count {
+                let x0 = (k as f64) * (fw + gw);
+                let finger = box_at(
+                    Vec3::new(fw, fd, fh),
+                    Point3::new(x0, 0.0, base_thickness),
+                );
+                acc = acc.try_union(&finger).map_err(|e| EvalError::Boolean { id: id.into(), op: "finger_joint_union", message: format!("finger {k}: {}", e.message) })?;
+            }
+            Ok(acc)
+        }
+        Feature::DovetailRail { width, top_width, height, length, .. } => {
+            let w = resolve_one(id, width, params)?;
+            let tw = resolve_one(id, top_width, params)?;
+            let h = resolve_one(id, height, params)?;
+            let l = resolve_one(id, length, params)?;
+            if w <= 0.0 || tw <= 0.0 || h <= 0.0 || l <= 0.0 || tw >= w {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("DovetailRail requires top_width < width and positive dims (got w={w}, tw={tw}, h={h}, l={l})") });
+            }
+            // Trapezoid CCW in xy plane, extruded along +z by length.
+            let prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(w, 0.0, 0.0),
+                Point3::new(w/2.0 + tw/2.0, h, 0.0),
+                Point3::new(w/2.0 - tw/2.0, h, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, l)))
+        }
+        Feature::Pulley { outer_radius, groove_depth, groove_width, width, segments, .. } => {
+            let r = resolve_one(id, outer_radius, params)?;
+            let gd = resolve_one(id, groove_depth, params)?;
+            let gw = resolve_one(id, groove_width, params)?;
+            let w = resolve_one(id, width, params)?;
+            if r <= 0.0 || gd <= 0.0 || gw <= 0.0 || w <= 0.0 || gd >= r || gw >= w || *segments < 8 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Pulley requires gd<r, gw<w, segments>=8 (got r={r}, gd={gd}, gw={gw}, w={w})") });
+            }
+            // Cylinder with a torus-shaped V-groove subtracted around the
+            // equator. Approximated as a smaller "ring cutter" (a cylinder
+            // narrower than `w` but bigger than `r - gd`) — when subtracted
+            // it forms a groove. Not a true V cross-section but a
+            // rectangular groove. Trade-off for not needing curved
+            // booleans.
+            let body = cylinder_faceted(r, w, *segments);
+            let groove_inner_r = r - gd;
+            let groove_outer_r = r + gd; // bigger than body, makes a ring cutter that won't cap
+            let groove_z = (w - gw) / 2.0;
+            let outer_cutter = cylinder_along_axis(groove_outer_r, gw, *segments, 2, groove_z, 0.0, 0.0);
+            let inner_keeper = cylinder_along_axis(groove_inner_r, gw + 2.0 * 1e-3, *segments, 2, groove_z - 1e-3, 0.0, 0.0);
+            let ring = outer_cutter.try_difference(&inner_keeper).map_err(|e| EvalError::Boolean { id: id.into(), op: "pulley_groove_ring", message: e.message })?;
+            body.try_difference(&ring).map_err(|e| EvalError::Boolean { id: id.into(), op: "pulley_groove_cut", message: e.message })
+        }
+        Feature::Bushing { inner_radius, outer_radius, flange_radius, flange_thickness, body_length, segments, .. } => {
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_fl = resolve_one(id, flange_radius, params)?;
+            let t_fl = resolve_one(id, flange_thickness, params)?;
+            let l_body = resolve_one(id, body_length, params)?;
+            if r_in <= 0.0 || r_out <= r_in || r_fl <= r_out || t_fl <= 0.0 || l_body <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Bushing requires 0<in<out<fl, t_fl>0, body>0, segments>=6 (got in={r_in}, out={r_out}, fl={r_fl}, t={t_fl}, body={l_body})") });
+            }
+            let flange = cylinder_faceted(r_fl, t_fl, *segments);
+            let body = cylinder_along_axis(r_out, l_body, *segments, 2, t_fl, 0.0, 0.0);
+            let assembled = flange.try_union(&body).map_err(|e| EvalError::Boolean { id: id.into(), op: "bushing_flange_union", message: e.message })?;
+            let bore = cylinder_along_axis(r_in, t_fl + l_body + 2.0 * 1e-3, *segments, 2, -1e-3, 0.0, 0.0);
+            assembled.try_difference(&bore).map_err(|e| EvalError::Boolean { id: id.into(), op: "bushing_bore", message: e.message })
+        }
+        Feature::Sprocket { outer_radius, root_radius, tooth_count, thickness, .. } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_root = resolve_one(id, root_radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r_out <= 0.0 || r_root <= 0.0 || r_root >= r_out || t <= 0.0 || *tooth_count < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Sprocket requires r_out>r_root>0, t>0, tooth_count>=3 (got out={r_out}, root={r_root}, t={t}, tc={tooth_count})") });
+            }
+            // Triangular teeth: 3 vertices per tooth — outer tip at theta_i,
+            // root at theta_i + half-step, root at theta_i + full step.
+            // Polygon walk: alternate (outer tip, root, root) but to keep
+            // it consistent with extrude_polygon's CCW expectation, walk
+            // (outer, root, ...).
+            let tc = *tooth_count;
+            let mut prof = Vec::with_capacity(2 * tc);
+            for i in 0..tc {
+                let theta_tip = 2.0 * std::f64::consts::PI * (i as f64) / (tc as f64);
+                let theta_root = 2.0 * std::f64::consts::PI * (i as f64 + 0.5) / (tc as f64);
+                prof.push(Point3::new(r_out * theta_tip.cos(), r_out * theta_tip.sin(), 0.0));
+                prof.push(Point3::new(r_root * theta_root.cos(), r_root * theta_root.sin(), 0.0));
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, t)))
+        }
+        Feature::Obelisk { bottom_side, top_side, height, .. } => {
+            let bs = resolve_one(id, bottom_side, params)?;
+            let ts = resolve_one(id, top_side, params)?;
+            let h = resolve_one(id, height, params)?;
+            if bs <= 0.0 || ts <= 0.0 || ts > bs || h <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Obelisk requires bs>=ts>0, h>0 (got bs={bs}, ts={ts}, h={h})") });
+            }
+            let bot = vec![
+                Point3::new(-bs/2.0, -bs/2.0, 0.0),
+                Point3::new( bs/2.0, -bs/2.0, 0.0),
+                Point3::new( bs/2.0,  bs/2.0, 0.0),
+                Point3::new(-bs/2.0,  bs/2.0, 0.0),
+            ];
+            let top = vec![
+                Point3::new(-ts/2.0, -ts/2.0, h),
+                Point3::new( ts/2.0, -ts/2.0, h),
+                Point3::new( ts/2.0,  ts/2.0, h),
+                Point3::new(-ts/2.0,  ts/2.0, h),
+            ];
+            Ok(extrude_lofted(&bot, &top))
+        }
+        Feature::AxleShaft { body_radius, body_length, neck_radius, neck_length, segments, .. } => {
+            let r_body = resolve_one(id, body_radius, params)?;
+            let r_neck = resolve_one(id, neck_radius, params)?;
+            let l_body = resolve_one(id, body_length, params)?;
+            let l_neck = resolve_one(id, neck_length, params)?;
+            if r_body <= 0.0 || r_neck <= 0.0 || r_neck >= r_body || l_body <= 0.0 || l_neck <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("AxleShaft requires r_neck<r_body, all positive, segments>=6 (got body={r_body}, neck={r_neck}, lb={l_body}, ln={l_neck})") });
+            }
+            let bottom_neck = cylinder_along_axis(r_neck, l_neck, *segments, 2, 0.0, 0.0, 0.0);
+            let body = cylinder_along_axis(r_body, l_body, *segments, 2, l_neck, 0.0, 0.0);
+            let top_neck = cylinder_along_axis(r_neck, l_neck, *segments, 2, l_neck + l_body, 0.0, 0.0);
+            let lower = bottom_neck.try_union(&body).map_err(|e| EvalError::Boolean { id: id.into(), op: "axle_lower_join", message: e.message })?;
+            lower.try_union(&top_neck).map_err(|e| EvalError::Boolean { id: id.into(), op: "axle_upper_join", message: e.message })
+        }
         Feature::HoleArray {
             input,
             axis,
