@@ -185,6 +185,28 @@ pub fn try_boolean_solid(
             }
         }
     }
+    // Tier 4: jitter A instead of B. Some configurations break only when
+    // a's vertices are slightly off-axis — the OnBoundary classifier has
+    // a different code path depending on which solid's face is being
+    // classified, and jittering the OTHER solid sometimes breaks the
+    // degeneracy where jittering the original solid did not.
+    for &(jx, jy, jz) in JITTERS {
+        let a_jittered = jitter_solid(a, kerf_geom::Vec3::new(jx, jy, jz));
+        if let Ok(s) = run_boolean_solid_caught(&a_jittered, b, op) {
+            return Ok(s);
+        }
+    }
+    // Tier 5: jitter BOTH a and b in opposite directions. This breaks
+    // configurations where a single-sided jitter of either solid still
+    // leaves one face exactly coplanar with the other (e.g., when the
+    // b face is symmetric across the jitter axis).
+    for &(jx, jy, jz) in JITTERS {
+        let a_jittered = jitter_solid(a, kerf_geom::Vec3::new(jx * 0.7, jy * 0.7, jz * 0.7));
+        let b_jittered = jitter_solid(b, kerf_geom::Vec3::new(-jx * 0.3, -jy * 0.3, -jz * 0.3));
+        if let Ok(s) = run_boolean_solid_caught(&a_jittered, &b_jittered, op) {
+            return Ok(s);
+        }
+    }
     // All attempts failed — re-run primary to capture the original message.
     let payload = run_boolean_solid_caught(a, b, op).err().unwrap();
     Err(payload)
