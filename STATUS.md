@@ -53,14 +53,14 @@ kernel + authoring + viewer + production output).
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
-| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil) | 6% | 60% | 3.6 |
-| Manufacturing features (CornerCut, Fillet, Fillets, Chamfer, Counterbore, Countersink, hole patterns, hex/square holes, dovetail, vee-groove) | 12% | 55% | 6.6 |
-| Reference geometry (RefPoint, RefAxis, RefPlane, Mirror) | 3% | 35% | 1.05 |
-| Curved-surface analytic booleans (faceted spheres + faceted torus compose for simple cases) | 8% | 30% | 2.4 |
+| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring) | 6% | 65% | 3.9 |
+| Manufacturing features (CornerCut, Fillet, Fillets, Chamfer, Counterbore, Countersink, hole patterns, hex/square holes, dovetail, vee-groove, T-slot, Keyway, RoundedRect, MountingFlange, GearBlank, KnurledGrip, Pipe) | 12% | 70% | 8.4 |
+| Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint) | 3% | 60% | 1.8 |
+| Curved-surface analytic booleans (faceted spheres + faceted torus + Hemisphere + SphericalCap + Bowl compose for simple cases) | 8% | 35% | 2.8 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~55.0%** |
-| **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~95%**   |
+| **Solidworks-tier total**                 | **100%**  |          | **~58.0%** |
+| **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~96%**   |
 
 ## Latest session (2026-05-06)
 
@@ -89,9 +89,23 @@ tests → 538 tests, 0 failed.
   analytic 2π²Rr² to 6%. **Curved-surface category bumps 25% → 30%.**
   Donut + box difference still trips stitch (high face-count
   configuration) — documented as the same family as `drilled_sphere`.
-- **Coil**: helical sweep (springs, screw threads, decorative spirals).
-  Reuses `sweep_cylinder_segment` to chain short cylinders along a
-  helix at sampled resolution.
+- **Coil + Spring**: helical sweep (springs, screw threads, decorative
+  spirals). Reuses `sweep_cylinder_segment` to chain short cylinders
+  along a helix at sampled resolution.
+- **Structural batch**: CChannel, ZBeam, AngleIron, TSlot, Keyway,
+  RoundedRect — extruded planar profiles, volume verified analytically.
+- **Curved-surface batch**: Hemisphere, SphericalCap, Bowl — composed
+  via sphere_faceted + box clip, with curved-surface boolean
+  limitations tolerated.
+- **Reference batch**: BoundingBoxRef (hollow shell of input AABB),
+  CentroidPoint (small box marker at vertex centroid).
+- **Practical batch**: MountingFlange (disk + bolt circle), GearBlank
+  (toothed cylinder), KnurledGrip (ridged cylinder), Pipe (tube along
+  named axis).
+- **Boolean retry tiers**: added A-jitter and both-jitter tiers (Tier 4
+  and Tier 5) to `try_boolean_solid`. Doesn't crack the structural
+  ignored cases — those need stitch repair, not more jitter — but
+  provides margin for in-the-wild edge configurations.
 
 ## Earlier (pre-2026-05-06)
 
@@ -129,7 +143,7 @@ real kernel additions:
 - **Decorative composites**: Arrow, Funnel, TruncatedPyramid.
 - **Transforms**: ScaleXYZ.
 
-543 tests pass, 7 ignored.
+559 tests pass, 7 ignored.
 
 The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
 are real manufacturing features even if multi-edge fillet is still
