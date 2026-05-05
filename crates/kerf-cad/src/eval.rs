@@ -1691,6 +1691,326 @@ fn build(
             ];
             Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
         }
+        Feature::CChannel {
+            width, height, thickness, depth, ..
+        } => {
+            let w = resolve_one(id, width, params)?;
+            let h = resolve_one(id, height, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if w <= 0.0 || h <= 0.0 || t <= 0.0 || d <= 0.0 || 2.0 * t >= h || t >= w {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("CChannel requires positive dims, t<w, 2t<h (got w={w}, h={h}, t={t}, d={d})"),
+                });
+            }
+            // C-section opens to +x; back wall at x=0. Walk CCW.
+            // Outer corners: (0,0), (t,0)? — actually let's keep it simple:
+            // outer rectangle [0,w] x [0,h]; cut out [t, w] x [t, h-t].
+            // Resulting CCW outer walk:
+            //   (0,0)->(w,0)->(w,t)->(t,t)->(t,h-t)->(w,h-t)->(w,h)->(0,h)
+            let prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(w, 0.0, 0.0),
+                Point3::new(w, t, 0.0),
+                Point3::new(t, t, 0.0),
+                Point3::new(t, h - t, 0.0),
+                Point3::new(w, h - t, 0.0),
+                Point3::new(w, h, 0.0),
+                Point3::new(0.0, h, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
+        Feature::ZBeam { flange, web, thickness, depth, .. } => {
+            let f = resolve_one(id, flange, params)?;
+            let wb = resolve_one(id, web, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if f <= 0.0 || wb <= 0.0 || t <= 0.0 || d <= 0.0 || t >= f || t >= wb {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("ZBeam requires positive dims, t<flange, t<web (got f={f}, wb={wb}, t={t}, d={d})"),
+                });
+            }
+            // Z profile: bottom flange [0, f] x [0, t], web [f-t, f] x [t, t+wb-t]=[t, wb],
+            // top flange [f-t, 2f-t] x [wb, wb+t].
+            // CCW outer walk starting bottom-left:
+            //   (0,0) -> (f, 0) -> (f, wb) -> (2f - t, wb) -> (2f - t, wb + t)
+            //   -> (f - t, wb + t) -> (f - t, t) -> (0, t) -> close
+            let prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(f, 0.0, 0.0),
+                Point3::new(f, wb, 0.0),
+                Point3::new(2.0 * f - t, wb, 0.0),
+                Point3::new(2.0 * f - t, wb + t, 0.0),
+                Point3::new(f - t, wb + t, 0.0),
+                Point3::new(f - t, t, 0.0),
+                Point3::new(0.0, t, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
+        Feature::AngleIron { leg_length, thickness, depth, .. } => {
+            let l = resolve_one(id, leg_length, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if l <= 0.0 || t <= 0.0 || d <= 0.0 || t >= l {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("AngleIron requires positive dims with t<leg_length (got l={l}, t={t}, d={d})"),
+                });
+            }
+            // Equal-leg L profile.
+            let prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(l, 0.0, 0.0),
+                Point3::new(l, t, 0.0),
+                Point3::new(t, t, 0.0),
+                Point3::new(t, l, 0.0),
+                Point3::new(0.0, l, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
+        Feature::TSlot { slot_width, slot_height, base_width, base_height, depth, .. } => {
+            let sw = resolve_one(id, slot_width, params)?;
+            let sh = resolve_one(id, slot_height, params)?;
+            let bw = resolve_one(id, base_width, params)?;
+            let bh = resolve_one(id, base_height, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if sw <= 0.0 || sh <= 0.0 || bw <= 0.0 || bh <= 0.0 || d <= 0.0 || sw >= bw {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TSlot requires positive dims with slot_width<base_width (got sw={sw}, sh={sh}, bw={bw}, bh={bh}, d={d})"
+                    ),
+                });
+            }
+            // Inverted-T cross section centered on x=0. Base [-bw/2, bw/2] x [0, bh],
+            // slot above [-sw/2, sw/2] x [bh, bh+sh]. CCW walk:
+            //   (-bw/2, 0) -> (bw/2, 0) -> (bw/2, bh) -> (sw/2, bh)
+            //   -> (sw/2, bh+sh) -> (-sw/2, bh+sh) -> (-sw/2, bh) -> (-bw/2, bh)
+            let prof = vec![
+                Point3::new(-bw / 2.0, 0.0, 0.0),
+                Point3::new(bw / 2.0, 0.0, 0.0),
+                Point3::new(bw / 2.0, bh, 0.0),
+                Point3::new(sw / 2.0, bh, 0.0),
+                Point3::new(sw / 2.0, bh + sh, 0.0),
+                Point3::new(-sw / 2.0, bh + sh, 0.0),
+                Point3::new(-sw / 2.0, bh, 0.0),
+                Point3::new(-bw / 2.0, bh, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
+        Feature::Keyway { width, depth_into, length, .. } => {
+            let w = resolve_one(id, width, params)?;
+            let di = resolve_one(id, depth_into, params)?;
+            let l = resolve_one(id, length, params)?;
+            if w <= 0.0 || di <= 0.0 || l <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Keyway requires positive width, depth_into, length (got w={w}, di={di}, l={l})"),
+                });
+            }
+            // Just a box: [-w/2, w/2] x [0, di] x [0, l].
+            Ok(box_at(
+                Vec3::new(w, di, l),
+                Point3::new(-w / 2.0, 0.0, 0.0),
+            ))
+        }
+        Feature::RoundedRect {
+            width, height, thickness, corner_radius, segments, ..
+        } => {
+            let w = resolve_one(id, width, params)?;
+            let h = resolve_one(id, height, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            let r = resolve_one(id, corner_radius, params)?;
+            if w <= 0.0 || h <= 0.0 || t <= 0.0 || r < 0.0 || *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("RoundedRect requires positive dims, segments>=3 (got w={w}, h={h}, t={t}, r={r})"),
+                });
+            }
+            if 2.0 * r >= w || 2.0 * r >= h {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("RoundedRect 2*corner_radius ({}) must be < width and height", 2.0 * r),
+                });
+            }
+            // Build rounded-rect polygon: 4 straight runs + 4 quarter-circle arcs.
+            let mut prof: Vec<Point3> = Vec::new();
+            let q = (*segments).max(4) / 4; // quarter-arc segments
+            // Corner centers: (r,r), (w-r,r), (w-r,h-r), (r,h-r).
+            let corners = [
+                (r, r, std::f64::consts::PI),       // start angle for bottom-left arc
+                (w - r, r, 1.5 * std::f64::consts::PI),
+                (w - r, h - r, 0.0),
+                (r, h - r, 0.5 * std::f64::consts::PI),
+            ];
+            for (cx, cy, start_ang) in corners {
+                for k in 0..=q {
+                    let a = start_ang + 0.5 * std::f64::consts::PI * (k as f64) / (q as f64);
+                    let x = cx + r * a.cos();
+                    let y = cy + r * a.sin();
+                    prof.push(Point3::new(x, y, 0.0));
+                }
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, t)))
+        }
+        Feature::Hemisphere { radius, stacks, slices, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            if r <= 0.0 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Hemisphere requires positive radius, stacks>=2, slices>=3 (got r={r})"),
+                });
+            }
+            // Build a faceted sphere then carve away the bottom half with
+            // a big box at z<0. This trips the curved-surface boolean
+            // limitations sometimes; document if it does.
+            let sph = sphere_faceted(r, *stacks, *slices);
+            let cutter = box_at(
+                Vec3::new(4.0 * r, 4.0 * r, 2.0 * r),
+                Point3::new(-2.0 * r, -2.0 * r, -2.0 * r),
+            );
+            sph.try_difference(&cutter).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "hemisphere_clip",
+                message: e.message,
+            })
+        }
+        Feature::SphericalCap { radius, cap_height, stacks, slices, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let cap = resolve_one(id, cap_height, params)?;
+            if r <= 0.0 || cap <= 0.0 || cap > 2.0 * r || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("SphericalCap requires r>0, 0<cap<=2r, stacks>=2, slices>=3 (got r={r}, cap={cap})"),
+                });
+            }
+            // Sphere centered on origin, clip with z < (r - cap_height).
+            let sph = sphere_faceted(r, *stacks, *slices);
+            let z_cut = r - cap;
+            let cutter = box_at(
+                Vec3::new(4.0 * r, 4.0 * r, 4.0 * r),
+                Point3::new(-2.0 * r, -2.0 * r, z_cut - 4.0 * r),
+            );
+            sph.try_difference(&cutter).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "spherical_cap_clip",
+                message: e.message,
+            })
+        }
+        Feature::Bowl { outer_radius, inner_radius, stacks, slices, .. } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            if r_out <= 0.0 || r_in <= 0.0 || r_in >= r_out || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Bowl requires 0 < inner < outer, stacks>=2, slices>=3 (got out={r_out}, in={r_in})"),
+                });
+            }
+            let outer_sph = sphere_faceted(r_out, *stacks, *slices);
+            let inner_sph = sphere_faceted(r_in, *stacks, *slices);
+            let shell = outer_sph
+                .try_difference(&inner_sph)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "bowl_shell", message: e.message })?;
+            // Cut off the bottom half (z<0).
+            let cutter = box_at(
+                Vec3::new(4.0 * r_out, 4.0 * r_out, 2.0 * r_out),
+                Point3::new(-2.0 * r_out, -2.0 * r_out, -2.0 * r_out),
+            );
+            shell.try_difference(&cutter).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "bowl_clip",
+                message: e.message,
+            })
+        }
+        Feature::BoundingBoxRef { input, wire_thickness, .. } => {
+            let base = cache_get(cache, input)?;
+            let t = resolve_one(id, wire_thickness, params)?;
+            if t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("BoundingBoxRef requires positive wire_thickness (got {t})"),
+                });
+            }
+            // Walk the input solid's vertices, build axis-aligned box
+            // bounding them, return as a thin wireframe (12 edge bars).
+            // For now: just render the bounding box as a hollow box.
+            let mut min = [f64::INFINITY; 3];
+            let mut max = [f64::NEG_INFINITY; 3];
+            for (_, p) in base.vertex_geom.iter() {
+                if p.x < min[0] { min[0] = p.x; }
+                if p.y < min[1] { min[1] = p.y; }
+                if p.z < min[2] { min[2] = p.z; }
+                if p.x > max[0] { max[0] = p.x; }
+                if p.y > max[1] { max[1] = p.y; }
+                if p.z > max[2] { max[2] = p.z; }
+            }
+            if !min[0].is_finite() {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "BoundingBoxRef input has no vertices".into(),
+                });
+            }
+            // Render as a hollow box (outer minus inner): outer = bbox,
+            // inner = bbox shrunk by wire_thickness. Caller can union it
+            // with anything they want.
+            let outer = box_at(
+                Vec3::new(max[0] - min[0], max[1] - min[1], max[2] - min[2]),
+                Point3::new(min[0], min[1], min[2]),
+            );
+            let inner_w = (max[0] - min[0] - 2.0 * t).max(0.0);
+            let inner_h = (max[1] - min[1] - 2.0 * t).max(0.0);
+            let inner_d = (max[2] - min[2] - 2.0 * t).max(0.0);
+            if inner_w < 1e-12 || inner_h < 1e-12 || inner_d < 1e-12 {
+                // Wire too thick; just return the solid box.
+                return Ok(outer);
+            }
+            let inner = box_at(
+                Vec3::new(inner_w, inner_h, inner_d),
+                Point3::new(min[0] + t, min[1] + t, min[2] + t),
+            );
+            outer.try_difference(&inner).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "bounding_box_shell",
+                message: e.message,
+            })
+        }
+        Feature::CentroidPoint { input, marker_size, .. } => {
+            let base = cache_get(cache, input)?;
+            let m = resolve_one(id, marker_size, params)?;
+            if m <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("CentroidPoint requires positive marker_size (got {m})"),
+                });
+            }
+            // Compute average vertex position as a stand-in centroid.
+            // (True volume centroid would integrate over tetrahedra; for a
+            // marker this is good enough.)
+            let mut sum = [0.0; 3];
+            let mut n = 0usize;
+            for (_, p) in base.vertex_geom.iter() {
+                sum[0] += p.x;
+                sum[1] += p.y;
+                sum[2] += p.z;
+                n += 1;
+            }
+            if n == 0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "CentroidPoint input has no vertices".into(),
+                });
+            }
+            let cx = sum[0] / n as f64;
+            let cy = sum[1] / n as f64;
+            let cz = sum[2] / n as f64;
+            // Render as a small box centered at the centroid.
+            Ok(box_at(
+                Vec3::new(m, m, m),
+                Point3::new(cx - m / 2.0, cy - m / 2.0, cz - m / 2.0),
+            ))
+        }
         Feature::HoleArray {
             input,
             axis,

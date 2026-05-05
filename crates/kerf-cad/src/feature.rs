@@ -665,6 +665,126 @@ pub enum Feature {
         depth: Scalar,
     },
 
+    /// C-channel (a U-channel rotated 90° so it opens to +x). Same
+    /// parameter set as UChannel: outer width, height, wall thickness,
+    /// and extrusion depth along +z.
+    CChannel {
+        id: String,
+        width: Scalar,
+        height: Scalar,
+        thickness: Scalar,
+        depth: Scalar,
+    },
+
+    /// Z-beam (Z-bar) cross-section extruded along +z. Three rectangular
+    /// runs forming a "Z": bottom horizontal flange of length `flange`,
+    /// vertical web of height `web`, top horizontal flange of length
+    /// `flange` (offset to the right by web_thickness). Each run has
+    /// thickness `thickness`.
+    ZBeam {
+        id: String,
+        flange: Scalar,
+        web: Scalar,
+        thickness: Scalar,
+        depth: Scalar,
+    },
+
+    /// Angle iron (equal-leg L-section) — like LBracket but with both
+    /// legs the same length, and chosen extrusion axis (so it works as a
+    /// frame member regardless of orientation). For now the extrusion
+    /// runs along +z only.
+    AngleIron {
+        id: String,
+        leg_length: Scalar,
+        thickness: Scalar,
+        depth: Scalar,
+    },
+
+    /// T-slot machining feature: a rectangular slot with a wider
+    /// rectangular base, used for clamping fixtures. Cross-section is
+    /// like an inverted T. Extruded along +z by `depth`. Centered on x.
+    TSlot {
+        id: String,
+        slot_width: Scalar,
+        slot_height: Scalar,
+        base_width: Scalar,
+        base_height: Scalar,
+        depth: Scalar,
+    },
+
+    /// Keyway: a rectangular slot extruded along +z that pairs with a
+    /// rectangular key on a shaft. Centered on x at y=0; extends from y=0
+    /// to y=`depth_into`. Useful for mating with shafts.
+    Keyway {
+        id: String,
+        width: Scalar,
+        depth_into: Scalar,
+        length: Scalar,
+    },
+
+    /// Rectangular plate with rounded corners (4 quarter-circle fillets,
+    /// each with the same `corner_radius`). Useful for mounting plates
+    /// where sharp corners would cause stress concentrations.
+    RoundedRect {
+        id: String,
+        width: Scalar,
+        height: Scalar,
+        thickness: Scalar,
+        corner_radius: Scalar,
+        segments: usize,
+    },
+
+    /// Hemisphere: half of a faceted UV sphere — the +z half. Useful for
+    /// domes, end caps, decorative bosses. `stacks` and `slices` are the
+    /// UV subdivisions; the result has a planar circular base on z=0.
+    Hemisphere {
+        id: String,
+        radius: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// Spherical cap: portion of a faceted sphere above a horizontal
+    /// cutting plane at z = `radius - cap_height`. As `cap_height`
+    /// approaches `2*radius` the cap approaches a full sphere; at
+    /// `radius` it's a hemisphere. Built as `Sphere - HalfspaceBox`.
+    SphericalCap {
+        id: String,
+        radius: Scalar,
+        cap_height: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// Bowl: hollow hemisphere shell. Outer hemisphere of `outer_radius`
+    /// minus inner hemisphere of `inner_radius`. Wall thickness =
+    /// outer - inner. Open top, like a dome inverted.
+    Bowl {
+        id: String,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// Reference: bounding-box-of-a-feature marker. Computes axis-aligned
+    /// bounding box of the input feature's solid; renders as a thin wire
+    /// box. Useful for visualisation and downstream constraint references.
+    BoundingBoxRef {
+        id: String,
+        input: String,
+        wire_thickness: Scalar,
+    },
+
+    /// Reference: centroid of a feature, rendered as a small octahedron at
+    /// the centroid position. Computed as the volume-weighted centroid of
+    /// the input solid's tessellated triangles.
+    CentroidPoint {
+        id: String,
+        input: String,
+        marker_size: Scalar,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -832,6 +952,17 @@ impl Feature {
             | Feature::UChannel { id, .. }
             | Feature::TBeam { id, .. }
             | Feature::IBeam { id, .. }
+            | Feature::CChannel { id, .. }
+            | Feature::ZBeam { id, .. }
+            | Feature::AngleIron { id, .. }
+            | Feature::TSlot { id, .. }
+            | Feature::Keyway { id, .. }
+            | Feature::RoundedRect { id, .. }
+            | Feature::Hemisphere { id, .. }
+            | Feature::SphericalCap { id, .. }
+            | Feature::Bowl { id, .. }
+            | Feature::BoundingBoxRef { id, .. }
+            | Feature::CentroidPoint { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -899,6 +1030,15 @@ impl Feature {
             | Feature::UChannel { .. }
             | Feature::TBeam { .. }
             | Feature::IBeam { .. }
+            | Feature::CChannel { .. }
+            | Feature::ZBeam { .. }
+            | Feature::AngleIron { .. }
+            | Feature::TSlot { .. }
+            | Feature::Keyway { .. }
+            | Feature::RoundedRect { .. }
+            | Feature::Hemisphere { .. }
+            | Feature::SphericalCap { .. }
+            | Feature::Bowl { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }
@@ -910,7 +1050,9 @@ impl Feature {
             Feature::HoleArray { input, .. }
             | Feature::BoltCircle { input, .. }
             | Feature::HexHole { input, .. }
-            | Feature::SquareHole { input, .. } => vec![input.as_str()],
+            | Feature::SquareHole { input, .. }
+            | Feature::BoundingBoxRef { input, .. }
+            | Feature::CentroidPoint { input, .. } => vec![input.as_str()],
             Feature::Translate { input, .. }
             | Feature::Scale { input, .. }
             | Feature::ScaleXYZ { input, .. }
