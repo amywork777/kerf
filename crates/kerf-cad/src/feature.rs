@@ -371,6 +371,33 @@ pub enum Feature {
         marker_radius: Scalar,
     },
 
+    /// Arrow: a cone-shaped tip on top of a cylindrical shaft. Useful
+    /// for axis indicators. Total length = `shaft_length + tip_length`.
+    /// The tip cone tapers from `shaft_radius` at z = shaft_length down
+    /// to a point at z = shaft_length + tip_length. (Same radius at the
+    /// junction avoids the multi-cylinder coplanar-flare issue that
+    /// would otherwise trip the boolean engine.)
+    Arrow {
+        id: String,
+        shaft_radius: Scalar,
+        shaft_length: Scalar,
+        tip_length: Scalar,
+        segments: usize,
+    },
+
+    /// Funnel: a frustum (wide at top) connected to a smaller cylinder
+    /// (the spout) at the bottom. The frustum sits at z ∈ [0, neck_z]
+    /// with `top_radius` at z=neck_z and `neck_radius` at z=0. The
+    /// spout cylinder of `neck_radius` sits at z ∈ [-spout_length, 0].
+    Funnel {
+        id: String,
+        top_radius: Scalar,
+        neck_radius: Scalar,
+        neck_z: Scalar,
+        spout_length: Scalar,
+        segments: usize,
+    },
+
     /// Reference plane marker: a thin faceted box marking a planar
     /// region. `position` is the center; `axis` is the normal direction
     /// ("x" | "y" | "z"); `extents` is the (width, height) of the
@@ -749,6 +776,8 @@ impl Feature {
             | Feature::RefPoint { id, .. }
             | Feature::RefAxis { id, .. }
             | Feature::RefPlane { id, .. }
+            | Feature::Arrow { id, .. }
+            | Feature::Funnel { id, .. }
             | Feature::CylinderAt { id, .. }
             | Feature::TubeAt { id, .. }
             | Feature::Star { id, .. }
@@ -811,6 +840,8 @@ impl Feature {
             | Feature::RefPoint { .. }
             | Feature::RefAxis { .. }
             | Feature::RefPlane { .. }
+            | Feature::Arrow { .. }
+            | Feature::Funnel { .. }
             | Feature::CylinderAt { .. }
             | Feature::TubeAt { .. }
             | Feature::Star { .. }

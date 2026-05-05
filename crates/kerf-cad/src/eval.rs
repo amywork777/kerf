@@ -704,6 +704,85 @@ fn build(
                 Point3::new(origin[0], origin[1], origin[2]),
             ))
         }
+        Feature::Arrow {
+            shaft_radius,
+            shaft_length,
+            tip_length,
+            segments,
+            ..
+        } => {
+            let sr = resolve_one(id, shaft_radius, params)?;
+            let sl = resolve_one(id, shaft_length, params)?;
+            let tl = resolve_one(id, tip_length, params)?;
+            if sr <= 0.0 || sl <= 0.0 || tl <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Arrow requires positive shaft_radius, shaft_length, tip_length"
+                    ),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Arrow segments must be >= 3 (got {segments})"),
+                });
+            }
+            let shaft = cylinder_faceted(sr, sl, *segments);
+            // Tip cone tapers from shaft_radius (at base, z=0 in local) to
+            // 0 (apex, z=tip_length). Translate so base sits at z=shaft_length.
+            let tip_raw = cone_faceted(sr, tl, *segments);
+            let tip = translate_solid(&tip_raw, Vec3::new(0.0, 0.0, sl));
+            shaft.try_union(&tip).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "arrow_union",
+                message: e.message,
+            })
+        }
+        Feature::Funnel {
+            top_radius,
+            neck_radius,
+            neck_z,
+            spout_length,
+            segments,
+            ..
+        } => {
+            let tr = resolve_one(id, top_radius, params)?;
+            let nr = resolve_one(id, neck_radius, params)?;
+            let nz = resolve_one(id, neck_z, params)?;
+            let sl = resolve_one(id, spout_length, params)?;
+            if tr <= 0.0 || nr <= 0.0 || nz <= 0.0 || sl <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Funnel requires positive top/neck radii, neck_z, spout_length"
+                    ),
+                });
+            }
+            if tr <= nr {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Funnel top_radius ({tr}) must be > neck_radius ({nr})"),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Funnel segments must be >= 3 (got {segments})"),
+                });
+            }
+            // Frustum sits at z ∈ [0, nz]: bottom (z=0) has neck_radius,
+            // top (z=nz) has top_radius.
+            let top = frustum_faceted(nr, tr, nz, *segments);
+            // Spout cylinder at z ∈ [-spout_length, 0].
+            let spout_raw = cylinder_faceted(nr, sl, *segments);
+            let spout = translate_solid(&spout_raw, Vec3::new(0.0, 0.0, -sl));
+            top.try_union(&spout).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "funnel_union",
+                message: e.message,
+            })
+        }
         Feature::Capsule {
             radius,
             height,

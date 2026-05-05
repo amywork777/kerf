@@ -134,6 +134,8 @@ offending name.
 | `RefPoint`       | `position: [x,y,z]`, `marker_radius` — visible reference point (tiny faceted sphere) | — |
 | `RefAxis`        | `position: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `length`, `marker_radius` — visible reference axis (thin centered cylinder) | — |
 | `RefPlane`       | `position: [x,y,z]`, `axis`, `extents: [w, h]`, `marker_thickness` — visible reference plane (thin centered box) | — |
+| `Arrow`          | `shaft_radius`, `shaft_length`, `tip_length`, `segments` — cylindrical shaft with a conical tip along +z | — |
+| `Funnel`         | `top_radius`, `neck_radius`, `neck_z`, `spout_length`, `segments` — frustum funnel with cylindrical spout | — |
 | `CylinderAt`     | `base: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `radius`, `height`, `segments` (≥3) — cylinder positioned at `base` with cap-axis along `axis` | — |
 | `Star`           | `points` (≥3), `outer_radius`, `inner_radius`, `height` — n-pointed star prism extruded along +z | — |
 | `TubeAt`         | `base: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `outer_radius`, `inner_radius`, `height`, `segments` (≥3) | — |
