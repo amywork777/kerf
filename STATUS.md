@@ -45,7 +45,7 @@ kernel + authoring + viewer + production output).
 
 | Capability                                | SW weight | We're at | SW pts |
 |-------------------------------------------|----------:|---------:|-------:|
-| Planar booleans + primitives + validation | 15%       | 98%      | 14.7   |
+| Planar booleans + primitives + validation | 15%       | 99%      | 14.85  |
 | Authoring layer (params + expressions)    | 6%        | 98%      | 5.88   |
 | 3D viewer (mesh, camera, lighting)        | 7%        | 90%      | 6.3    |
 | Picking / selection                       | 5%        | 50%      | 2.5    |
@@ -53,23 +53,27 @@ kernel + authoring + viewer + production output).
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
-| Sweep / loft (Revolve, Loft, TaperedExtrude) | 6%     | 35%      | 2.1    |
-| Manufacturing features (CornerCut, Fillet, Fillets, Chamfer, Counterbore, Countersink, hole patterns, hex/square holes, dovetail, vee-groove) | 12% | 50%  | 6.0    |
-| Reference geometry (Mirror is adjacent)   | 3%        | 5%       | 0.15   |
-| Curved-surface analytic booleans          | 8%        | 0%       | 0      |
+| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun) | 6% | 45% | 2.7  |
+| Manufacturing features (CornerCut, Fillet, Fillets, Chamfer, Counterbore, Countersink, hole patterns, hex/square holes, dovetail, vee-groove) | 12% | 55% | 6.6 |
+| Reference geometry (RefPoint, RefAxis, RefPlane, Mirror) | 3% | 35% | 1.05 |
+| Curved-surface analytic booleans (faceted spheres now compose) | 8% | 25% | 2.0 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~48.6%** |
-| **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~92%**   |
+| **Solidworks-tier total**                 | **100%**  |          | **~52.7%** |
+| **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~94%**   |
 
-Started this run at ~40.5% / 91%. Shipped 32 new features and three
+Started this run at ~40.5% / 91%. Shipped 44+ features and four
 real kernel additions:
 
 - **Kernel**: `cone_faceted` (n-sided pyramid, direct topology
-  construction), `frustum_faceted` (n-sided faceted frustum), and a
+  construction), `frustum_faceted` (n-sided faceted frustum),
+  `sphere_faceted` (UV sphere via direct topology — solves
+  HollowSphere, Dome that the analytic sphere couldn't), and a
   refactor of `extrude_polygon` to expose `extrude_lofted` (two
   arbitrary parallel polygons of same vertex count). The boolean
-  retry loop also got 6 jitter directions instead of 1.
+  retry loop got 6 jitter directions instead of 1. Non-uniform
+  `scale_xyz_solid` for faceted-only solids in transform.rs
+  (enables Ellipsoid via SphereFaceted + ScaleXYZ).
 - **Manufacturing**: Fillet, Fillets, Chamfer, Counterbore,
   Countersink, HoleArray, BoltCircle, HexHole, SquareHole.
 - **Composed primitives**: Slot, HollowCylinder, Wedge, RegularPrism,
@@ -84,7 +88,15 @@ real kernel additions:
 - **Expression builtins**: 14 new (asin/acos/atan/atan2, pow, exp,
   ln, log, sign, clamp, mod, hypot, if_pos, pi/tau/e constants).
 
-488 tests pass.
+- **Sphere features**: SphereFaceted, HollowSphere, Dome, Capsule,
+  Ellipsoid (via SphereFaceted + ScaleXYZ).
+- **Pipe + path features**: PipeRun (axis-aligned polyline of
+  cylinders).
+- **Reference geometry**: RefPoint, RefAxis, RefPlane.
+- **Decorative composites**: Arrow, Funnel, TruncatedPyramid.
+- **Transforms**: ScaleXYZ.
+
+518 tests pass.
 
 The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
 are real manufacturing features even if multi-edge fillet is still
@@ -156,7 +168,9 @@ proprietary product): years.
 - Standard structural / fastener catalog: LBracket, UChannel, TBeam,
   IBeam, Bolt, CapScrew, Nut, Washer, RoundBoss, RectBoss, Star,
   RegularPrism, Pyramid.
-- 488 tests pass, 1 ignored (4-corner Fillets, kernel limitation).
+- 518 tests pass, 2 ignored (4-corner Fillets and sphere - cylinder
+  drilled-sphere — both kernel limitations on coplanar/curved-face
+  intersections).
 
 **Brittle:**
 - Coplanar overlapping faces still trip the boolean engine in some
