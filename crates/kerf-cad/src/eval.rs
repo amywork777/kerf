@@ -2540,6 +2540,108 @@ fn build(
             }
             Ok(acc.unwrap())
         }
+        Feature::SheetBend { length_a, length_b, width, thickness, .. } => {
+            let la = resolve_one(id, length_a, params)?;
+            let lb = resolve_one(id, length_b, params)?;
+            let w = resolve_one(id, width, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if la <= 0.0 || lb <= 0.0 || w <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("SheetBend requires positive dims (got la={la}, lb={lb}, w={w}, t={t})") });
+            }
+            // Horizontal section [0, la] x [0, w] x [0, t]; vertical
+            // section [la-t, la] x [0, w] x [t, t+lb]. Joined corner.
+            let horiz = box_at(Vec3::new(la, w, t), Point3::new(0.0, 0.0, 0.0));
+            let vert = box_at(Vec3::new(t, w, lb), Point3::new(la - t, 0.0, t));
+            horiz.try_union(&vert).map_err(|e| EvalError::Boolean { id: id.into(), op: "sheet_bend_join", message: e.message })
+        }
+        Feature::TrussMember { rod_radius, rod_length, plate_width, plate_thickness, segments, .. } => {
+            let rr = resolve_one(id, rod_radius, params)?;
+            let rl = resolve_one(id, rod_length, params)?;
+            let pw = resolve_one(id, plate_width, params)?;
+            let pt = resolve_one(id, plate_thickness, params)?;
+            if rr <= 0.0 || rl <= 0.0 || pw <= 0.0 || pt <= 0.0 || rr * 2.0 >= pw || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("TrussMember requires 2*rod_radius < plate_width and positive dims (got rr={rr}, pw={pw})") });
+            }
+            // Bottom plate centered on origin at z=[0, pt].
+            let bot_plate = box_at(
+                Vec3::new(pw, pw, pt),
+                Point3::new(-pw/2.0, -pw/2.0, 0.0),
+            );
+            // Rod centered at origin, axis +z, from z=pt-eps to z=pt+rl+eps.
+            let eps = (pt * 0.05).max(1e-3);
+            let rod = cylinder_along_axis(rr, rl + 2.0 * eps, *segments, 2, pt - eps, 0.0, 0.0);
+            // Top plate at z=[pt+rl, pt+rl+pt].
+            let top_plate = box_at(
+                Vec3::new(pw, pw, pt),
+                Point3::new(-pw/2.0, -pw/2.0, pt + rl),
+            );
+            let lower = bot_plate.try_union(&rod).map_err(|e| EvalError::Boolean { id: id.into(), op: "truss_bot_join", message: e.message })?;
+            lower.try_union(&top_plate).map_err(|e| EvalError::Boolean { id: id.into(), op: "truss_top_join", message: e.message })
+        }
+        Feature::Hinge { leaf_width, leaf_height, leaf_thickness, pin_radius, segments, .. } => {
+            let lw = resolve_one(id, leaf_width, params)?;
+            let lh = resolve_one(id, leaf_height, params)?;
+            let lt = resolve_one(id, leaf_thickness, params)?;
+            let pr = resolve_one(id, pin_radius, params)?;
+            if lw <= 0.0 || lh <= 0.0 || lt <= 0.0 || pr <= 0.0 || pr >= lh / 2.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Hinge requires pin_radius < leaf_height/2 and positive dims (got lw={lw}, lh={lh}, lt={lt}, pr={pr})") });
+            }
+            // Two leaves: left leaf in x=[-lw, 0], right leaf in x=[0, lw].
+            // Both span y=[0, lh], z=[0, lt]. Pin runs along +y at z=lt+pr,
+            // x=0, length lh, radius pr. Joined.
+            let left = box_at(Vec3::new(lw, lh, lt), Point3::new(-lw, 0.0, 0.0));
+            let right = box_at(Vec3::new(lw, lh, lt), Point3::new(0.0, 0.0, 0.0));
+            let pin = cylinder_along_axis(pr, lh, *segments, 1, 0.0, 0.0, lt + pr);
+            let leaves = left.try_union(&right).map_err(|e| EvalError::Boolean { id: id.into(), op: "hinge_leaves", message: e.message })?;
+            leaves.try_union(&pin).map_err(|e| EvalError::Boolean { id: id.into(), op: "hinge_pin", message: e.message })
+        }
+        Feature::Cleat { arm_length, arm_height, support_width, support_height, thickness, .. } => {
+            let al = resolve_one(id, arm_length, params)?;
+            let ah = resolve_one(id, arm_height, params)?;
+            let sw = resolve_one(id, support_width, params)?;
+            let sh = resolve_one(id, support_height, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if al <= 0.0 || ah <= 0.0 || sw <= 0.0 || sh <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Cleat requires positive dims (got al={al}, ah={ah}, sw={sw}, sh={sh}, t={t})") });
+            }
+            // Arm extends along +x (from x=0 to x=al), z=[0, ah], y=[0, t].
+            // Support extends along +x (from -sw to 0), z=[0, sh], y=[0, t].
+            // L-shaped, sharing the corner at x=0.
+            let arm = box_at(Vec3::new(al, t, ah), Point3::new(0.0, 0.0, 0.0));
+            let support = box_at(Vec3::new(sw, t, sh), Point3::new(-sw, 0.0, 0.0));
+            arm.try_union(&support).map_err(|e| EvalError::Boolean { id: id.into(), op: "cleat_join", message: e.message })
+        }
+        Feature::Lattice { nx, ny, cell_size, bar_thickness, depth, .. } => {
+            let cs = resolve_one(id, cell_size, params)?;
+            let bt = resolve_one(id, bar_thickness, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if cs <= 0.0 || bt <= 0.0 || d <= 0.0 || bt >= cs || *nx == 0 || *ny == 0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Lattice requires bar_thickness < cell_size, positive dims, nx&ny>=1 (got cs={cs}, bt={bt})") });
+            }
+            // (nx + 1) horizontal bars, (ny + 1) vertical bars.
+            // Each horizontal bar: full width along +x, bt thick along +y, d tall along +z.
+            // Each vertical bar: bt wide along +x, full height along +y, d tall along +z.
+            let total_x = (*nx as f64) * cs;
+            let total_y = (*ny as f64) * cs;
+            let mut acc: Option<Solid> = None;
+            for i in 0..=*ny {
+                let y = (i as f64) * cs - bt / 2.0;
+                let bar = box_at(Vec3::new(total_x, bt, d), Point3::new(0.0, y, 0.0));
+                acc = Some(match acc.take() {
+                    None => bar,
+                    Some(prev) => prev.try_union(&bar).map_err(|e| EvalError::Boolean { id: id.into(), op: "lattice_h_bar", message: format!("h bar {i}: {}", e.message) })?,
+                });
+            }
+            for j in 0..=*nx {
+                let x = (j as f64) * cs - bt / 2.0;
+                let bar = box_at(Vec3::new(bt, total_y, d), Point3::new(x, 0.0, 0.0));
+                acc = Some(match acc.take() {
+                    None => bar,
+                    Some(prev) => prev.try_union(&bar).map_err(|e| EvalError::Boolean { id: id.into(), op: "lattice_v_bar", message: format!("v bar {j}: {}", e.message) })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
         Feature::HoleArray {
             input,
             axis,

@@ -1075,6 +1075,68 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// SheetBend: a thin sheet-metal shape that bends 90° at a given
+    /// distance from the start. First section runs `length_a` along +x
+    /// at thickness `thickness`, then bends up 90° and continues
+    /// `length_b` along +z. `width` is the depth along +y.
+    SheetBend {
+        id: String,
+        length_a: Scalar,
+        length_b: Scalar,
+        width: Scalar,
+        thickness: Scalar,
+    },
+
+    /// TrussMember: a thin cylindrical rod with rectangular end plates
+    /// — used to model truss bars or struts. The rod runs along +z
+    /// from end plate to end plate.
+    TrussMember {
+        id: String,
+        rod_radius: Scalar,
+        rod_length: Scalar,
+        plate_width: Scalar,
+        plate_thickness: Scalar,
+        segments: usize,
+    },
+
+    /// Hinge: two flat leaves joined by a cylindrical knuckle pin. Each
+    /// leaf is `leaf_width` x `leaf_height` x `leaf_thickness`. The
+    /// knuckle pin runs along +y between the two leaves with radius
+    /// `pin_radius`. Pin and leaves are unioned into a single solid.
+    Hinge {
+        id: String,
+        leaf_width: Scalar,
+        leaf_height: Scalar,
+        leaf_thickness: Scalar,
+        pin_radius: Scalar,
+        segments: usize,
+    },
+
+    /// Cleat: T-shape wall mount — a horizontal arm and a vertical
+    /// support, both rectangular. `arm_length` along +x, `arm_height`
+    /// along +z, `support_width` along +x, `support_height` along +z,
+    /// `thickness` along +y. The two are joined L-style at the origin.
+    Cleat {
+        id: String,
+        arm_length: Scalar,
+        arm_height: Scalar,
+        support_width: Scalar,
+        support_height: Scalar,
+        thickness: Scalar,
+    },
+
+    /// Lattice: a 2D grid of crossing rectangular bars. Like a
+    /// gridiron. `nx` × `ny` cells, each `cell_size` square; bars are
+    /// `bar_thickness` wide.
+    Lattice {
+        id: String,
+        nx: usize,
+        ny: usize,
+        cell_size: Scalar,
+        bar_thickness: Scalar,
+        depth: Scalar,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -1276,6 +1338,11 @@ impl Feature {
             | Feature::Elbow90 { id, .. }
             | Feature::DistanceRod { id, .. }
             | Feature::AngleArc { id, .. }
+            | Feature::SheetBend { id, .. }
+            | Feature::TrussMember { id, .. }
+            | Feature::Hinge { id, .. }
+            | Feature::Cleat { id, .. }
+            | Feature::Lattice { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -1375,6 +1442,11 @@ impl Feature {
             | Feature::Elbow90 { .. }
             | Feature::DistanceRod { .. }
             | Feature::AngleArc { .. }
+            | Feature::SheetBend { .. }
+            | Feature::TrussMember { .. }
+            | Feature::Hinge { .. }
+            | Feature::Cleat { .. }
+            | Feature::Lattice { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }
