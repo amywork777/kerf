@@ -48,19 +48,49 @@ kernel + authoring + viewer + production output).
 | Planar booleans + primitives + validation | 15%       | 99%      | 14.85  |
 | Authoring layer (params + expressions)    | 6%        | 98%      | 5.88   |
 | 3D viewer (mesh, camera, lighting)        | 7%        | 90%      | 6.3    |
-| Picking / selection                       | 5%        | 50%      | 2.5    |
+| Picking / selection (face → owner Feature)| 5%        | 70%      | 3.5    |
 | Feature tree UI                           | 5%        | 60%      | 3.0    |
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
-| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun) | 6% | 45% | 2.7  |
+| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath) | 6% | 55% | 3.3 |
 | Manufacturing features (CornerCut, Fillet, Fillets, Chamfer, Counterbore, Countersink, hole patterns, hex/square holes, dovetail, vee-groove) | 12% | 55% | 6.6 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror) | 3% | 35% | 1.05 |
-| Curved-surface analytic booleans (faceted spheres now compose) | 8% | 25% | 2.0 |
+| Curved-surface analytic booleans (faceted spheres + faceted torus compose for simple cases) | 8% | 30% | 2.4 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~52.7%** |
-| **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~94%**   |
+| **Solidworks-tier total**                 | **100%**  |          | **~54.7%** |
+| **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~95%**   |
+
+## Latest session (2026-05-06)
+
+GAP 1 (Picking → edit) shipped. GAP 2 Plan B (SweepPath) shipped. Bonus
+faceted torus + Donut feature shipped. ~52.7% → ~54.7% (+2 SW pts), 518
+tests → 538 tests, 0 failed.
+
+- **Picking provenance**: new `Solid.face_owner_tag: SecondaryMap<FaceId,
+  String>`. The cad evaluator tags every face produced by a primitive
+  Feature with that feature's id, and `stitch` propagates ownership from
+  each `KeptFace`'s source side through booleans. `Difference("op",
+  "body", "drill")` returns a solid whose hole-wall faces trace back to
+  "drill" and flat exterior to "body" — this is the foundation for
+  click-a-face → edit-the-feature in the viewer. Exposed via
+  `evaluate_with_face_ids` in the WASM API as `face_owner_tags:
+  Vec<String>`, indexed in lockstep with `face_ids`. **Picking category
+  bumps 50% → 70%.**
+- **SweepPath**: chain of cylinders along an arbitrary polyline (not
+  just axis-aligned, like PipeRun). Axis-aligned segments take the exact
+  cyclic-permutation fast path; diagonal segments use Rotation3
+  (introduces ~1e-15 noise that's tolerable for unions). Sharp miters
+  between segments. **Sweep/loft category bumps 45% → 55%.**
+- **Faceted torus**: new `torus_faceted` kernel primitive (genus-1
+  topology built via direct topology operators, mirror of
+  sphere_faceted). New `Donut` feature uses it. Volume verified against
+  analytic 2π²Rr² to 6%. **Curved-surface category bumps 25% → 30%.**
+  Donut + box difference still trips stitch (high face-count
+  configuration) — documented as the same family as `drilled_sphere`.
+
+## Earlier (pre-2026-05-06)
 
 Started this run at ~40.5% / 91%. Shipped 44+ features and four
 real kernel additions:
@@ -96,7 +126,7 @@ real kernel additions:
 - **Decorative composites**: Arrow, Funnel, TruncatedPyramid.
 - **Transforms**: ScaleXYZ.
 
-518 tests pass.
+538 tests pass, 7 ignored.
 
 The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
 are real manufacturing features even if multi-edge fillet is still
