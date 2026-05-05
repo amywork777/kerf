@@ -324,6 +324,33 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// Capsule (cylinder with hemispherical caps) along +z. The
+    /// cylindrical body has `radius` and `height`, sitting at z ∈ [0, h].
+    /// Two hemispheres of `radius` cap the bottom (z=0) and top
+    /// (z=`height`). Total length along z = height + 2*radius.
+    /// `stacks` and `slices` set the sphere tessellation; the cylinder
+    /// uses `slices` for its lateral faceting too.
+    Capsule {
+        id: String,
+        radius: Scalar,
+        height: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// PipeRun: a chain of cylindrical pipe segments along a polyline of
+    /// axis-aligned points. Each consecutive pair of points must differ in
+    /// EXACTLY ONE coordinate (i.e., the segment is axis-aligned). At each
+    /// turn (interior point) a hemispherical cap of `radius` joins the
+    /// segments. Result is the union of all segments + interior hemispheres.
+    /// Useful for plumbing layouts.
+    PipeRun {
+        id: String,
+        points: Vec<[Scalar; 3]>,
+        radius: Scalar,
+        segments: usize,
+    },
+
     /// UV-style faceted sphere centered on the origin. Use this instead
     /// of the analytic `Sphere` whenever you want to compose with
     /// booleans (`Sphere`'s 1-face/0-edges topology breaks the engine).
@@ -658,6 +685,8 @@ impl Feature {
             | Feature::SphereFaceted { id, .. }
             | Feature::HollowSphere { id, .. }
             | Feature::Dome { id, .. }
+            | Feature::Capsule { id, .. }
+            | Feature::PipeRun { id, .. }
             | Feature::CylinderAt { id, .. }
             | Feature::TubeAt { id, .. }
             | Feature::Star { id, .. }
@@ -713,6 +742,8 @@ impl Feature {
             | Feature::SphereFaceted { .. }
             | Feature::HollowSphere { .. }
             | Feature::Dome { .. }
+            | Feature::Capsule { .. }
+            | Feature::PipeRun { .. }
             | Feature::CylinderAt { .. }
             | Feature::TubeAt { .. }
             | Feature::Star { .. }

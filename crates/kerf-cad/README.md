@@ -128,6 +128,8 @@ offending name.
 | `SphereFaceted`  | `radius`, `stacks` (≥2), `slices` (≥3) — UV sphere with planar facets (composes with booleans, unlike analytic `Sphere`) | — |
 | `HollowSphere`   | `outer_radius`, `inner_radius`, `stacks` (≥2), `slices` (≥3) — concentric spherical shell | — |
 | `Dome`           | `radius`, `stacks` (≥2), `slices` (≥3) — hemisphere sitting on the xy plane | — |
+| `Capsule`        | `radius`, `height`, `stacks`, `slices` — cylinder along +z with hemispherical caps | — |
+| `PipeRun`        | `points: [[x,y,z], …]` (≥2 points, axis-aligned segments), `radius`, `segments` (≥3) — chain of cylindrical pipe segments along an axis-aligned polyline | — |
 | `CylinderAt`     | `base: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `radius`, `height`, `segments` (≥3) — cylinder positioned at `base` with cap-axis along `axis` | — |
 | `Star`           | `points` (≥3), `outer_radius`, `inner_radius`, `height` — n-pointed star prism extruded along +z | — |
 | `TubeAt`         | `base: [x,y,z]`, `axis: "x"\|"y"\|"z"`, `outer_radius`, `inner_radius`, `height`, `segments` (≥3) | — |

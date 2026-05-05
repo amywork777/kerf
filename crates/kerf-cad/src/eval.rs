@@ -620,6 +620,128 @@ fn build(
             }
             Ok(cone_faceted(r, h, *segments))
         }
+        Feature::Capsule {
+            radius,
+            height,
+            stacks,
+            slices,
+            ..
+        } => {
+            let r = resolve_one(id, radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            if r <= 0.0 || h <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Capsule requires positive radius, height (got {r}, {h})"),
+                });
+            }
+            if *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Capsule needs stacks >= 2 and slices >= 3"),
+                });
+            }
+            let body = cylinder_faceted(r, h, *slices);
+            let bot_sphere = sphere_faceted(r, *stacks, *slices);
+            let top_sphere_raw = sphere_faceted(r, *stacks, *slices);
+            let top_sphere = translate_solid(&top_sphere_raw, Vec3::new(0.0, 0.0, h));
+            let body_bot = body.try_union(&bot_sphere).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "capsule_bottom_union",
+                message: e.message,
+            })?;
+            body_bot
+                .try_union(&top_sphere)
+                .map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "capsule_top_union",
+                    message: e.message,
+                })
+        }
+        Feature::PipeRun {
+            points,
+            radius,
+            segments,
+            ..
+        } => {
+            if points.len() < 2 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "PipeRun needs at least 2 points (got {})",
+                        points.len()
+                    ),
+                });
+            }
+            let r = resolve_one(id, radius, params)?;
+            if r <= 0.0 || *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("PipeRun requires positive radius and segments >= 3"),
+                });
+            }
+            let resolved: Vec<[f64; 3]> = points
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    resolve_arr(p, params).map_err(|message| EvalError::Parameter {
+                        id: id.into(),
+                        message: format!("point {i}: {message}"),
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            // For each consecutive pair, build a cylinder along the axis
+            // they differ in. Verify they're axis-aligned (differ in exactly
+            // one coordinate).
+            let mut acc: Option<Solid> = None;
+            for i in 0..resolved.len() - 1 {
+                let p0 = resolved[i];
+                let p1 = resolved[i + 1];
+                let diffs = [(p1[0] - p0[0]).abs(), (p1[1] - p0[1]).abs(), (p1[2] - p0[2]).abs()];
+                let nonzero: Vec<usize> = (0..3).filter(|&k| diffs[k] > 1e-12).collect();
+                if nonzero.len() != 1 {
+                    return Err(EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!(
+                            "PipeRun segment {i}→{} is not axis-aligned ({:?} → {:?})",
+                            i + 1,
+                            p0,
+                            p1
+                        ),
+                    });
+                }
+                let axis_idx = nonzero[0];
+                let len = diffs[axis_idx];
+                let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+                // Build the cylinder. Its axis-along position spans from
+                // min(p0[axis], p1[axis]) to that + len.
+                let axis_origin = p0[axis_idx].min(p1[axis_idx]);
+                let cyl = cylinder_along_axis(
+                    r,
+                    len,
+                    *segments,
+                    axis_idx,
+                    axis_origin,
+                    p0[a_idx],
+                    p0[b_idx],
+                );
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "pipe_run_segment_union",
+                        message: format!("segment {i}: {}", e.message),
+                    })?,
+                });
+            }
+            // Note: we don't add sphere caps at corners. Perpendicular
+            // cylinder unions produce a sharp joint where their lateral
+            // surfaces meet — adding a sphere there to round the joint
+            // tends to trip the boolean engine on the multi-cylinder-and-
+            // sphere overlap. Users wanting rounded joints can compose
+            // PipeRun with explicit SphereFaceted unions in JSON.
+            Ok(acc.unwrap())
+        }
         Feature::SphereFaceted {
             radius,
             stacks,
