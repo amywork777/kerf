@@ -108,12 +108,29 @@ pub fn evaluate_with_face_ids(
         }
     }
     let face_count = face_ids.iter().copied().max().map_or(0, |m| m + 1);
+    // Per-face owner tags, indexed by the same face index used in face_ids.
+    // tessellate_with_face_index iterates `solid.topo.face_ids()` in order
+    // and assigns sequential indices starting at 0, so we must walk the
+    // same iterator here to keep the tag vector in lockstep. Empty string
+    // for any face that has no recorded owner.
+    let owner_tags: Vec<String> = solid
+        .topo
+        .face_ids()
+        .map(|fid| {
+            solid
+                .face_owner_tag
+                .get(fid)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect();
     let vol = solid_volume(&solid);
     #[derive(serde::Serialize)]
     struct OutFull {
         triangles: Vec<f32>,
         face_ids: Vec<u32>,
         face_count: u32,
+        face_owner_tags: Vec<String>,
         volume: f64,
         shell_count: usize,
         vertex_count: usize,
@@ -124,6 +141,7 @@ pub fn evaluate_with_face_ids(
         triangles: tris,
         face_ids,
         face_count,
+        face_owner_tags: owner_tags,
         volume: vol,
         shell_count: solid.shell_count(),
         vertex_count: solid.vertex_count(),

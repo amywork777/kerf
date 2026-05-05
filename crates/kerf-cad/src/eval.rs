@@ -67,7 +67,19 @@ impl Model {
         }
         stack.pop();
 
-        let result = build(feature, &self.parameters, cache)?;
+        let mut result = build(feature, &self.parameters, cache)?;
+        // Picking provenance: tag any face in this feature's result that
+        // doesn't already carry an owner tag with this feature's id. Boolean
+        // operations propagate inputs' owner tags through stitch, so they
+        // come back already-tagged and we leave those alone — only the
+        // feature that originally produced the geometry claims it.
+        let owner = id.to_string();
+        let face_ids: Vec<_> = result.topo.face_ids().collect();
+        for fid in face_ids {
+            if !result.face_owner_tag.contains_key(fid) {
+                result.face_owner_tag.insert(fid, owner.clone());
+            }
+        }
         cache.insert(id.to_string(), result);
         Ok(())
     }

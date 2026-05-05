@@ -141,7 +141,15 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
         let surface = a.face_geom.get(face_id).cloned().unwrap();
         let ancestor = a.face_ancestor(face_id);
         let anc_key = (0u8, ancestor.data().as_ffi());
-        let face = KeptFace { polygon, surface };
+        // Owner tag: prefer this face's tag, falling back to its ancestor's
+        // (mef-driven splits create new face ids without copying owner — the
+        // ancestor still carries it).
+        let owner = a
+            .face_owner_tag
+            .get(face_id)
+            .or_else(|| a.face_owner_tag.get(ancestor))
+            .cloned();
+        let face = KeptFace { polygon, surface, owner };
         if keep_a_face(cls, op) {
             kept.push(face);
             kept_source.push(0);
@@ -173,7 +181,12 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
             // recover outward direction).
             surface = flip_surface_normal(surface);
         }
-        let face = KeptFace { polygon, surface };
+        let owner = b
+            .face_owner_tag
+            .get(face_id)
+            .or_else(|| b.face_owner_tag.get(ancestor))
+            .cloned();
+        let face = KeptFace { polygon, surface, owner };
         if face_kept {
             kept.push(face);
             kept_source.push(1);

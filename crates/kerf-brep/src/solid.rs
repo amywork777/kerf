@@ -21,6 +21,13 @@ pub struct Solid {
     /// `f` itself if no entry exists.
     #[serde(default)]
     pub face_provenance: SecondaryMap<FaceId, FaceId>,
+    /// Picking provenance: maps each face to a free-form owner tag
+    /// (typically a kerf-cad Feature id like "drill" or "body"). Populated
+    /// by the cad evaluator after each Feature builds its solid; propagated
+    /// through booleans by `stitch` from each kept face's source KeptFace.
+    /// Faces with no entry have no recorded owner.
+    #[serde(default)]
+    pub face_owner_tag: SecondaryMap<FaceId, String>,
 }
 
 impl Solid {
