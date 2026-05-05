@@ -998,6 +998,75 @@ fn build(
             }
             Ok(acc.unwrap())
         }
+        Feature::Coil {
+            coil_radius,
+            wire_radius,
+            pitch,
+            turns,
+            segments_per_turn,
+            wire_segments,
+            ..
+        } => {
+            let r_coil = resolve_one(id, coil_radius, params)?;
+            let r_wire = resolve_one(id, wire_radius, params)?;
+            let p = resolve_one(id, pitch, params)?;
+            let t = resolve_one(id, turns, params)?;
+            if r_coil <= 0.0 || r_wire <= 0.0 || p <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Coil requires positive radii, pitch, turns (got coil={r_coil}, wire={r_wire}, pitch={p}, turns={t})"
+                    ),
+                });
+            }
+            if r_wire >= r_coil {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Coil wire_radius ({r_wire}) must be less than coil_radius ({r_coil}) — otherwise the helix self-overlaps"
+                    ),
+                });
+            }
+            if *segments_per_turn < 6 || *wire_segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "Coil requires segments_per_turn >= 6 and wire_segments >= 3".into(),
+                });
+            }
+            let total_samples = (*segments_per_turn as f64 * t).ceil() as usize + 1;
+            // Generate helix points: (R cos θ, R sin θ, p * θ / (2π)).
+            let mut acc: Option<Solid> = None;
+            let total_angle = 2.0 * std::f64::consts::PI * t;
+            for i in 0..total_samples - 1 {
+                let theta_a = total_angle * i as f64 / (total_samples - 1) as f64;
+                let theta_b = total_angle * (i + 1) as f64 / (total_samples - 1) as f64;
+                let p0 = [
+                    r_coil * theta_a.cos(),
+                    r_coil * theta_a.sin(),
+                    p * theta_a / (2.0 * std::f64::consts::PI),
+                ];
+                let p1 = [
+                    r_coil * theta_b.cos(),
+                    r_coil * theta_b.sin(),
+                    p * theta_b / (2.0 * std::f64::consts::PI),
+                ];
+                let cyl = sweep_cylinder_segment(p0, p1, r_wire, *wire_segments).ok_or_else(
+                    || EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!("Coil segment {i} has zero length"),
+                    },
+                )?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "coil_segment_union",
+                        message: format!("segment {i}: {}", e.message),
+                    })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
         Feature::TruncatedPyramid {
             bottom_radius,
             top_radius,

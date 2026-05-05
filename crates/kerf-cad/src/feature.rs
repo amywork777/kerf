@@ -453,6 +453,21 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// Coil: a helical chain of cylinder segments — useful for springs,
+    /// thread roots, and any helical sweep. Built on top of SweepPath: the
+    /// helix is sampled at `segments_per_turn * turns + 1` points and each
+    /// pair of consecutive samples becomes a cylinder of `wire_radius`.
+    /// Centered on the +z axis, starts at angle 0 in the +x direction.
+    Coil {
+        id: String,
+        coil_radius: Scalar,
+        wire_radius: Scalar,
+        pitch: Scalar,
+        turns: Scalar,
+        segments_per_turn: usize,
+        wire_segments: usize,
+    },
+
     /// UV-style faceted sphere centered on the origin. Use this instead
     /// of the analytic `Sphere` whenever you want to compose with
     /// booleans (`Sphere`'s 1-face/0-edges topology breaks the engine).
@@ -804,6 +819,7 @@ impl Feature {
             | Feature::Capsule { id, .. }
             | Feature::PipeRun { id, .. }
             | Feature::SweepPath { id, .. }
+            | Feature::Coil { id, .. }
             | Feature::RefPoint { id, .. }
             | Feature::RefAxis { id, .. }
             | Feature::RefPlane { id, .. }
@@ -870,6 +886,7 @@ impl Feature {
             | Feature::Capsule { .. }
             | Feature::PipeRun { .. }
             | Feature::SweepPath { .. }
+            | Feature::Coil { .. }
             | Feature::RefPoint { .. }
             | Feature::RefAxis { .. }
             | Feature::RefPlane { .. }
