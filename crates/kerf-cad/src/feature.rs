@@ -785,6 +785,73 @@ pub enum Feature {
         marker_size: Scalar,
     },
 
+    /// MountingFlange: thin disk with a circular pattern of bolt holes.
+    /// `disk_radius` is the outer flange radius, `disk_thickness` the
+    /// flange thickness (along +z), `bolt_circle_radius` the radius of
+    /// the bolt-hole circle, `bolt_count` the number of bolts, and
+    /// `bolt_radius` the bolt-hole radius.
+    MountingFlange {
+        id: String,
+        disk_radius: Scalar,
+        disk_thickness: Scalar,
+        bolt_circle_radius: Scalar,
+        bolt_count: usize,
+        bolt_radius: Scalar,
+        segments: usize,
+    },
+
+    /// GearBlank: a faceted cylinder with `tooth_count` rectangular notches
+    /// cut around its outer circumference. Not a true involute gear (those
+    /// need curve-aware extrusion), but a useful approximation for
+    /// visualisation and mating-surface roughing.
+    GearBlank {
+        id: String,
+        outer_radius: Scalar,
+        root_radius: Scalar,
+        tooth_count: usize,
+        thickness: Scalar,
+        segments_per_tooth: usize,
+    },
+
+    /// KnurledGrip: a cylinder with ridges around its circumference. The
+    /// ridges are an n-sided RegularPrism slightly larger than the bare
+    /// cylinder, giving a knurled / gripped look.
+    KnurledGrip {
+        id: String,
+        radius: Scalar,
+        ridge_height: Scalar,
+        height: Scalar,
+        ridge_count: usize,
+    },
+
+    /// Pipe: cylindrical tube whose axis is the given axis-aligned line
+    /// (currently restricted to "x" / "y" / "z" — like Tube but the
+    /// orientation is named, not implicit z). Outer / inner radii along
+    /// the axis, length along that axis from the base point.
+    Pipe {
+        id: String,
+        base: [Scalar; 3],
+        axis: String,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        length: Scalar,
+        segments: usize,
+    },
+
+    /// Spring: a compressed-coil version of Coil. Identical parameter
+    /// shape but with an `end_caps` flag — when true, attaches a small
+    /// disk at each end of the coil for end-grinding the spring (a real
+    /// spring detail). For now the disk is a small RegularPrism.
+    Spring {
+        id: String,
+        coil_radius: Scalar,
+        wire_radius: Scalar,
+        pitch: Scalar,
+        turns: Scalar,
+        segments_per_turn: usize,
+        wire_segments: usize,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -963,6 +1030,11 @@ impl Feature {
             | Feature::Bowl { id, .. }
             | Feature::BoundingBoxRef { id, .. }
             | Feature::CentroidPoint { id, .. }
+            | Feature::MountingFlange { id, .. }
+            | Feature::GearBlank { id, .. }
+            | Feature::KnurledGrip { id, .. }
+            | Feature::Pipe { id, .. }
+            | Feature::Spring { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -1039,6 +1111,11 @@ impl Feature {
             | Feature::Hemisphere { .. }
             | Feature::SphericalCap { .. }
             | Feature::Bowl { .. }
+            | Feature::MountingFlange { .. }
+            | Feature::GearBlank { .. }
+            | Feature::KnurledGrip { .. }
+            | Feature::Pipe { .. }
+            | Feature::Spring { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }

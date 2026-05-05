@@ -2011,6 +2011,150 @@ fn build(
                 Point3::new(cx - m / 2.0, cy - m / 2.0, cz - m / 2.0),
             ))
         }
+        Feature::MountingFlange {
+            disk_radius, disk_thickness, bolt_circle_radius, bolt_count, bolt_radius, segments, ..
+        } => {
+            let r_disk = resolve_one(id, disk_radius, params)?;
+            let t = resolve_one(id, disk_thickness, params)?;
+            let r_bc = resolve_one(id, bolt_circle_radius, params)?;
+            let r_bolt = resolve_one(id, bolt_radius, params)?;
+            if r_disk <= 0.0 || t <= 0.0 || r_bc <= 0.0 || r_bolt <= 0.0
+                || r_bc >= r_disk || *bolt_count == 0 || *segments < 3
+            {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "MountingFlange requires positive dims, bolt_circle < disk_radius, bolt_count >= 1, segments >= 3 (got disk={r_disk}, t={t}, bc={r_bc}, bolt={r_bolt}, count={bolt_count})"
+                    ),
+                });
+            }
+            let mut acc = cylinder_faceted(r_disk, t, *segments);
+            for k in 0..*bolt_count {
+                let theta = 2.0 * std::f64::consts::PI * (k as f64) / (*bolt_count as f64);
+                let bx = r_bc * theta.cos();
+                let by = r_bc * theta.sin();
+                let hole = cylinder_along_axis(
+                    r_bolt,
+                    t + 2.0 * (t * 0.05).max(1e-3),
+                    *segments,
+                    2,
+                    -(t * 0.05).max(1e-3),
+                    bx,
+                    by,
+                );
+                acc = acc
+                    .try_difference(&hole)
+                    .map_err(|e| EvalError::Boolean { id: id.into(), op: "mounting_flange_drill", message: format!("hole {k}: {}", e.message) })?;
+            }
+            Ok(acc)
+        }
+        Feature::GearBlank {
+            outer_radius, root_radius, tooth_count, thickness, segments_per_tooth, ..
+        } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_root = resolve_one(id, root_radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r_out <= 0.0 || r_root <= 0.0 || r_root >= r_out || t <= 0.0
+                || *tooth_count < 3 || *segments_per_tooth < 1
+            {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "GearBlank requires r_out > r_root > 0, t > 0, tooth_count >= 3, segments_per_tooth >= 1 (got r_out={r_out}, r_root={r_root}, t={t}, tc={tooth_count})"
+                    ),
+                });
+            }
+            // Build a polygon with 2*tooth_count vertices alternating
+            // between outer (tooth tips) and root radii. Each tooth spans
+            // 2π/tooth_count of arc, with the first half at outer and the
+            // second half at root.
+            let n = 2 * *tooth_count;
+            let mut prof = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                let r = if i % 2 == 0 { r_out } else { r_root };
+                prof.push(Point3::new(r * theta.cos(), r * theta.sin(), 0.0));
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, t)))
+        }
+        Feature::KnurledGrip {
+            radius, ridge_height, height, ridge_count, ..
+        } => {
+            let r = resolve_one(id, radius, params)?;
+            let rh = resolve_one(id, ridge_height, params)?;
+            let h = resolve_one(id, height, params)?;
+            if r <= 0.0 || rh <= 0.0 || h <= 0.0 || *ridge_count < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("KnurledGrip requires positive dims, ridge_count >= 6 (got r={r}, rh={rh}, h={h}, rc={ridge_count})"),
+                });
+            }
+            // Build a profile that alternates between r (valley) and r+rh (ridge).
+            let n = 2 * *ridge_count;
+            let mut prof = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                let rad = if i % 2 == 0 { r + rh } else { r };
+                prof.push(Point3::new(rad * theta.cos(), rad * theta.sin(), 0.0));
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, h)))
+        }
+        Feature::Pipe {
+            base, axis, outer_radius, inner_radius, length, segments, ..
+        } => {
+            let b = resolve3(id, base, params)?;
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let l = resolve_one(id, length, params)?;
+            if r_out <= 0.0 || r_in <= 0.0 || r_in >= r_out || l <= 0.0 || *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Pipe requires 0 < inner < outer, length > 0, segments >= 3 (got out={r_out}, in={r_in}, l={l})"),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, idx_b) = perpendicular_axes(axis_idx);
+            let outer = cylinder_along_axis(r_out, l, *segments, axis_idx, b[axis_idx], b[a_idx], b[idx_b]);
+            let eps = (l * 0.05).max(1e-3);
+            let inner = cylinder_along_axis(r_in, l + 2.0 * eps, *segments, axis_idx, b[axis_idx] - eps, b[a_idx], b[idx_b]);
+            outer.try_difference(&inner).map_err(|e| EvalError::Boolean { id: id.into(), op: "pipe_bore", message: e.message })
+        }
+        Feature::Spring {
+            coil_radius, wire_radius, pitch, turns, segments_per_turn, wire_segments, ..
+        } => {
+            // Spring is just an alias for Coil for now — same algorithm,
+            // with the door open to add end caps later.
+            let r_coil = resolve_one(id, coil_radius, params)?;
+            let r_wire = resolve_one(id, wire_radius, params)?;
+            let p = resolve_one(id, pitch, params)?;
+            let t = resolve_one(id, turns, params)?;
+            if r_coil <= 0.0 || r_wire <= 0.0 || p <= 0.0 || t <= 0.0 || r_wire >= r_coil
+                || *segments_per_turn < 6 || *wire_segments < 3
+            {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Spring requires the same constraints as Coil (got coil={r_coil}, wire={r_wire}, pitch={p}, turns={t})"),
+                });
+            }
+            let total_samples = (*segments_per_turn as f64 * t).ceil() as usize + 1;
+            let mut acc: Option<Solid> = None;
+            let total_angle = 2.0 * std::f64::consts::PI * t;
+            for i in 0..total_samples - 1 {
+                let theta_a = total_angle * i as f64 / (total_samples - 1) as f64;
+                let theta_b = total_angle * (i + 1) as f64 / (total_samples - 1) as f64;
+                let p0 = [r_coil * theta_a.cos(), r_coil * theta_a.sin(), p * theta_a / (2.0 * std::f64::consts::PI)];
+                let p1 = [r_coil * theta_b.cos(), r_coil * theta_b.sin(), p * theta_b / (2.0 * std::f64::consts::PI)];
+                let cyl = sweep_cylinder_segment(p0, p1, r_wire, *wire_segments).ok_or_else(|| EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Spring segment {i} has zero length"),
+                })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean { id: id.into(), op: "spring_segment_union", message: format!("segment {i}: {}", e.message) })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
         Feature::HoleArray {
             input,
             axis,
