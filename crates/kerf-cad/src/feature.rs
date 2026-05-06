@@ -1617,6 +1617,82 @@ pub enum Feature {
         torus_segs: usize,
     },
 
+    /// Cup: an open-top cylindrical container — outer cylinder minus
+    /// inner cylindrical cavity. `wall_thickness` defines wall + floor.
+    Cup {
+        id: String,
+        outer_radius: Scalar,
+        height: Scalar,
+        wall_thickness: Scalar,
+        segments: usize,
+    },
+
+    /// Bottle: a cylindrical body with a narrow cylindrical neck on
+    /// top. `body_radius`/`body_height` define the lower part; the
+    /// neck is a smaller cylinder of `neck_radius`/`neck_height` above.
+    Bottle {
+        id: String,
+        body_radius: Scalar,
+        body_height: Scalar,
+        neck_radius: Scalar,
+        neck_height: Scalar,
+        segments: usize,
+    },
+
+    /// TableLeg: a tapered cylindrical leg — wider at the bottom,
+    /// narrower at the top. Same params as Plug.
+    TableLeg {
+        id: String,
+        bottom_radius: Scalar,
+        top_radius: Scalar,
+        height: Scalar,
+        segments: usize,
+    },
+
+    /// ChairLeg: a rectangular leg — extruded square cross-section.
+    ChairLeg {
+        id: String,
+        width: Scalar,
+        depth: Scalar,
+        height: Scalar,
+    },
+
+    /// Bookshelf: a multi-shelf rectangular shelving unit. `shelves`
+    /// horizontal panels of size (width × depth × shelf_thickness)
+    /// stacked at intervals of `clear_height`. Two side panels of
+    /// height = shelves * (clear_height + shelf_thickness).
+    Bookshelf {
+        id: String,
+        width: Scalar,
+        depth: Scalar,
+        shelves: usize,
+        shelf_thickness: Scalar,
+        clear_height: Scalar,
+        side_thickness: Scalar,
+    },
+
+    /// PlanterBox: an open-top rectangular planter — like Trough but
+    /// with `outer_length` instead of square cross-section.
+    PlanterBox {
+        id: String,
+        outer_width: Scalar,
+        outer_length: Scalar,
+        outer_height: Scalar,
+        wall_thickness: Scalar,
+    },
+
+    /// DrawerSlot: a rectangular slot for a sliding drawer — open at
+    /// the front, closed on three sides (back, left, right). `width`
+    /// is the slot opening, `depth` along +y, `height` along +z, walls
+    /// of `wall_thickness`.
+    DrawerSlot {
+        id: String,
+        width: Scalar,
+        depth: Scalar,
+        height: Scalar,
+        wall_thickness: Scalar,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -1866,6 +1942,13 @@ impl Feature {
             | Feature::DonutSlice { id, .. }
             | Feature::CapsuleAt { id, .. }
             | Feature::ToroidalKnob { id, .. }
+            | Feature::Cup { id, .. }
+            | Feature::Bottle { id, .. }
+            | Feature::TableLeg { id, .. }
+            | Feature::ChairLeg { id, .. }
+            | Feature::Bookshelf { id, .. }
+            | Feature::PlanterBox { id, .. }
+            | Feature::DrawerSlot { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -2013,6 +2096,13 @@ impl Feature {
             | Feature::DonutSlice { .. }
             | Feature::CapsuleAt { .. }
             | Feature::ToroidalKnob { .. }
+            | Feature::Cup { .. }
+            | Feature::Bottle { .. }
+            | Feature::TableLeg { .. }
+            | Feature::ChairLeg { .. }
+            | Feature::Bookshelf { .. }
+            | Feature::PlanterBox { .. }
+            | Feature::DrawerSlot { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }

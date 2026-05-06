@@ -3470,6 +3470,109 @@ fn build(
             let torus_t = translate_solid(&torus, kerf_geom::Vec3::new(0.0, 0.0, bh - tmin));
             body.try_union(&torus_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "toroidal_knob_join", message: e.message })
         }
+        Feature::Cup { outer_radius, height, wall_thickness, segments, .. } => {
+            let r = resolve_one(id, outer_radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            let w = resolve_one(id, wall_thickness, params)?;
+            if r <= 0.0 || h <= 0.0 || w <= 0.0 || w >= r || w >= h || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Cup requires wall_thickness < radius and < height (got r={r}, h={h}, w={w})") });
+            }
+            let outer = cylinder_faceted(r, h, *segments);
+            // Cavity: cylinder of (r - w) radius, height (h - w), starting at z = w.
+            let eps = (h * 0.05).max(1e-3);
+            let cavity = cylinder_along_axis(r - w, h - w + eps, *segments, 2, w, 0.0, 0.0);
+            outer.try_difference(&cavity).map_err(|e| EvalError::Boolean { id: id.into(), op: "cup_cavity", message: e.message })
+        }
+        Feature::Bottle { body_radius, body_height, neck_radius, neck_height, segments, .. } => {
+            let br = resolve_one(id, body_radius, params)?;
+            let bh = resolve_one(id, body_height, params)?;
+            let nr = resolve_one(id, neck_radius, params)?;
+            let nh = resolve_one(id, neck_height, params)?;
+            if br <= 0.0 || bh <= 0.0 || nr <= 0.0 || nh <= 0.0 || nr >= br || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Bottle requires neck<body, positive dims (got br={br}, nr={nr})") });
+            }
+            let body = cylinder_along_axis(br, bh, *segments, 2, 0.0, 0.0, 0.0);
+            let eps = (nh * 0.05).max(1e-3);
+            let neck = cylinder_along_axis(nr, nh + eps, *segments, 2, bh - eps, 0.0, 0.0);
+            body.try_union(&neck).map_err(|e| EvalError::Boolean { id: id.into(), op: "bottle_join", message: e.message })
+        }
+        Feature::TableLeg { bottom_radius, top_radius, height, segments, .. } => {
+            let br = resolve_one(id, bottom_radius, params)?;
+            let tr = resolve_one(id, top_radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            if br <= 0.0 || tr <= 0.0 || h <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("TableLeg requires positive dims, segments>=6 (got br={br}, tr={tr}, h={h})") });
+            }
+            Ok(frustum_faceted(tr, br, h, *segments))
+        }
+        Feature::ChairLeg { width, depth, height, .. } => {
+            let w = resolve_one(id, width, params)?;
+            let d = resolve_one(id, depth, params)?;
+            let h = resolve_one(id, height, params)?;
+            if w <= 0.0 || d <= 0.0 || h <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ChairLeg requires positive dims (got w={w}, d={d}, h={h})") });
+            }
+            Ok(box_at(Vec3::new(w, d, h), Point3::new(0.0, 0.0, 0.0)))
+        }
+        Feature::Bookshelf { width, depth, shelves, shelf_thickness, clear_height, side_thickness, .. } => {
+            let w = resolve_one(id, width, params)?;
+            let d = resolve_one(id, depth, params)?;
+            let st = resolve_one(id, shelf_thickness, params)?;
+            let ch = resolve_one(id, clear_height, params)?;
+            let sd = resolve_one(id, side_thickness, params)?;
+            if *shelves == 0 || w <= 0.0 || d <= 0.0 || st <= 0.0 || ch <= 0.0 || sd <= 0.0 || 2.0 * sd >= w {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Bookshelf requires shelves >= 1, 2*side_thickness < width (got shelves={shelves}, w={w})") });
+            }
+            // Total height = shelves * (st + ch). Side panels go from z=0 to that height,
+            // x=[0, sd] and x=[w-sd, w]. Each shelf at z = k*(st+ch), spanning x=[sd, w-sd].
+            let total_h = (*shelves as f64) * (st + ch);
+            let left = box_at(Vec3::new(sd, d, total_h), Point3::new(0.0, 0.0, 0.0));
+            let right = box_at(Vec3::new(sd, d, total_h), Point3::new(w - sd, 0.0, 0.0));
+            let mut acc = left
+                .try_union(&right)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "bookshelf_sides", message: e.message })?;
+            for k in 0..*shelves {
+                let z0 = (k as f64) * (st + ch);
+                let shelf = box_at(
+                    Vec3::new(w - 2.0 * sd, d, st),
+                    Point3::new(sd, 0.0, z0),
+                );
+                acc = acc.try_union(&shelf).map_err(|e| EvalError::Boolean { id: id.into(), op: "bookshelf_shelf", message: format!("shelf {k}: {}", e.message) })?;
+            }
+            Ok(acc)
+        }
+        Feature::PlanterBox { outer_width, outer_length, outer_height, wall_thickness, .. } => {
+            let w = resolve_one(id, outer_width, params)?;
+            let l = resolve_one(id, outer_length, params)?;
+            let h = resolve_one(id, outer_height, params)?;
+            let t = resolve_one(id, wall_thickness, params)?;
+            if w <= 0.0 || l <= 0.0 || h <= 0.0 || t <= 0.0 || 2.0 * t >= w || 2.0 * t >= l || t >= h {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("PlanterBox requires positive dims, 2t < w&l, t < h (got w={w}, l={l}, h={h}, t={t})") });
+            }
+            let outer = box_at(Vec3::new(w, l, h), Point3::new(0.0, 0.0, 0.0));
+            let cavity = box_at(
+                Vec3::new(w - 2.0 * t, l - 2.0 * t, h),
+                Point3::new(t, t, t),
+            );
+            outer.try_difference(&cavity).map_err(|e| EvalError::Boolean { id: id.into(), op: "planter_cavity", message: e.message })
+        }
+        Feature::DrawerSlot { width, depth, height, wall_thickness, .. } => {
+            let w = resolve_one(id, width, params)?;
+            let d = resolve_one(id, depth, params)?;
+            let h = resolve_one(id, height, params)?;
+            let t = resolve_one(id, wall_thickness, params)?;
+            if w <= 0.0 || d <= 0.0 || h <= 0.0 || t <= 0.0 || 2.0 * t >= w || t >= d {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("DrawerSlot requires 2t<w, t<d, positive dims (got w={w}, d={d}, h={h}, t={t})") });
+            }
+            // Like PlanterBox but with the FRONT face open (y=0 face removed).
+            // Carve cavity from y=0 (front) all the way to y=d-t (back wall).
+            let outer = box_at(Vec3::new(w, d, h), Point3::new(0.0, 0.0, 0.0));
+            let cavity = box_at(
+                Vec3::new(w - 2.0 * t, d - t + 1e-3, h - t),
+                Point3::new(t, -1e-3, t),
+            );
+            outer.try_difference(&cavity).map_err(|e| EvalError::Boolean { id: id.into(), op: "drawer_slot_cavity", message: e.message })
+        }
         Feature::HoleArray {
             input,
             axis,
