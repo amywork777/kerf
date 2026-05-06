@@ -2045,6 +2045,90 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// Ellipsoid3D: a general triaxial ellipsoid. Built as a faceted
+    /// sphere of `radius=1` then scaled by `(rx, ry, rz)`.
+    Ellipsoid3D {
+        id: String,
+        rx: Scalar,
+        ry: Scalar,
+        rz: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// VectorArrow: a 3D vector visualization — a thin cylinder shaft
+    /// from `from` to (very near) `to`, capped by a small cone tip
+    /// pointing at `to`.
+    VectorArrow {
+        id: String,
+        from: [Scalar; 3],
+        to: [Scalar; 3],
+        shaft_radius: Scalar,
+        head_radius: Scalar,
+        head_length: Scalar,
+        segments: usize,
+    },
+
+    /// BoneShape: an elongated capsule with bulbous ends —
+    /// like a dumbbell. Two SphereFaceted ends + cylindrical shaft.
+    BoneShape {
+        id: String,
+        end_radius: Scalar,
+        shaft_radius: Scalar,
+        shaft_length: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// Pawn: chess pawn — sphere on a tapered cylindrical body atop a
+    /// disk base. Stylised, not anatomically correct.
+    Pawn {
+        id: String,
+        base_radius: Scalar,
+        base_height: Scalar,
+        body_top_radius: Scalar,
+        body_height: Scalar,
+        head_radius: Scalar,
+        segments: usize,
+        stacks: usize,
+    },
+
+    /// Rook: chess rook — cylinder body on disk base, with crenellated
+    /// top (similar to ParapetWall but radial).
+    Rook {
+        id: String,
+        base_radius: Scalar,
+        base_height: Scalar,
+        body_radius: Scalar,
+        body_height: Scalar,
+        segments: usize,
+    },
+
+    /// Bishop: chess bishop — cylinder body + sphere head + thin slot
+    /// across the head (the bishop's traditional "mitre slot").
+    Bishop {
+        id: String,
+        base_radius: Scalar,
+        base_height: Scalar,
+        body_radius: Scalar,
+        body_height: Scalar,
+        head_radius: Scalar,
+        slot_width: Scalar,
+        segments: usize,
+        stacks: usize,
+    },
+
+    /// Marker3D: a 6-axis cross marker — three perpendicular thin bars
+    /// joined at the origin. Useful as a reference indicator at any
+    /// point in space.
+    Marker3D {
+        id: String,
+        center: [Scalar; 3],
+        axis_length: Scalar,
+        bar_radius: Scalar,
+        segments: usize,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -2332,6 +2416,13 @@ impl Feature {
             | Feature::Plinth { id, .. }
             | Feature::ParapetWall { id, .. }
             | Feature::BeamWithHoles { id, .. }
+            | Feature::Ellipsoid3D { id, .. }
+            | Feature::VectorArrow { id, .. }
+            | Feature::BoneShape { id, .. }
+            | Feature::Pawn { id, .. }
+            | Feature::Rook { id, .. }
+            | Feature::Bishop { id, .. }
+            | Feature::Marker3D { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -2517,6 +2608,13 @@ impl Feature {
             | Feature::Plinth { .. }
             | Feature::ParapetWall { .. }
             | Feature::BeamWithHoles { .. }
+            | Feature::Ellipsoid3D { .. }
+            | Feature::VectorArrow { .. }
+            | Feature::BoneShape { .. }
+            | Feature::Pawn { .. }
+            | Feature::Rook { .. }
+            | Feature::Bishop { .. }
+            | Feature::Marker3D { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }

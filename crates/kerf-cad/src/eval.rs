@@ -4210,6 +4210,198 @@ fn build(
             }
             Ok(acc)
         }
+        Feature::Ellipsoid3D { rx, ry, rz, stacks, slices, .. } => {
+            let rxv = resolve_one(id, rx, params)?;
+            let ryv = resolve_one(id, ry, params)?;
+            let rzv = resolve_one(id, rz, params)?;
+            if rxv <= 0.0 || ryv <= 0.0 || rzv <= 0.0 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Ellipsoid3D requires positive radii, stacks>=2, slices>=3 (got rx={rxv}, ry={ryv}, rz={rzv})") });
+            }
+            let unit = sphere_faceted(1.0, *stacks, *slices);
+            Ok(scale_xyz_solid(&unit, rxv, ryv, rzv))
+        }
+        Feature::VectorArrow { from, to, shaft_radius, head_radius, head_length, segments, .. } => {
+            let f = resolve3(id, from, params)?;
+            let t = resolve3(id, to, params)?;
+            let sr = resolve_one(id, shaft_radius, params)?;
+            let hr = resolve_one(id, head_radius, params)?;
+            let hl = resolve_one(id, head_length, params)?;
+            if sr <= 0.0 || hr <= 0.0 || hl <= 0.0 || hr <= sr || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("VectorArrow requires head_radius>shaft_radius, positive dims (got sr={sr}, hr={hr}, hl={hl})") });
+            }
+            let dx = t[0] - f[0];
+            let dy = t[1] - f[1];
+            let dz = t[2] - f[2];
+            let len = (dx * dx + dy * dy + dz * dz).sqrt();
+            if len < 1e-9 || len <= hl {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("VectorArrow requires |to - from| > head_length (got len={len}, hl={hl})") });
+            }
+            // Shaft: from `f` to a point hl back from `t` along the segment.
+            let shaft_end = [
+                t[0] - dx * hl / len,
+                t[1] - dy * hl / len,
+                t[2] - dz * hl / len,
+            ];
+            let shaft = sweep_cylinder_segment(f, shaft_end, sr, *segments).ok_or_else(|| EvalError::Invalid {
+                id: id.into(),
+                reason: "VectorArrow shaft has zero length".into(),
+            })?;
+            // Head: cone — base at shaft_end (radius hr), apex at `t`.
+            // Build as a tapered SweepPath: cylinder is sweep_cylinder_segment but
+            // we don't have a tapered version. Use a small extrude_lofted from the
+            // base disk to the apex.
+            let n = *segments;
+            let mut base_circle = Vec::with_capacity(n);
+            // We need orthonormal frame at shaft_end. Compute one.
+            let dir_norm = [dx / len, dy / len, dz / len];
+            // Pick a perpendicular: cross with x_axis or y_axis depending on alignment.
+            let perp = if dir_norm[0].abs() < 0.9 {
+                let cx = dir_norm[1] * 0.0 - dir_norm[2] * 1.0;
+                let cy = dir_norm[2] * 0.0 - dir_norm[0] * 0.0;
+                let cz = dir_norm[0] * 1.0 - dir_norm[1] * 0.0;
+                let cn = (cx * cx + cy * cy + cz * cz).sqrt();
+                [cx / cn, cy / cn, cz / cn]
+            } else {
+                // Use y axis as perp seed.
+                [0.0, 1.0, 0.0]
+            };
+            // Second perp: dir × perp
+            let perp2 = [
+                dir_norm[1] * perp[2] - dir_norm[2] * perp[1],
+                dir_norm[2] * perp[0] - dir_norm[0] * perp[2],
+                dir_norm[0] * perp[1] - dir_norm[1] * perp[0],
+            ];
+            for k in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (k as f64) / (n as f64);
+                let cs = theta.cos();
+                let sn = theta.sin();
+                base_circle.push(Point3::new(
+                    shaft_end[0] + hr * (cs * perp[0] + sn * perp2[0]),
+                    shaft_end[1] + hr * (cs * perp[1] + sn * perp2[1]),
+                    shaft_end[2] + hr * (cs * perp[2] + sn * perp2[2]),
+                ));
+            }
+            let apex_sz = hr * 1e-3;
+            let mut apex_circle = Vec::with_capacity(n);
+            for k in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (k as f64) / (n as f64);
+                let cs = theta.cos();
+                let sn = theta.sin();
+                apex_circle.push(Point3::new(
+                    t[0] + apex_sz * (cs * perp[0] + sn * perp2[0]),
+                    t[1] + apex_sz * (cs * perp[1] + sn * perp2[1]),
+                    t[2] + apex_sz * (cs * perp[2] + sn * perp2[2]),
+                ));
+            }
+            let head = extrude_lofted(&base_circle, &apex_circle);
+            shaft.try_union(&head).map_err(|e| EvalError::Boolean { id: id.into(), op: "vector_arrow_join", message: e.message })
+        }
+        Feature::BoneShape { end_radius, shaft_radius, shaft_length, stacks, slices, .. } => {
+            let er = resolve_one(id, end_radius, params)?;
+            let sr = resolve_one(id, shaft_radius, params)?;
+            let sl = resolve_one(id, shaft_length, params)?;
+            if er <= 0.0 || sr <= 0.0 || sr >= er || sl <= 0.0 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("BoneShape requires shaft<end, positive dims (got er={er}, sr={sr})") });
+            }
+            // Two end balls (faceted spheres) + cylinder shaft between them.
+            let shaft = cylinder_along_axis(sr, sl, *slices, 2, 0.0, 0.0, 0.0);
+            let end_a = sphere_faceted(er, *stacks, *slices);
+            let end_b = sphere_faceted(er, *stacks, *slices);
+            let end_b_t = translate_solid(&end_b, Vec3::new(0.0, 0.0, sl));
+            let mid = shaft
+                .try_union(&end_a)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "bone_shape_a", message: e.message })?;
+            mid.try_union(&end_b_t)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "bone_shape_b", message: e.message })
+        }
+        Feature::Pawn { base_radius, base_height, body_top_radius, body_height, head_radius, segments, stacks, .. } => {
+            let br = resolve_one(id, base_radius, params)?;
+            let bh = resolve_one(id, base_height, params)?;
+            let btr = resolve_one(id, body_top_radius, params)?;
+            let bdy_h = resolve_one(id, body_height, params)?;
+            let hr = resolve_one(id, head_radius, params)?;
+            if br <= 0.0 || bh <= 0.0 || btr <= 0.0 || bdy_h <= 0.0 || hr <= 0.0
+                || btr >= br || hr <= btr || *segments < 6 || *stacks < 2
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Pawn requires top < base, head > top, positive dims (got br={br}, btr={btr}, hr={hr})") });
+            }
+            let base = cylinder_along_axis(br, bh, *segments, 2, 0.0, 0.0, 0.0);
+            let body = frustum_faceted(btr, br, bdy_h, *segments);
+            let body_t = translate_solid(&body, Vec3::new(0.0, 0.0, bh));
+            let head = sphere_faceted(hr, *stacks, *segments);
+            let head_t = translate_solid(&head, Vec3::new(0.0, 0.0, bh + bdy_h));
+            let with_body = base.try_union(&body_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "pawn_base_body", message: e.message })?;
+            with_body.try_union(&head_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "pawn_head", message: e.message })
+        }
+        Feature::Rook { base_radius, base_height, body_radius, body_height, segments, .. } => {
+            let br = resolve_one(id, base_radius, params)?;
+            let bh = resolve_one(id, base_height, params)?;
+            let bod_r = resolve_one(id, body_radius, params)?;
+            let bod_h = resolve_one(id, body_height, params)?;
+            if br <= 0.0 || bh <= 0.0 || bod_r <= 0.0 || bod_h <= 0.0 || bod_r >= br || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Rook requires body < base, positive dims") });
+            }
+            let base = cylinder_along_axis(br, bh, *segments, 2, 0.0, 0.0, 0.0);
+            let body = cylinder_along_axis(bod_r, bod_h, *segments, 2, bh, 0.0, 0.0);
+            // 4 merlons on top, alternating around the perimeter.
+            let merlon_h = bod_h * 0.3;
+            let merlon_w = bod_r * 0.4;
+            let body_top = bh + bod_h;
+            let mut acc = base.try_union(&body).map_err(|e| EvalError::Boolean { id: id.into(), op: "rook_base_body", message: e.message })?;
+            for k in 0..4 {
+                let theta = std::f64::consts::FRAC_PI_2 * (k as f64);
+                let cx = bod_r * 0.6 * theta.cos();
+                let cy = bod_r * 0.6 * theta.sin();
+                let merlon = box_at(
+                    Vec3::new(merlon_w, merlon_w, merlon_h + 1e-3),
+                    Point3::new(cx - merlon_w / 2.0, cy - merlon_w / 2.0, body_top - 1e-3),
+                );
+                acc = acc.try_union(&merlon).map_err(|e| EvalError::Boolean { id: id.into(), op: "rook_merlon", message: format!("merlon {k}: {}", e.message) })?;
+            }
+            Ok(acc)
+        }
+        Feature::Bishop { base_radius, base_height, body_radius, body_height, head_radius, slot_width, segments, stacks, .. } => {
+            let br = resolve_one(id, base_radius, params)?;
+            let bh = resolve_one(id, base_height, params)?;
+            let bod_r = resolve_one(id, body_radius, params)?;
+            let bod_h = resolve_one(id, body_height, params)?;
+            let hr = resolve_one(id, head_radius, params)?;
+            let sw = resolve_one(id, slot_width, params)?;
+            if br <= 0.0 || bh <= 0.0 || bod_r <= 0.0 || bod_h <= 0.0 || hr <= 0.0
+                || bod_r >= br || hr < bod_r || sw <= 0.0 || sw >= 2.0 * hr
+                || *segments < 6 || *stacks < 2
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Bishop invalid params (got br={br}, bod_r={bod_r}, hr={hr}, sw={sw})") });
+            }
+            let base = cylinder_along_axis(br, bh, *segments, 2, 0.0, 0.0, 0.0);
+            let body = cylinder_along_axis(bod_r, bod_h, *segments, 2, bh, 0.0, 0.0);
+            let head = sphere_faceted(hr, *stacks, *segments);
+            let head_t = translate_solid(&head, Vec3::new(0.0, 0.0, bh + bod_h));
+            let mut acc = base
+                .try_union(&body).map_err(|e| EvalError::Boolean { id: id.into(), op: "bishop_base_body", message: e.message })?
+                .try_union(&head_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "bishop_head", message: e.message })?;
+            // Slot: thin box across the head.
+            let slot = box_at(
+                Vec3::new(sw, 4.0 * hr, hr * 0.6),
+                Point3::new(-sw / 2.0, -2.0 * hr, bh + bod_h + hr * 0.5),
+            );
+            acc = acc.try_difference(&slot).map_err(|e| EvalError::Boolean { id: id.into(), op: "bishop_slot", message: e.message })?;
+            Ok(acc)
+        }
+        Feature::Marker3D { center, axis_length, bar_radius, segments, .. } => {
+            let c = resolve3(id, center, params)?;
+            let l = resolve_one(id, axis_length, params)?;
+            let r = resolve_one(id, bar_radius, params)?;
+            if l <= 0.0 || r <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Marker3D requires positive dims (got l={l}, r={r})") });
+            }
+            // Three bars along x, y, z, each of length 2*l centered at center.
+            let bar_x = cylinder_along_axis(r, 2.0 * l, *segments, 0, c[0] - l, c[1], c[2]);
+            let bar_y = cylinder_along_axis(r, 2.0 * l + 2.0 * r, *segments, 1, c[1] - l - r, c[0], c[2]);
+            let bar_z = cylinder_along_axis(r, 2.0 * l + 2.0 * r, *segments, 2, c[2] - l - r, c[0], c[1]);
+            let xy = bar_x.try_union(&bar_y).map_err(|e| EvalError::Boolean { id: id.into(), op: "marker_xy", message: e.message })?;
+            xy.try_union(&bar_z).map_err(|e| EvalError::Boolean { id: id.into(), op: "marker_xyz", message: e.message })
+        }
         Feature::HoleArray {
             input,
             axis,
