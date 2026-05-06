@@ -4402,6 +4402,187 @@ fn build(
             let xy = bar_x.try_union(&bar_y).map_err(|e| EvalError::Boolean { id: id.into(), op: "marker_xy", message: e.message })?;
             xy.try_union(&bar_z).map_err(|e| EvalError::Boolean { id: id.into(), op: "marker_xyz", message: e.message })
         }
+        Feature::HollowBrick { length, width, height, wall_thickness, .. } => {
+            let l = resolve_one(id, length, params)?;
+            let w = resolve_one(id, width, params)?;
+            let h = resolve_one(id, height, params)?;
+            let t = resolve_one(id, wall_thickness, params)?;
+            if l <= 0.0 || w <= 0.0 || h <= 0.0 || t <= 0.0 || 2.0 * t >= l || 2.0 * t >= w || t >= h {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("HollowBrick requires 2t<l&w, t<h, positive dims (got l={l}, w={w}, h={h}, t={t})") });
+            }
+            let outer = box_at(Vec3::new(l, w, h), Point3::new(0.0, 0.0, 0.0));
+            // Cavity: open top, all walls thickness t.
+            let cavity = box_at(
+                Vec3::new(l - 2.0 * t, w - 2.0 * t, h),
+                Point3::new(t, t, t),
+            );
+            outer.try_difference(&cavity).map_err(|e| EvalError::Boolean { id: id.into(), op: "hollow_brick_cavity", message: e.message })
+        }
+        Feature::StadiumPlate { length, width, thickness, segments, .. } => {
+            let l = resolve_one(id, length, params)?;
+            let w = resolve_one(id, width, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if l <= 0.0 || w <= 0.0 || t <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("StadiumPlate requires positive dims (got l={l}, w={w}, t={t})") });
+            }
+            // Same outline as Slot3D: rectangle l × w with semicircle ends.
+            let r = w / 2.0;
+            let n = (*segments).max(8);
+            let mut prof = Vec::with_capacity(2 * n + 4);
+            for k in 0..=n {
+                let theta = -std::f64::consts::FRAC_PI_2
+                    + std::f64::consts::PI * (k as f64) / (n as f64);
+                prof.push(Point3::new(l + r * theta.cos(), r * theta.sin(), 0.0));
+            }
+            for k in 0..=n {
+                let theta = std::f64::consts::FRAC_PI_2
+                    + std::f64::consts::PI * (k as f64) / (n as f64);
+                prof.push(Point3::new(r * theta.cos(), r * theta.sin(), 0.0));
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, t)))
+        }
+        Feature::Bowtie { width, height, pinch, depth, .. } => {
+            let w = resolve_one(id, width, params)?;
+            let h = resolve_one(id, height, params)?;
+            let p = resolve_one(id, pinch, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if w <= 0.0 || h <= 0.0 || p < 0.0 || d <= 0.0 || p >= h {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Bowtie requires pinch < height, positive dims (got w={w}, h={h}, p={p})") });
+            }
+            // Bowtie outline (CCW from +z):
+            //   (-w/2, -h/2), (0, -p/2), (w/2, -h/2), (w/2, h/2), (0, p/2), (-w/2, h/2)
+            let prof = vec![
+                Point3::new(-w / 2.0, -h / 2.0, 0.0),
+                Point3::new( 0.0,     -p / 2.0, 0.0),
+                Point3::new( w / 2.0, -h / 2.0, 0.0),
+                Point3::new( w / 2.0,  h / 2.0, 0.0),
+                Point3::new( 0.0,      p / 2.0, 0.0),
+                Point3::new(-w / 2.0,  h / 2.0, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
+        Feature::HollowCone { radius, height, bore_radius, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            let br = resolve_one(id, bore_radius, params)?;
+            if r <= 0.0 || h <= 0.0 || br <= 0.0 || br >= r || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("HollowCone requires bore_radius<radius, positive dims (got r={r}, br={br})") });
+            }
+            let cone_solid = cone_faceted(r, h, *segments);
+            let eps = (h * 0.05).max(1e-3);
+            let bore = cylinder_along_axis(br, h + 2.0 * eps, *segments, 2, -eps, 0.0, 0.0);
+            cone_solid.try_difference(&bore).map_err(|e| EvalError::Boolean { id: id.into(), op: "hollow_cone_bore", message: e.message })
+        }
+        Feature::ArchedDoorway { width, height, wall_thickness, depth, segments, .. } => {
+            let w = resolve_one(id, width, params)?;
+            let h = resolve_one(id, height, params)?;
+            let t = resolve_one(id, wall_thickness, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if w <= 0.0 || h <= 0.0 || t <= 0.0 || d <= 0.0 || h <= w / 2.0 || 2.0 * t >= w || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ArchedDoorway requires h > w/2 (room for arch), 2t<w (got w={w}, h={h}, t={t})") });
+            }
+            // Outer profile: rectangle (w × (h - w/2)) topped by a half-circle of radius w/2.
+            // Walk CCW (in xy plane):
+            let arch_r = w / 2.0;
+            let rect_h = h - arch_r;
+            let mut outer_prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(w, 0.0, 0.0),
+                Point3::new(w, rect_h, 0.0),
+            ];
+            // Arch from (w, rect_h) at theta=0 to (0, rect_h) at theta=PI.
+            // Skip the endpoints since (w, rect_h) was already pushed and
+            // (0, rect_h) is reached at theta=PI.
+            let n_arch = (*segments).max(8);
+            for k in 1..n_arch {
+                let theta = std::f64::consts::PI * (k as f64) / (n_arch as f64);
+                outer_prof.push(Point3::new(
+                    arch_r + arch_r * theta.cos(),
+                    rect_h + arch_r * theta.sin(),
+                    0.0,
+                ));
+            }
+            outer_prof.push(Point3::new(0.0, rect_h, 0.0));
+            let outer = extrude_polygon(&outer_prof, Vec3::new(0.0, 0.0, d));
+            // Inner cutout: same profile shrunk by t. The arch radius for the
+            // cutout is arch_r - t, and the rectangle is shifted inward.
+            let inner_arch_r = arch_r - t;
+            let inner_rect_h = rect_h - t;
+            if inner_arch_r <= 0.0 || inner_rect_h <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ArchedDoorway wall_thickness too large for arch ({t})") });
+            }
+            let mut inner_prof = vec![
+                Point3::new(t, t, 0.0),
+                Point3::new(w - t, t, 0.0),
+                Point3::new(w - t, inner_rect_h, 0.0),
+            ];
+            for k in 1..n_arch {
+                let theta = std::f64::consts::PI * (k as f64) / (n_arch as f64);
+                inner_prof.push(Point3::new(
+                    arch_r + inner_arch_r * theta.cos(),
+                    inner_rect_h + inner_arch_r * theta.sin(),
+                    0.0,
+                ));
+            }
+            inner_prof.push(Point3::new(t, inner_rect_h, 0.0));
+            let inner = extrude_polygon(&inner_prof, Vec3::new(0.0, 0.0, d + 2.0 * 1e-3));
+            let inner_t = translate_solid(&inner, Vec3::new(0.0, 0.0, -1e-3));
+            outer.try_difference(&inner_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "arched_doorway_carve", message: e.message })
+        }
+        Feature::CamLobe { rx, ry, hole_radius, thickness, segments, .. } => {
+            let rxv = resolve_one(id, rx, params)?;
+            let ryv = resolve_one(id, ry, params)?;
+            let hr = resolve_one(id, hole_radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if rxv <= 0.0 || ryv <= 0.0 || hr <= 0.0 || t <= 0.0 || hr >= rxv || hr >= ryv || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("CamLobe requires hole<rx&ry, positive dims (got rx={rxv}, ry={ryv}, hr={hr})") });
+            }
+            let n = *segments;
+            let mut prof = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                prof.push(Point3::new(rxv * theta.cos(), ryv * theta.sin(), 0.0));
+            }
+            let disk = extrude_polygon(&prof, Vec3::new(0.0, 0.0, t));
+            let eps = (t * 0.05).max(1e-3);
+            let hole = cylinder_along_axis(hr, t + 2.0 * eps, *segments, 2, -eps, 0.0, 0.0);
+            disk.try_difference(&hole).map_err(|e| EvalError::Boolean { id: id.into(), op: "cam_lobe_bore", message: e.message })
+        }
+        Feature::ButtonShape { radius, thickness, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r <= 0.0 || t <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ButtonShape requires positive dims (got r={r}, t={t})") });
+            }
+            Ok(cylinder_faceted(r, t, *segments))
+        }
+        Feature::FilletedSlot { length, width, corner_radius, depth, segments, .. } => {
+            let l = resolve_one(id, length, params)?;
+            let w = resolve_one(id, width, params)?;
+            let r = resolve_one(id, corner_radius, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if l <= 0.0 || w <= 0.0 || r <= 0.0 || d <= 0.0 || 2.0 * r > w || 2.0 * r > l || *segments < 4 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("FilletedSlot requires 2r<=w&l, positive dims (got l={l}, w={w}, r={r})") });
+            }
+            // Rounded rectangle in xy plane. Reuse RoundedRect logic.
+            let mut prof: Vec<Point3> = Vec::new();
+            let q = (*segments).max(4) / 4;
+            let corners = [
+                (r, r, std::f64::consts::PI),
+                (l - r, r, 1.5 * std::f64::consts::PI),
+                (l - r, w - r, 0.0),
+                (r, w - r, 0.5 * std::f64::consts::PI),
+            ];
+            for (cx, cy, start_ang) in corners {
+                for k in 0..=q {
+                    let a = start_ang + 0.5 * std::f64::consts::PI * (k as f64) / (q as f64);
+                    let x = cx + r * a.cos();
+                    let y = cy + r * a.sin();
+                    prof.push(Point3::new(x, y, 0.0));
+                }
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
         Feature::HoleArray {
             input,
             axis,

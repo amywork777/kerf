@@ -2129,6 +2129,95 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// HollowBrick: a brick with a rectangular interior cavity (a
+    /// classic cinder block). Open top.
+    HollowBrick {
+        id: String,
+        length: Scalar,
+        width: Scalar,
+        height: Scalar,
+        wall_thickness: Scalar,
+    },
+
+    /// StadiumPlate: flat stadium-shaped plate — same outline as Slot3D
+    /// but framed as a "plate" (very thin) instead of a "slot".
+    StadiumPlate {
+        id: String,
+        length: Scalar,
+        width: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
+    /// Bowtie: two triangles joined at a central vertex, lying in xy
+    /// plane and extruded along +z. `width` is the total span along
+    /// +x, `height` the span along +y, `pinch` the gap at center.
+    Bowtie {
+        id: String,
+        width: Scalar,
+        height: Scalar,
+        pinch: Scalar,
+        depth: Scalar,
+    },
+
+    /// HollowCone: a cone with an axial bore. Outer cone (faceted)
+    /// minus a central cylindrical hole.
+    HollowCone {
+        id: String,
+        radius: Scalar,
+        height: Scalar,
+        bore_radius: Scalar,
+        segments: usize,
+    },
+
+    /// ArchedDoorway: rectangular base with a half-circle arch on top,
+    /// hollow inside (so it's a door-shaped frame). Useful for
+    /// gateways, archways. Wall thickness is uniform.
+    ArchedDoorway {
+        id: String,
+        width: Scalar,
+        height: Scalar,
+        wall_thickness: Scalar,
+        depth: Scalar,
+        segments: usize,
+    },
+
+    /// CamLobe: an elliptical cam disk — like Cam but with two
+    /// different radii (semi-major and semi-minor), so the cam profile
+    /// is an ellipse. The hole is at the geometric center (ellipse origin).
+    CamLobe {
+        id: String,
+        rx: Scalar,
+        ry: Scalar,
+        hole_radius: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
+    /// ButtonShape: a flat disk with rounded outer edges — like a real
+    /// button. Implemented as a thin cylinder. Visualised as a flat
+    /// disk rather than truly rounded since real edge rounds need
+    /// Shell-class kernel work.
+    ButtonShape {
+        id: String,
+        radius: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
+    /// FilletedSlot: a stadium-shaped slot but with rounded corners
+    /// (ie a fully rounded rectangle, parameterized by its own corner
+    /// radius rather than the slot end semicircle radius). When
+    /// `corner_radius == width / 2`, this is identical to Slot3D.
+    FilletedSlot {
+        id: String,
+        length: Scalar,
+        width: Scalar,
+        corner_radius: Scalar,
+        depth: Scalar,
+        segments: usize,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -2423,6 +2512,14 @@ impl Feature {
             | Feature::Rook { id, .. }
             | Feature::Bishop { id, .. }
             | Feature::Marker3D { id, .. }
+            | Feature::HollowBrick { id, .. }
+            | Feature::StadiumPlate { id, .. }
+            | Feature::Bowtie { id, .. }
+            | Feature::HollowCone { id, .. }
+            | Feature::ArchedDoorway { id, .. }
+            | Feature::CamLobe { id, .. }
+            | Feature::ButtonShape { id, .. }
+            | Feature::FilletedSlot { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -2615,6 +2712,14 @@ impl Feature {
             | Feature::Rook { .. }
             | Feature::Bishop { .. }
             | Feature::Marker3D { .. }
+            | Feature::HollowBrick { .. }
+            | Feature::StadiumPlate { .. }
+            | Feature::Bowtie { .. }
+            | Feature::HollowCone { .. }
+            | Feature::ArchedDoorway { .. }
+            | Feature::CamLobe { .. }
+            | Feature::ButtonShape { .. }
+            | Feature::FilletedSlot { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }
