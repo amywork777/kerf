@@ -3573,6 +3573,131 @@ fn build(
             );
             outer.try_difference(&cavity).map_err(|e| EvalError::Boolean { id: id.into(), op: "drawer_slot_cavity", message: e.message })
         }
+        Feature::CircularRing { outer_radius, inner_radius, thickness, segments, .. } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r_out <= 0.0 || r_in <= 0.0 || r_in >= r_out || t <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("CircularRing requires inner < outer, positive dims (got out={r_out}, in={r_in}, t={t})") });
+            }
+            let outer = cylinder_faceted(r_out, t, *segments);
+            let eps = (t * 0.05).max(1e-3);
+            let inner = cylinder_along_axis(r_in, t + 2.0 * eps, *segments, 2, -eps, 0.0, 0.0);
+            outer.try_difference(&inner).map_err(|e| EvalError::Boolean { id: id.into(), op: "circular_ring_bore", message: e.message })
+        }
+        Feature::PolygonRing { outer_radius, inner_radius, sides, thickness, .. } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r_out <= 0.0 || r_in <= 0.0 || r_in >= r_out || t <= 0.0 || *sides < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("PolygonRing requires inner<outer, sides>=3, positive dims (got out={r_out}, in={r_in}, sides={sides})") });
+            }
+            let mut prof_out = Vec::with_capacity(*sides);
+            for i in 0..*sides {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (*sides as f64);
+                prof_out.push(Point3::new(r_out * theta.cos(), r_out * theta.sin(), 0.0));
+            }
+            let outer = extrude_polygon(&prof_out, Vec3::new(0.0, 0.0, t));
+            // Rotate inner polygon by a half-step so its vertices don't
+            // line up radially with the outer's — this avoids coplanar
+            // edge alignment that trips stitch's twin-pairing.
+            let inner_phase = std::f64::consts::PI / (*sides as f64);
+            let mut prof_in = Vec::with_capacity(*sides);
+            for i in 0..*sides {
+                let theta = inner_phase + 2.0 * std::f64::consts::PI * (i as f64) / (*sides as f64);
+                prof_in.push(Point3::new(r_in * theta.cos(), r_in * theta.sin(), 0.0));
+            }
+            let eps = (t * 0.05).max(1e-3);
+            let inner = extrude_polygon(&prof_in, Vec3::new(0.0, 0.0, t + 2.0 * eps));
+            let inner_t = translate_solid(&inner, Vec3::new(0.0, 0.0, -eps));
+            outer.try_difference(&inner_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "polygon_ring_bore", message: e.message })
+        }
+        Feature::CylinderShellAt { base, axis, outer_radius, inner_radius, length, segments, .. } => {
+            let b = resolve3(id, base, params)?;
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let l = resolve_one(id, length, params)?;
+            if r_out <= 0.0 || r_in <= 0.0 || r_in >= r_out || l <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("CylinderShellAt requires inner<outer, positive dims (got out={r_out}, in={r_in})") });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, idx_b) = perpendicular_axes(axis_idx);
+            let outer = cylinder_along_axis(r_out, l, *segments, axis_idx, b[axis_idx], b[a_idx], b[idx_b]);
+            let eps = (l * 0.05).max(1e-3);
+            let inner = cylinder_along_axis(r_in, l + 2.0 * eps, *segments, axis_idx, b[axis_idx] - eps, b[a_idx], b[idx_b]);
+            outer.try_difference(&inner).map_err(|e| EvalError::Boolean { id: id.into(), op: "cyl_shell_at_bore", message: e.message })
+        }
+        Feature::QuarterTorus { major_radius, minor_radius, segments, .. } => {
+            let r_maj = resolve_one(id, major_radius, params)?;
+            let r_min = resolve_one(id, minor_radius, params)?;
+            if r_maj <= 0.0 || r_min <= 0.0 || r_maj <= r_min || *segments < 4 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("QuarterTorus requires major>minor>0 (got maj={r_maj}, min={r_min})") });
+            }
+            // Same as ArcSegment with sweep=90.
+            let total_rad = std::f64::consts::FRAC_PI_2;
+            let mut acc: Option<Solid> = None;
+            for i in 0..*segments {
+                let t0 = total_rad * (i as f64) / (*segments as f64);
+                let t1 = total_rad * ((i + 1) as f64) / (*segments as f64);
+                let p0 = [r_maj * t0.cos(), r_maj * t0.sin(), 0.0];
+                let p1 = [r_maj * t1.cos(), r_maj * t1.sin(), 0.0];
+                let cyl = sweep_cylinder_segment(p0, p1, r_min, 12).ok_or_else(|| EvalError::Invalid { id: id.into(), reason: format!("QuarterTorus seg {i} zero length") })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean { id: id.into(), op: "quarter_torus_join", message: format!("seg {i}: {}", e.message) })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+        Feature::HalfTorus { major_radius, minor_radius, segments, .. } => {
+            let r_maj = resolve_one(id, major_radius, params)?;
+            let r_min = resolve_one(id, minor_radius, params)?;
+            if r_maj <= 0.0 || r_min <= 0.0 || r_maj <= r_min || *segments < 4 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("HalfTorus requires major>minor>0 (got maj={r_maj}, min={r_min})") });
+            }
+            let total_rad = std::f64::consts::PI;
+            let mut acc: Option<Solid> = None;
+            for i in 0..*segments {
+                let t0 = total_rad * (i as f64) / (*segments as f64);
+                let t1 = total_rad * ((i + 1) as f64) / (*segments as f64);
+                let p0 = [r_maj * t0.cos(), r_maj * t0.sin(), 0.0];
+                let p1 = [r_maj * t1.cos(), r_maj * t1.sin(), 0.0];
+                let cyl = sweep_cylinder_segment(p0, p1, r_min, 12).ok_or_else(|| EvalError::Invalid { id: id.into(), reason: format!("HalfTorus seg {i} zero length") })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean { id: id.into(), op: "half_torus_join", message: format!("seg {i}: {}", e.message) })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+        Feature::SquareTube { outer_width, outer_height, wall_thickness, length, .. } => {
+            let w = resolve_one(id, outer_width, params)?;
+            let h = resolve_one(id, outer_height, params)?;
+            let t = resolve_one(id, wall_thickness, params)?;
+            let l = resolve_one(id, length, params)?;
+            if w <= 0.0 || h <= 0.0 || t <= 0.0 || l <= 0.0 || 2.0 * t >= w || 2.0 * t >= h {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("SquareTube requires 2t<w&h, positive dims (got w={w}, h={h}, t={t}, l={l})") });
+            }
+            let outer = box_at(Vec3::new(w, h, l), Point3::new(0.0, 0.0, 0.0));
+            let cavity = box_at(
+                Vec3::new(w - 2.0 * t, h - 2.0 * t, l + 2.0 * 1e-3),
+                Point3::new(t, t, -1e-3),
+            );
+            outer.try_difference(&cavity).map_err(|e| EvalError::Boolean { id: id.into(), op: "square_tube_bore", message: e.message })
+        }
+        Feature::HoleyPlate { plate_width, plate_height, plate_thickness, hole_radius, segments, .. } => {
+            let pw = resolve_one(id, plate_width, params)?;
+            let ph = resolve_one(id, plate_height, params)?;
+            let pt = resolve_one(id, plate_thickness, params)?;
+            let hr = resolve_one(id, hole_radius, params)?;
+            if pw <= 0.0 || ph <= 0.0 || pt <= 0.0 || hr <= 0.0 || hr >= pw / 2.0 || hr >= ph / 2.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("HoleyPlate requires hole<plate/2 (got pw={pw}, hr={hr})") });
+            }
+            let plate = box_at(Vec3::new(pw, ph, pt), Point3::new(0.0, 0.0, 0.0));
+            let eps = (pt * 0.05).max(1e-3);
+            let hole = cylinder_along_axis(hr, pt + 2.0 * eps, *segments, 2, -eps, pw / 2.0, ph / 2.0);
+            plate.try_difference(&hole).map_err(|e| EvalError::Boolean { id: id.into(), op: "holey_plate_drill", message: e.message })
+        }
         Feature::HoleArray {
             input,
             axis,

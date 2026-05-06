@@ -1693,6 +1693,78 @@ pub enum Feature {
         wall_thickness: Scalar,
     },
 
+    /// CircularRing: a thin flat ring — annulus extruded along +z. Like
+    /// Tube but typically very short (a thin "washer-shaped" ring).
+    CircularRing {
+        id: String,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
+    /// PolygonRing: a regular n-sided ring — outer regular polygon
+    /// minus inner regular polygon, extruded along +z.
+    PolygonRing {
+        id: String,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        sides: usize,
+        thickness: Scalar,
+    },
+
+    /// CylinderShellAt: a hollow cylinder positioned at an arbitrary
+    /// origin along an arbitrary axis (x/y/z). Same params as Tube but
+    /// with named axis like CylinderAt.
+    CylinderShellAt {
+        id: String,
+        base: [Scalar; 3],
+        axis: String,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        length: Scalar,
+        segments: usize,
+    },
+
+    /// QuarterTorus: a 90° torus arc. Same as ArcSegment but with
+    /// fixed sweep_deg = 90.
+    QuarterTorus {
+        id: String,
+        major_radius: Scalar,
+        minor_radius: Scalar,
+        segments: usize,
+    },
+
+    /// HalfTorus: a 180° torus arc.
+    HalfTorus {
+        id: String,
+        major_radius: Scalar,
+        minor_radius: Scalar,
+        segments: usize,
+    },
+
+    /// SquareTube: rectangular hollow extruded tube. Like UChannel but
+    /// closed on top — outer rect minus inner rect cavity, all four
+    /// sides closed.
+    SquareTube {
+        id: String,
+        outer_width: Scalar,
+        outer_height: Scalar,
+        wall_thickness: Scalar,
+        length: Scalar,
+    },
+
+    /// HoleyPlate: a thick plate with a single circular hole in the
+    /// center. Like PerforatedPlate but with one parametric hole.
+    HoleyPlate {
+        id: String,
+        plate_width: Scalar,
+        plate_height: Scalar,
+        plate_thickness: Scalar,
+        hole_radius: Scalar,
+        segments: usize,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -1949,6 +2021,13 @@ impl Feature {
             | Feature::Bookshelf { id, .. }
             | Feature::PlanterBox { id, .. }
             | Feature::DrawerSlot { id, .. }
+            | Feature::CircularRing { id, .. }
+            | Feature::PolygonRing { id, .. }
+            | Feature::CylinderShellAt { id, .. }
+            | Feature::QuarterTorus { id, .. }
+            | Feature::HalfTorus { id, .. }
+            | Feature::SquareTube { id, .. }
+            | Feature::HoleyPlate { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -2103,6 +2182,13 @@ impl Feature {
             | Feature::Bookshelf { .. }
             | Feature::PlanterBox { .. }
             | Feature::DrawerSlot { .. }
+            | Feature::CircularRing { .. }
+            | Feature::PolygonRing { .. }
+            | Feature::CylinderShellAt { .. }
+            | Feature::QuarterTorus { .. }
+            | Feature::HalfTorus { .. }
+            | Feature::SquareTube { .. }
+            | Feature::HoleyPlate { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }
