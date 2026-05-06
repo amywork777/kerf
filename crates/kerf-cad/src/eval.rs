@@ -3873,6 +3873,184 @@ fn build(
             let groove = cylinder_along_axis(cr, bl + 2.0 * eps, *segments, 0, -eps, bw / 2.0, bh);
             base.try_difference(&groove).map_err(|e| EvalError::Boolean { id: id.into(), op: "cable_saddle_groove", message: e.message })
         }
+        Feature::Slot3D { length, width, depth, segments, .. } => {
+            let l = resolve_one(id, length, params)?;
+            let w = resolve_one(id, width, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if l <= 0.0 || w <= 0.0 || d <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Slot3D requires positive dims (got l={l}, w={w}, d={d})") });
+            }
+            // Stadium profile: rectangle of width l and height w, with two
+            // semicircles of radius w/2 on each end.
+            let r = w / 2.0;
+            let n = (*segments).max(8);
+            let mut prof = Vec::with_capacity(2 * n + 4);
+            // Right end: semicircle from (l, -r) at angle -PI/2 to (l, r) at PI/2.
+            for k in 0..=n {
+                let theta = -std::f64::consts::FRAC_PI_2
+                    + std::f64::consts::PI * (k as f64) / (n as f64);
+                prof.push(Point3::new(l + r * theta.cos(), r * theta.sin(), 0.0));
+            }
+            // Left end: semicircle from (0, r) at PI/2 to (0, -r) at 3PI/2.
+            for k in 0..=n {
+                let theta = std::f64::consts::FRAC_PI_2
+                    + std::f64::consts::PI * (k as f64) / (n as f64);
+                prof.push(Point3::new(r * theta.cos(), r * theta.sin(), 0.0));
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
+        Feature::OvalPlate { a, b, thickness, segments, .. } => {
+            let av = resolve_one(id, a, params)?;
+            let bv = resolve_one(id, b, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if av <= 0.0 || bv <= 0.0 || t <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("OvalPlate requires positive a, b, thickness (got a={av}, b={bv}, t={t})") });
+            }
+            let n = *segments;
+            let mut prof = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                prof.push(Point3::new(av * theta.cos(), bv * theta.sin(), 0.0));
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, t)))
+        }
+        Feature::AsymmetricBracket { leg_a_length, leg_b_length, thickness, depth, .. } => {
+            let la = resolve_one(id, leg_a_length, params)?;
+            let lb = resolve_one(id, leg_b_length, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if la <= 0.0 || lb <= 0.0 || t <= 0.0 || d <= 0.0 || t >= la || t >= lb {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("AsymmetricBracket requires t < both legs (got la={la}, lb={lb}, t={t})") });
+            }
+            // L profile with leg_a along +x (length la), leg_b along +y (length lb).
+            let prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(la, 0.0, 0.0),
+                Point3::new(la, t, 0.0),
+                Point3::new(t, t, 0.0),
+                Point3::new(t, lb, 0.0),
+                Point3::new(0.0, lb, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
+        Feature::EndCap { outer_radius, height, wall_thickness, cap_thickness, segments, .. } => {
+            let r = resolve_one(id, outer_radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            let wt = resolve_one(id, wall_thickness, params)?;
+            let ct = resolve_one(id, cap_thickness, params)?;
+            if r <= 0.0 || h <= 0.0 || wt <= 0.0 || ct <= 0.0 || wt >= r || ct >= h || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("EndCap requires wt<r, ct<h, positive dims (got r={r}, h={h}, wt={wt}, ct={ct})") });
+            }
+            let outer = cylinder_faceted(r, h, *segments);
+            // Cavity: from z=0 (open bottom) to z = h - ct, radius (r - wt).
+            let eps = (h * 0.05).max(1e-3);
+            let cavity = cylinder_along_axis(r - wt, h - ct + eps, *segments, 2, -eps, 0.0, 0.0);
+            outer.try_difference(&cavity).map_err(|e| EvalError::Boolean { id: id.into(), op: "end_cap_cavity", message: e.message })
+        }
+        Feature::RatchetTooth { outer_radius, root_radius, tooth_count, thickness, .. } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_root = resolve_one(id, root_radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r_out <= 0.0 || r_root <= 0.0 || r_root >= r_out || t <= 0.0 || *tooth_count < 4 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("RatchetTooth requires r_out>r_root>0, t>0, tooth_count>=4 (got out={r_out}, root={r_root}, tc={tooth_count})") });
+            }
+            // Each tooth: vertical face at theta_i (jumps from root to outer),
+            // then sloped face from outer at theta_i back DOWN to root at theta_{i+1}.
+            // Walk: for each i, push (root, theta_i) then (outer, theta_i), forming
+            // a sawtooth in polar coords.
+            let tc = *tooth_count;
+            let mut prof = Vec::with_capacity(2 * tc);
+            for i in 0..tc {
+                let theta_v = 2.0 * std::f64::consts::PI * (i as f64) / (tc as f64);
+                // Vertical face: root → outer at theta_v
+                prof.push(Point3::new(r_root * theta_v.cos(), r_root * theta_v.sin(), 0.0));
+                prof.push(Point3::new(r_out * theta_v.cos(), r_out * theta_v.sin(), 0.0));
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, t)))
+        }
+        Feature::BasePlate { width, height, thickness, corner_radius, segments, .. } => {
+            let w = resolve_one(id, width, params)?;
+            let h = resolve_one(id, height, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            let r = resolve_one(id, corner_radius, params)?;
+            if w <= 0.0 || h <= 0.0 || t <= 0.0 || r < 0.0 || *segments < 4 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("BasePlate requires positive w/h/t, r>=0 (got w={w}, h={h}, t={t}, r={r})") });
+            }
+            if r < 1e-9 {
+                return Ok(box_at(Vec3::new(w, h, t), Point3::new(0.0, 0.0, 0.0)));
+            }
+            // Same as RoundedRect.
+            if 2.0 * r >= w || 2.0 * r >= h {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("BasePlate corner_radius too large (got r={r}, w={w}, h={h})") });
+            }
+            let mut prof: Vec<Point3> = Vec::new();
+            let q = (*segments).max(4) / 4;
+            let corners = [
+                (r, r, std::f64::consts::PI),
+                (w - r, r, 1.5 * std::f64::consts::PI),
+                (w - r, h - r, 0.0),
+                (r, h - r, 0.5 * std::f64::consts::PI),
+            ];
+            for (cx, cy, start_ang) in corners {
+                for k in 0..=q {
+                    let a = start_ang + 0.5 * std::f64::consts::PI * (k as f64) / (q as f64);
+                    let x = cx + r * a.cos();
+                    let y = cy + r * a.sin();
+                    prof.push(Point3::new(x, y, 0.0));
+                }
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, t)))
+        }
+        Feature::FunnelTube { top_outer_radius, bottom_outer_radius, wall_thickness, height, segments, .. } => {
+            let tor = resolve_one(id, top_outer_radius, params)?;
+            let bor = resolve_one(id, bottom_outer_radius, params)?;
+            let wt = resolve_one(id, wall_thickness, params)?;
+            let h = resolve_one(id, height, params)?;
+            if tor <= 0.0 || bor <= 0.0 || wt <= 0.0 || h <= 0.0
+                || tor - wt <= 0.0 || bor - wt <= 0.0 || *segments < 6
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("FunnelTube requires positive dims, inner > 0 (got tor={tor}, bor={bor}, wt={wt})") });
+            }
+            let outer = frustum_faceted(tor, bor, h, *segments);
+            let inner = frustum_faceted(tor - wt, bor - wt, h + 2.0 * 1e-3, *segments);
+            let inner_t = translate_solid(&inner, Vec3::new(0.0, 0.0, -1e-3));
+            outer.try_difference(&inner_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "funnel_tube_bore", message: e.message })
+        }
+        Feature::FlatWasher { outer_radius, inner_radius, thickness, segments, .. } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r_out <= 0.0 || r_in <= 0.0 || r_in >= r_out || t <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("FlatWasher requires inner<outer, positive dims (got out={r_out}, in={r_in}, t={t})") });
+            }
+            let outer = cylinder_faceted(r_out, t, *segments);
+            let eps = (t * 0.05).max(1e-3);
+            let inner = cylinder_along_axis(r_in, t + 2.0 * eps, *segments, 2, -eps, 0.0, 0.0);
+            outer.try_difference(&inner).map_err(|e| EvalError::Boolean { id: id.into(), op: "flat_washer_bore", message: e.message })
+        }
+        Feature::RibbedPlate { plate_length, plate_width, plate_thickness, n_ribs, rib_width, rib_height, .. } => {
+            let l = resolve_one(id, plate_length, params)?;
+            let w = resolve_one(id, plate_width, params)?;
+            let t = resolve_one(id, plate_thickness, params)?;
+            let rw = resolve_one(id, rib_width, params)?;
+            let rh = resolve_one(id, rib_height, params)?;
+            if l <= 0.0 || w <= 0.0 || t <= 0.0 || rw <= 0.0 || rh <= 0.0 || *n_ribs == 0 || rw >= l / *n_ribs as f64 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("RibbedPlate requires rib_width < plate_length/n_ribs (got l={l}, n={n_ribs}, rw={rw})") });
+            }
+            let plate = box_at(Vec3::new(l, w, t), Point3::new(0.0, 0.0, 0.0));
+            let mut acc = plate;
+            // Each rib: rw wide along +x, w deep along +y, rh tall along +z (above plate).
+            // Centers spaced evenly: x_center_k = (k + 0.5) * (l / n_ribs).
+            for k in 0..*n_ribs {
+                let cx = ((k as f64) + 0.5) * (l / *n_ribs as f64);
+                let rib = box_at(
+                    Vec3::new(rw, w, rh + 1e-3),
+                    Point3::new(cx - rw / 2.0, 0.0, t - 1e-3),
+                );
+                acc = acc.try_union(&rib).map_err(|e| EvalError::Boolean { id: id.into(), op: "ribbed_plate_rib", message: format!("rib {k}: {}", e.message) })?;
+            }
+            Ok(acc)
+        }
         Feature::HoleArray {
             input,
             axis,

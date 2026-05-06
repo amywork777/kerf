@@ -1858,6 +1858,111 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// Slot3D: a stadium-shaped slot — rectangle with semicircular
+    /// ends. `length` along +x is the long axis (between center of
+    /// each end semicircle); `width` is the short axis (and equals the
+    /// diameter of each end). Extruded along +z by `depth`.
+    Slot3D {
+        id: String,
+        length: Scalar,
+        width: Scalar,
+        depth: Scalar,
+        segments: usize,
+    },
+
+    /// OvalPlate: a flat plate with an elliptical outline. `a` is the
+    /// semi-major axis along +x, `b` semi-minor along +y, extruded
+    /// along +z by `thickness`.
+    OvalPlate {
+        id: String,
+        a: Scalar,
+        b: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
+    /// AsymmetricBracket: an L-bracket where the two legs have
+    /// different lengths. Like LBracket but `width_a` and `width_b`
+    /// can differ.
+    AsymmetricBracket {
+        id: String,
+        leg_a_length: Scalar,
+        leg_b_length: Scalar,
+        thickness: Scalar,
+        depth: Scalar,
+    },
+
+    /// EndCap: a cylindrical cap that fits over a tube — outer
+    /// cylinder + closed top + inner cavity that fits the tube. Like
+    /// Cup but inverted (open at the bottom).
+    EndCap {
+        id: String,
+        outer_radius: Scalar,
+        height: Scalar,
+        wall_thickness: Scalar,
+        cap_thickness: Scalar,
+        segments: usize,
+    },
+
+    /// RatchetTooth: an asymmetric sawtooth profile — N teeth, each
+    /// with a vertical face and a sloped face. Useful for ratchet
+    /// wheels and one-way clutches.
+    RatchetTooth {
+        id: String,
+        outer_radius: Scalar,
+        root_radius: Scalar,
+        tooth_count: usize,
+        thickness: Scalar,
+    },
+
+    /// BasePlate: a thick rectangular base with optional rounded
+    /// corners. Like RoundedRect but with explicit "base" intent.
+    /// `corner_radius` of 0 = sharp corners.
+    BasePlate {
+        id: String,
+        width: Scalar,
+        height: Scalar,
+        thickness: Scalar,
+        corner_radius: Scalar,
+        segments: usize,
+    },
+
+    /// FunnelTube: a hollow funnel — outer cone shell with a constant
+    /// `wall_thickness`. Like ReducerCone but easier to specify (top
+    /// and bottom outer radii + wall thickness).
+    FunnelTube {
+        id: String,
+        top_outer_radius: Scalar,
+        bottom_outer_radius: Scalar,
+        wall_thickness: Scalar,
+        height: Scalar,
+        segments: usize,
+    },
+
+    /// FlatWasher: a thin annulus — same as CircularRing with explicit
+    /// "washer" intent. Catalog companion to Washer (already in the
+    /// fastener bucket).
+    FlatWasher {
+        id: String,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
+    /// RibbedPlate: a flat plate with parallel rectangular ribs along
+    /// its top surface. `n_ribs` evenly spaced; each rib is
+    /// `rib_width` wide and `rib_height` tall.
+    RibbedPlate {
+        id: String,
+        plate_length: Scalar,
+        plate_width: Scalar,
+        plate_thickness: Scalar,
+        n_ribs: usize,
+        rib_width: Scalar,
+        rib_height: Scalar,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -2129,6 +2234,15 @@ impl Feature {
             | Feature::Bipyramid { id, .. }
             | Feature::Antiprism { id, .. }
             | Feature::CableSaddle { id, .. }
+            | Feature::Slot3D { id, .. }
+            | Feature::OvalPlate { id, .. }
+            | Feature::AsymmetricBracket { id, .. }
+            | Feature::EndCap { id, .. }
+            | Feature::RatchetTooth { id, .. }
+            | Feature::BasePlate { id, .. }
+            | Feature::FunnelTube { id, .. }
+            | Feature::FlatWasher { id, .. }
+            | Feature::RibbedPlate { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -2298,6 +2412,15 @@ impl Feature {
             | Feature::Bipyramid { .. }
             | Feature::Antiprism { .. }
             | Feature::CableSaddle { .. }
+            | Feature::Slot3D { .. }
+            | Feature::OvalPlate { .. }
+            | Feature::AsymmetricBracket { .. }
+            | Feature::EndCap { .. }
+            | Feature::RatchetTooth { .. }
+            | Feature::BasePlate { .. }
+            | Feature::FunnelTube { .. }
+            | Feature::FlatWasher { .. }
+            | Feature::RibbedPlate { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }
