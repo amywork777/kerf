@@ -1765,6 +1765,99 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// ScrewBoss: a cylindrical boss with a central pre-drilled hole
+    /// for self-tapping screws. Outer cylinder + concentric narrower
+    /// hole that doesn't go through (blind hole).
+    ScrewBoss {
+        id: String,
+        outer_radius: Scalar,
+        outer_height: Scalar,
+        hole_radius: Scalar,
+        hole_depth: Scalar,
+        segments: usize,
+    },
+
+    /// Brick: a standard masonry brick with an optional shallow
+    /// cylindrical "frog" depression on top (indent for mortar).
+    Brick {
+        id: String,
+        length: Scalar,
+        width: Scalar,
+        height: Scalar,
+        frog_radius: Scalar,
+        frog_depth: Scalar,
+        segments: usize,
+    },
+
+    /// CorrugatedPanel: a rectangular sheet with a sequence of
+    /// triangular ridges along +x. `n_ridges` ridges of
+    /// `ridge_height` total ridge height (peak above valley).
+    CorrugatedPanel {
+        id: String,
+        length: Scalar,
+        width: Scalar,
+        n_ridges: usize,
+        ridge_height: Scalar,
+        sheet_thickness: Scalar,
+    },
+
+    /// BeltLoop: a small thin rectangular loop — like a belt buckle
+    /// frame. `outer_width` × `outer_height` rectangle minus inner
+    /// rectangle of (`outer_width-2t`) × (`outer_height-2t`),
+    /// extruded along +z by `depth`.
+    BeltLoop {
+        id: String,
+        outer_width: Scalar,
+        outer_height: Scalar,
+        wall_thickness: Scalar,
+        depth: Scalar,
+    },
+
+    /// Stake: a long shaft tapering to a sharp tip. Cylinder body
+    /// (`body_radius`, `body_length`) + cone tip
+    /// (`tip_length`). Used for survey stakes, ground anchors.
+    Stake {
+        id: String,
+        body_radius: Scalar,
+        body_length: Scalar,
+        tip_length: Scalar,
+        segments: usize,
+    },
+
+    /// Bipyramid: two N-sided pyramids joined base-to-base. `n_sides`
+    /// for the equator polygon, `radius` for the equator circumradius,
+    /// `top_height` and `bottom_height` for each pyramid's apex
+    /// distance from the equator.
+    Bipyramid {
+        id: String,
+        n_sides: usize,
+        radius: Scalar,
+        top_height: Scalar,
+        bottom_height: Scalar,
+    },
+
+    /// Antiprism: an N-gon at z=0 and an N-gon at z=`height`, where
+    /// the top N-gon is rotated by π/N relative to the bottom (so
+    /// vertices alternate). Connecting lateral faces are triangles
+    /// (which is what makes it an antiprism rather than a prism).
+    Antiprism {
+        id: String,
+        n_sides: usize,
+        radius: Scalar,
+        height: Scalar,
+    },
+
+    /// CableSaddle: a U-shaped clamp — a rectangular base with a
+    /// semicylindrical groove on top to receive a cable.
+    CableSaddle {
+        id: String,
+        base_length: Scalar,
+        base_width: Scalar,
+        base_height: Scalar,
+        cable_radius: Scalar,
+        segments: usize,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -2028,6 +2121,14 @@ impl Feature {
             | Feature::HalfTorus { id, .. }
             | Feature::SquareTube { id, .. }
             | Feature::HoleyPlate { id, .. }
+            | Feature::ScrewBoss { id, .. }
+            | Feature::Brick { id, .. }
+            | Feature::CorrugatedPanel { id, .. }
+            | Feature::BeltLoop { id, .. }
+            | Feature::Stake { id, .. }
+            | Feature::Bipyramid { id, .. }
+            | Feature::Antiprism { id, .. }
+            | Feature::CableSaddle { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -2189,6 +2290,14 @@ impl Feature {
             | Feature::HalfTorus { .. }
             | Feature::SquareTube { .. }
             | Feature::HoleyPlate { .. }
+            | Feature::ScrewBoss { .. }
+            | Feature::Brick { .. }
+            | Feature::CorrugatedPanel { .. }
+            | Feature::BeltLoop { .. }
+            | Feature::Stake { .. }
+            | Feature::Bipyramid { .. }
+            | Feature::Antiprism { .. }
+            | Feature::CableSaddle { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }

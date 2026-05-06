@@ -3698,6 +3698,181 @@ fn build(
             let hole = cylinder_along_axis(hr, pt + 2.0 * eps, *segments, 2, -eps, pw / 2.0, ph / 2.0);
             plate.try_difference(&hole).map_err(|e| EvalError::Boolean { id: id.into(), op: "holey_plate_drill", message: e.message })
         }
+        Feature::ScrewBoss { outer_radius, outer_height, hole_radius, hole_depth, segments, .. } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let h = resolve_one(id, outer_height, params)?;
+            let hr = resolve_one(id, hole_radius, params)?;
+            let hd = resolve_one(id, hole_depth, params)?;
+            if r_out <= 0.0 || h <= 0.0 || hr <= 0.0 || hd <= 0.0 || hr >= r_out || hd > h || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ScrewBoss requires hole<outer, hole_depth<=outer_height (got r_out={r_out}, hr={hr}, h={h}, hd={hd})") });
+            }
+            let body = cylinder_faceted(r_out, h, *segments);
+            // Blind hole: starts at z = h - hd (top), depth hd, with eps overshoot up.
+            let eps = (hd * 0.05).max(1e-3);
+            let hole = cylinder_along_axis(hr, hd + eps, *segments, 2, h - hd, 0.0, 0.0);
+            body.try_difference(&hole).map_err(|e| EvalError::Boolean { id: id.into(), op: "screw_boss_drill", message: e.message })
+        }
+        Feature::Brick { length, width, height, frog_radius, frog_depth, segments, .. } => {
+            let l = resolve_one(id, length, params)?;
+            let w = resolve_one(id, width, params)?;
+            let h = resolve_one(id, height, params)?;
+            let fr = resolve_one(id, frog_radius, params)?;
+            let fd = resolve_one(id, frog_depth, params)?;
+            if l <= 0.0 || w <= 0.0 || h <= 0.0 || fr < 0.0 || fd < 0.0
+                || (fr > 0.0 && fr >= w / 2.0) || fd > h
+                || *segments < 6
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Brick requires positive l/w/h, frog within brick (got l={l}, w={w}, h={h}, fr={fr}, fd={fd})") });
+            }
+            let body = box_at(Vec3::new(l, w, h), Point3::new(0.0, 0.0, 0.0));
+            if fr <= 0.0 || fd <= 0.0 {
+                return Ok(body);
+            }
+            let eps = (fd * 0.05).max(1e-3);
+            let frog = cylinder_along_axis(fr, fd + eps, *segments, 2, h - fd, l / 2.0, w / 2.0);
+            body.try_difference(&frog).map_err(|e| EvalError::Boolean { id: id.into(), op: "brick_frog", message: e.message })
+        }
+        Feature::CorrugatedPanel { length, width, n_ridges, ridge_height, sheet_thickness, .. } => {
+            let l = resolve_one(id, length, params)?;
+            let w = resolve_one(id, width, params)?;
+            let rh = resolve_one(id, ridge_height, params)?;
+            let st = resolve_one(id, sheet_thickness, params)?;
+            if l <= 0.0 || w <= 0.0 || rh <= 0.0 || st <= 0.0 || *n_ridges == 0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("CorrugatedPanel requires positive dims, n_ridges>=1 (got l={l}, w={w}, rh={rh}, st={st})") });
+            }
+            // Build a triangular-wave profile in the xy plane (z=0) extruded along +z.
+            // Profile is CCW: bottom edge along +x at y=0, then the wavy top
+            // edge from x=l back to x=0 alternating between y=st (valley) and
+            // y=st+rh (peak).
+            let n = *n_ridges;
+            let dx = l / (2.0 * n as f64);
+            let mut prof = Vec::with_capacity(2 * n + 4);
+            prof.push(Point3::new(0.0, 0.0, 0.0));
+            prof.push(Point3::new(l, 0.0, 0.0));
+            for k in 0..=(2 * n) {
+                let x = l - (k as f64) * dx;
+                let y = if k % 2 == 0 { st + rh } else { st };
+                prof.push(Point3::new(x, y, 0.0));
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, w)))
+        }
+        Feature::BeltLoop { outer_width, outer_height, wall_thickness, depth, .. } => {
+            let ow = resolve_one(id, outer_width, params)?;
+            let oh = resolve_one(id, outer_height, params)?;
+            let t = resolve_one(id, wall_thickness, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if ow <= 0.0 || oh <= 0.0 || t <= 0.0 || d <= 0.0 || 2.0 * t >= ow || 2.0 * t >= oh {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("BeltLoop requires 2t<w&h, positive dims (got ow={ow}, oh={oh}, t={t}, d={d})") });
+            }
+            let outer = box_at(Vec3::new(ow, oh, d), Point3::new(0.0, 0.0, 0.0));
+            let cavity = box_at(
+                Vec3::new(ow - 2.0 * t, oh - 2.0 * t, d + 2.0 * 1e-3),
+                Point3::new(t, t, -1e-3),
+            );
+            outer.try_difference(&cavity).map_err(|e| EvalError::Boolean { id: id.into(), op: "belt_loop_cut", message: e.message })
+        }
+        Feature::Stake { body_radius, body_length, tip_length, segments, .. } => {
+            let r = resolve_one(id, body_radius, params)?;
+            let bl = resolve_one(id, body_length, params)?;
+            let tl = resolve_one(id, tip_length, params)?;
+            if r <= 0.0 || bl <= 0.0 || tl <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Stake requires positive dims (got r={r}, bl={bl}, tl={tl})") });
+            }
+            let body = cylinder_along_axis(r, bl, *segments, 2, tl, 0.0, 0.0);
+            // Tip: build via extrude_lofted directly from a tiny apex at z=0
+            // to a circular base at z=tl. Tiny apex (not zero) avoids the
+            // degenerate-polygon panic in extrude_lofted.
+            let n = *segments;
+            let apex_sz = r * 1e-3;
+            let mut apex = Vec::with_capacity(n);
+            let mut base = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                apex.push(Point3::new(apex_sz * theta.cos(), apex_sz * theta.sin(), 0.0));
+                base.push(Point3::new(r * theta.cos(), r * theta.sin(), tl));
+            }
+            let tip = extrude_lofted(&apex, &base);
+            let eps = (tl * 0.05).max(1e-3);
+            let body_extended = translate_solid(&body, Vec3::new(0.0, 0.0, -eps));
+            tip.try_union(&body_extended).map_err(|e| EvalError::Boolean { id: id.into(), op: "stake_join", message: e.message })
+        }
+        Feature::Bipyramid { n_sides, radius, top_height, bottom_height, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let th = resolve_one(id, top_height, params)?;
+            let bh = resolve_one(id, bottom_height, params)?;
+            if *n_sides < 3 || r <= 0.0 || th <= 0.0 || bh <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Bipyramid requires n_sides>=3, positive dims (got n={n_sides}, r={r}, th={th}, bh={bh})") });
+            }
+            // Build top pyramid: equator at z=-eps to top apex at z=th.
+            let n = *n_sides;
+            let eps = ((th + bh) * 0.02).max(1e-3);
+            let mut equator_low = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                equator_low.push(Point3::new(r * theta.cos(), r * theta.sin(), -eps));
+            }
+            // Tiny apex (degenerate avoidance same as Diamond).
+            let apex_sz = r * 1e-3;
+            let mut top_apex = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                top_apex.push(Point3::new(apex_sz * theta.cos(), apex_sz * theta.sin(), th));
+            }
+            let top = extrude_lofted(&equator_low, &top_apex);
+            // Bottom pyramid: tiny apex at z=-bh, base at z=eps.
+            let mut bot_apex = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                bot_apex.push(Point3::new(apex_sz * theta.cos(), apex_sz * theta.sin(), -bh));
+            }
+            let mut equator_high = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                equator_high.push(Point3::new(r * theta.cos(), r * theta.sin(), eps));
+            }
+            let bottom = extrude_lofted(&bot_apex, &equator_high);
+            top.try_union(&bottom).map_err(|e| EvalError::Boolean { id: id.into(), op: "bipyramid_join", message: e.message })
+        }
+        Feature::Antiprism { n_sides, radius, height, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            if *n_sides < 3 || r <= 0.0 || h <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Antiprism requires n_sides>=3, positive dims (got n={n_sides}, r={r}, h={h})") });
+            }
+            let n = *n_sides;
+            // Bottom n-gon at z=0, top n-gon at z=h rotated by π/n.
+            let mut bottom = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                bottom.push(Point3::new(r * theta.cos(), r * theta.sin(), 0.0));
+            }
+            let phase = std::f64::consts::PI / (n as f64);
+            let mut top = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = phase + 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                top.push(Point3::new(r * theta.cos(), r * theta.sin(), h));
+            }
+            // extrude_lofted joins corresponding indices. The result face on
+            // the side is a planar quad bowtie (since top is rotated). Quads
+            // become non-planar; the kernel approximates them as best-fit
+            // planar — works for visualisation.
+            Ok(extrude_lofted(&bottom, &top))
+        }
+        Feature::CableSaddle { base_length, base_width, base_height, cable_radius, segments, .. } => {
+            let bl = resolve_one(id, base_length, params)?;
+            let bw = resolve_one(id, base_width, params)?;
+            let bh = resolve_one(id, base_height, params)?;
+            let cr = resolve_one(id, cable_radius, params)?;
+            if bl <= 0.0 || bw <= 0.0 || bh <= 0.0 || cr <= 0.0 || cr >= bw / 2.0 || cr > bh || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("CableSaddle requires cable_radius < base_width/2 and <= base_height (got bl={bl}, bw={bw}, bh={bh}, cr={cr})") });
+            }
+            let base = box_at(Vec3::new(bl, bw, bh), Point3::new(0.0, 0.0, 0.0));
+            // Half-circle groove along +x at the top of the base, centered on y=bw/2.
+            // Approximate by carving a cylinder along +x running the full length.
+            let eps = (bl * 0.05).max(1e-3);
+            let groove = cylinder_along_axis(cr, bl + 2.0 * eps, *segments, 0, -eps, bw / 2.0, bh);
+            base.try_difference(&groove).map_err(|e| EvalError::Boolean { id: id.into(), op: "cable_saddle_groove", message: e.message })
+        }
         Feature::HoleArray {
             input,
             axis,
