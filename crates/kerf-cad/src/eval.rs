@@ -3130,6 +3130,148 @@ fn build(
             let hole = cylinder_along_axis(hr, ph + 2.0 * eps, *segments, 1, -eps, pw / 2.0, pt + th / 2.0);
             assembly.try_difference(&hole).map_err(|e| EvalError::Boolean { id: id.into(), op: "anchor_hole", message: e.message })
         }
+        Feature::Stair { step_count, tread, riser, step_width, .. } => {
+            let tr = resolve_one(id, tread, params)?;
+            let ri = resolve_one(id, riser, params)?;
+            let sw = resolve_one(id, step_width, params)?;
+            if *step_count == 0 || tr <= 0.0 || ri <= 0.0 || sw <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Stair requires step_count >= 1 and positive dims (got count={step_count}, tread={tr}, riser={ri}, sw={sw})") });
+            }
+            // Build N steps as stacked boxes. Step k spans:
+            //   y = [k * tread, total_run] (extending under all higher steps)
+            //   z = [k * riser, (k+1) * riser]
+            // This stairstep shape is closed and convex per step, and adjacent
+            // steps share faces in a way the boolean union handles cleanly.
+            let total_run = (*step_count as f64) * tr;
+            let mut acc: Option<Solid> = None;
+            for k in 0..*step_count {
+                let y0 = (k as f64) * tr;
+                let z0 = (k as f64) * ri;
+                let step = box_at(
+                    Vec3::new(sw, total_run - y0, ri),
+                    Point3::new(0.0, y0, z0),
+                );
+                acc = Some(match acc.take() {
+                    None => step,
+                    Some(prev) => prev.try_union(&step).map_err(|e| EvalError::Boolean { id: id.into(), op: "stair_join", message: format!("step {k}: {}", e.message) })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+        Feature::Hopper { top_radius, neck_radius, funnel_height, neck_height, segments, .. } => {
+            let tr = resolve_one(id, top_radius, params)?;
+            let nr = resolve_one(id, neck_radius, params)?;
+            let fh = resolve_one(id, funnel_height, params)?;
+            let nh = resolve_one(id, neck_height, params)?;
+            if tr <= 0.0 || nr <= 0.0 || nr >= tr || fh <= 0.0 || nh <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Hopper requires neck_radius < top_radius, positive dims (got tr={tr}, nr={nr})") });
+            }
+            // Funnel: frustum from tr at z=nh+fh down to nr at z=nh.
+            let funnel = frustum_faceted(tr, nr, fh, *segments);
+            let funnel_t = translate_solid(&funnel, Vec3::new(0.0, 0.0, nh));
+            // Neck: cylinder from z=0 to z=nh+eps.
+            let eps = (nh * 0.05).max(1e-3);
+            let neck = cylinder_along_axis(nr, nh + eps, *segments, 2, 0.0, 0.0, 0.0);
+            funnel_t.try_union(&neck).map_err(|e| EvalError::Boolean { id: id.into(), op: "hopper_join", message: e.message })
+        }
+        Feature::Stand { radius, thickness, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r <= 0.0 || t <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Stand requires positive dims, segments>=6 (got r={r}, t={t})") });
+            }
+            Ok(cylinder_faceted(r, t, *segments))
+        }
+        Feature::Yoke { arm_length, arm_thickness, arm_height, gap_width, pivot_radius, segments, .. } => {
+            let al = resolve_one(id, arm_length, params)?;
+            let at = resolve_one(id, arm_thickness, params)?;
+            let ah = resolve_one(id, arm_height, params)?;
+            let gw = resolve_one(id, gap_width, params)?;
+            let pr = resolve_one(id, pivot_radius, params)?;
+            if al <= 0.0 || at <= 0.0 || ah <= 0.0 || gw <= 0.0 || pr <= 0.0 || pr >= ah / 2.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Yoke requires pivot_radius < arm_height/2 and positive dims (got al={al}, ah={ah}, pr={pr})") });
+            }
+            // Crossbar at y=[-(at + gw/2 + at), -(gw/2 + at) + at] ... let me re-do.
+            // Layout: total_y_width = at + gw + at. Crossbar bottom at y=0
+            // is the back wall. Two arms project +x from back wall.
+            //   Back wall: y=[0, at+gw+at], x=[0, at], z=[0, ah]
+            //   Arm A: y=[0, at], x=[at, at+al], z=[0, ah]
+            //   Arm B: y=[at+gw, at+gw+at], x=[at, at+al], z=[0, ah]
+            // Pivot hole through both arms along +y at x=at + al - 2*pr, z=ah/2.
+            let total_y = at + gw + at;
+            let back = box_at(Vec3::new(at, total_y, ah), Point3::new(0.0, 0.0, 0.0));
+            let arm_a = box_at(Vec3::new(al, at, ah), Point3::new(at, 0.0, 0.0));
+            let arm_b = box_at(Vec3::new(al, at, ah), Point3::new(at, at + gw, 0.0));
+            let assembly = back
+                .try_union(&arm_a).map_err(|e| EvalError::Boolean { id: id.into(), op: "yoke_back_a", message: e.message })?
+                .try_union(&arm_b).map_err(|e| EvalError::Boolean { id: id.into(), op: "yoke_arm_b", message: e.message })?;
+            let eps = (total_y * 0.05).max(1e-3);
+            let pivot = cylinder_along_axis(pr, total_y + 2.0 * eps, *segments, 1, -eps, at + al - 2.0 * pr, ah / 2.0);
+            assembly.try_difference(&pivot).map_err(|e| EvalError::Boolean { id: id.into(), op: "yoke_pivot_hole", message: e.message })
+        }
+        Feature::Lever { length, width, thickness, pivot_radius, segments, .. } => {
+            let l = resolve_one(id, length, params)?;
+            let w = resolve_one(id, width, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            let pr = resolve_one(id, pivot_radius, params)?;
+            if l <= 0.0 || w <= 0.0 || t <= 0.0 || pr <= 0.0 || pr >= w / 2.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Lever requires pivot_radius < width/2 and positive dims (got l={l}, w={w}, t={t}, pr={pr})") });
+            }
+            let bar = box_at(Vec3::new(l, w, t), Point3::new(0.0, 0.0, 0.0));
+            let eps = (t * 0.05).max(1e-3);
+            let pivot = cylinder_along_axis(pr, t + 2.0 * eps, *segments, 2, -eps, w * 0.5, w * 0.5);
+            bar.try_difference(&pivot).map_err(|e| EvalError::Boolean { id: id.into(), op: "lever_pivot", message: e.message })
+        }
+        Feature::TaperedTube { bottom_outer_radius, top_outer_radius, wall_thickness, height, segments, .. } => {
+            let bor = resolve_one(id, bottom_outer_radius, params)?;
+            let tor = resolve_one(id, top_outer_radius, params)?;
+            let wt = resolve_one(id, wall_thickness, params)?;
+            let h = resolve_one(id, height, params)?;
+            if bor <= 0.0 || tor <= 0.0 || wt <= 0.0 || h <= 0.0
+                || bor - wt <= 0.0 || tor - wt <= 0.0 || *segments < 6
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("TaperedTube requires inner > 0 at both ends (got bor={bor}, tor={tor}, wt={wt})") });
+            }
+            let outer = frustum_faceted(tor, bor, h, *segments);
+            let inner = frustum_faceted(tor - wt, bor - wt, h + 2.0 * 1e-3, *segments);
+            let inner_t = translate_solid(&inner, Vec3::new(0.0, 0.0, -1e-3));
+            outer.try_difference(&inner_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "tapered_tube_bore", message: e.message })
+        }
+        Feature::GussetPlate { leg_length, thickness, .. } => {
+            let l = resolve_one(id, leg_length, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if l <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("GussetPlate requires positive dims (got l={l}, t={t})") });
+            }
+            // Right triangle in xy plane with legs along +x and +y, extruded +z.
+            let prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(l, 0.0, 0.0),
+                Point3::new(0.0, l, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, t)))
+        }
+        Feature::CrossKey { bar_length, bar_thickness, bar_height, .. } => {
+            let bl = resolve_one(id, bar_length, params)?;
+            let bt = resolve_one(id, bar_thickness, params)?;
+            let bh = resolve_one(id, bar_height, params)?;
+            if bl <= 0.0 || bt <= 0.0 || bh <= 0.0 || bt >= bl {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("CrossKey requires bar_thickness < bar_length, positive dims (got bl={bl}, bt={bt}, bh={bh})") });
+            }
+            // Bar 1: along +x, centered on origin in y.
+            let bar_x = box_at(Vec3::new(bl, bt, bh), Point3::new(-bl / 2.0, -bt / 2.0, 0.0));
+            // Bar 2: along +y, centered on origin in x.
+            let bar_y = box_at(Vec3::new(bt, bl, bh), Point3::new(-bt / 2.0, -bl / 2.0, 0.0));
+            bar_x.try_union(&bar_y).map_err(|e| EvalError::Boolean { id: id.into(), op: "cross_key_join", message: e.message })
+        }
+        Feature::PinShaft { radius, length, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let l = resolve_one(id, length, params)?;
+            if r <= 0.0 || l <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("PinShaft requires positive dims (got r={r}, l={l})") });
+            }
+            Ok(cylinder_faceted(r, l, *segments))
+        }
         Feature::HoleArray {
             input,
             axis,

@@ -1441,6 +1441,106 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// Stair: a parametric staircase — `step_count` steps, each `tread`
+    /// deep (along +y) and `riser` tall (along +z). Total run = count*tread,
+    /// total rise = count*riser. Width = `step_width` along +x.
+    Stair {
+        id: String,
+        step_count: usize,
+        tread: Scalar,
+        riser: Scalar,
+        step_width: Scalar,
+    },
+
+    /// Hopper: a cone funnel atop a cylindrical neck. Used for
+    /// gravity-feed bins, pour spouts. `top_radius` is the wide top of
+    /// the funnel, `neck_radius` the narrow bottom that joins the
+    /// vertical neck. `funnel_height` is the funnel cone height,
+    /// `neck_height` the neck cylinder height.
+    Hopper {
+        id: String,
+        top_radius: Scalar,
+        neck_radius: Scalar,
+        funnel_height: Scalar,
+        neck_height: Scalar,
+        segments: usize,
+    },
+
+    /// Stand: a cylindrical platform — a thick disk of
+    /// (radius, thickness). Useful for workpiece supports.
+    Stand {
+        id: String,
+        radius: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
+    /// Yoke: a U-shaped fork — two parallel arms with a connecting
+    /// crossbar, plus an optional pivot hole through both arms. Used
+    /// for clevis and shackle joints.
+    Yoke {
+        id: String,
+        arm_length: Scalar,
+        arm_thickness: Scalar,
+        arm_height: Scalar,
+        gap_width: Scalar,
+        pivot_radius: Scalar,
+        segments: usize,
+    },
+
+    /// Lever: a long rectangular bar with a pivot hole at one end.
+    /// `length` is the full bar length, `width` and `thickness` the
+    /// bar cross-section, `pivot_radius` the hole radius near the end.
+    Lever {
+        id: String,
+        length: Scalar,
+        width: Scalar,
+        thickness: Scalar,
+        pivot_radius: Scalar,
+        segments: usize,
+    },
+
+    /// TaperedTube: hollow frustum — same as ReducerCone but with a
+    /// constant wall thickness instead of named inner/outer radii at
+    /// each end. Easier to specify when you just know "tapered tube
+    /// with X-thick walls".
+    TaperedTube {
+        id: String,
+        bottom_outer_radius: Scalar,
+        top_outer_radius: Scalar,
+        wall_thickness: Scalar,
+        height: Scalar,
+        segments: usize,
+    },
+
+    /// GussetPlate: a right-triangle reinforcement plate — used at
+    /// corners where two structural members meet. `leg_length` is each
+    /// leg of the right triangle, `thickness` the plate thickness.
+    /// Triangle has its right angle at the origin, legs along +x and +y.
+    GussetPlate {
+        id: String,
+        leg_length: Scalar,
+        thickness: Scalar,
+    },
+
+    /// CrossKey: a + shaped key for keyed shaft-hub connections.
+    /// Two perpendicular rectangular bars meeting at the center.
+    CrossKey {
+        id: String,
+        bar_length: Scalar,
+        bar_thickness: Scalar,
+        bar_height: Scalar,
+    },
+
+    /// PinShaft: a long, narrow cylindrical pin — like AxleShaft but
+    /// with one diameter throughout. Useful for hinge pins, dowels.
+    PinShaft {
+        id: String,
+        radius: Scalar,
+        length: Scalar,
+        segments: usize,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -1674,6 +1774,15 @@ impl Feature {
             | Feature::CrossBrace { id, .. }
             | Feature::WireMesh { id, .. }
             | Feature::AnchorPoint { id, .. }
+            | Feature::Stair { id, .. }
+            | Feature::Hopper { id, .. }
+            | Feature::Stand { id, .. }
+            | Feature::Yoke { id, .. }
+            | Feature::Lever { id, .. }
+            | Feature::TaperedTube { id, .. }
+            | Feature::GussetPlate { id, .. }
+            | Feature::CrossKey { id, .. }
+            | Feature::PinShaft { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -1805,6 +1914,15 @@ impl Feature {
             | Feature::CrossBrace { .. }
             | Feature::WireMesh { .. }
             | Feature::AnchorPoint { .. }
+            | Feature::Stair { .. }
+            | Feature::Hopper { .. }
+            | Feature::Stand { .. }
+            | Feature::Yoke { .. }
+            | Feature::Lever { .. }
+            | Feature::TaperedTube { .. }
+            | Feature::GussetPlate { .. }
+            | Feature::CrossKey { .. }
+            | Feature::PinShaft { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }
