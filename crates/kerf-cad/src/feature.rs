@@ -2370,6 +2370,91 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// Hourglass: two frustums meeting waist-to-waist — wide at top
+    /// and bottom, narrow in the middle. Symmetric: same radii at top
+    /// and bottom, single `waist_radius` at center.
+    Hourglass {
+        id: String,
+        end_radius: Scalar,
+        waist_radius: Scalar,
+        half_height: Scalar,
+        segments: usize,
+    },
+
+    /// Diabolo: an inverted hourglass — wide in the middle, narrow at
+    /// the ends. Like Hourglass but with the waist and end radii
+    /// swapped.
+    Diabolo {
+        id: String,
+        end_radius: Scalar,
+        waist_radius: Scalar,
+        half_height: Scalar,
+        segments: usize,
+    },
+
+    /// TripleStep: three stacked cylindrical tiers of decreasing
+    /// radius (a wedding-cake or stepped pyramid silhouette).
+    TripleStep {
+        id: String,
+        bottom_radius: Scalar,
+        bottom_height: Scalar,
+        middle_radius: Scalar,
+        middle_height: Scalar,
+        top_radius: Scalar,
+        top_height: Scalar,
+        segments: usize,
+    },
+
+    /// WingedScrew: a screw with two flat "wings" on either side of
+    /// the head for hand-tightening. Cylinder shaft + center hex
+    /// head + two rectangular wing tabs.
+    WingedScrew {
+        id: String,
+        shaft_radius: Scalar,
+        shaft_length: Scalar,
+        head_radius: Scalar,
+        head_height: Scalar,
+        wing_length: Scalar,
+        wing_thickness: Scalar,
+        segments: usize,
+    },
+
+    /// KneadHandle: a simple grip handle — flat rectangular plate
+    /// with a thicker raised pad in the center. Useful as an
+    /// ergonomic grip.
+    KneadHandle {
+        id: String,
+        length: Scalar,
+        width: Scalar,
+        plate_thickness: Scalar,
+        pad_radius: Scalar,
+        pad_height: Scalar,
+        segments: usize,
+    },
+
+    /// ZigzagBar: a horizontal bar with a triangular zigzag profile
+    /// along its top — like a saw blade silhouette extruded.
+    ZigzagBar {
+        id: String,
+        length: Scalar,
+        depth: Scalar,
+        base_height: Scalar,
+        zigzag_height: Scalar,
+        n_zigs: usize,
+    },
+
+    /// FishingFloat: a sphere with a small cylindrical pin sticking
+    /// out the top (and a smaller one out the bottom). Stylised
+    /// fishing-float silhouette.
+    FishingFloat {
+        id: String,
+        body_radius: Scalar,
+        pin_radius: Scalar,
+        pin_length: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -2686,6 +2771,13 @@ impl Feature {
             | Feature::DiskWithSlots { id, .. }
             | Feature::FivePointedBadge { id, .. }
             | Feature::Crescent { id, .. }
+            | Feature::Hourglass { id, .. }
+            | Feature::Diabolo { id, .. }
+            | Feature::TripleStep { id, .. }
+            | Feature::WingedScrew { id, .. }
+            | Feature::KneadHandle { id, .. }
+            | Feature::ZigzagBar { id, .. }
+            | Feature::FishingFloat { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -2900,6 +2992,13 @@ impl Feature {
             | Feature::DiskWithSlots { .. }
             | Feature::FivePointedBadge { .. }
             | Feature::Crescent { .. }
+            | Feature::Hourglass { .. }
+            | Feature::Diabolo { .. }
+            | Feature::TripleStep { .. }
+            | Feature::WingedScrew { .. }
+            | Feature::KneadHandle { .. }
+            | Feature::ZigzagBar { .. }
+            | Feature::FishingFloat { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }

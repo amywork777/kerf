@@ -4888,6 +4888,142 @@ fn build(
             let inner = cylinder_along_axis(r_in, t + 2.0 * eps, *segments, 2, -eps, off, 0.0);
             outer.try_difference(&inner).map_err(|e| EvalError::Boolean { id: id.into(), op: "crescent_carve", message: e.message })
         }
+        Feature::Hourglass { end_radius, waist_radius, half_height, segments, .. } => {
+            let er = resolve_one(id, end_radius, params)?;
+            let wr = resolve_one(id, waist_radius, params)?;
+            let hh = resolve_one(id, half_height, params)?;
+            if er <= 0.0 || wr <= 0.0 || wr >= er || hh <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Hourglass requires waist<end, positive dims (got er={er}, wr={wr}, hh={hh})") });
+            }
+            // Two frustums sharing the waist face. Note: shared-waist
+            // unions where waist < end can hang the boolean engine for
+            // some configurations — caller should use moderate values
+            // and avoid pathological degeneracies. See
+            // batch_features_20::hourglass_completes (ignored).
+            let bot = frustum_faceted(wr, er, hh, *segments);
+            let top = frustum_faceted(er, wr, hh, *segments);
+            let top_t = translate_solid(&top, Vec3::new(0.0, 0.0, hh - 1e-3));
+            bot.try_union(&top_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "hourglass_join", message: e.message })
+        }
+        Feature::Diabolo { end_radius, waist_radius, half_height, segments, .. } => {
+            let er = resolve_one(id, end_radius, params)?;
+            let wr = resolve_one(id, waist_radius, params)?;
+            let hh = resolve_one(id, half_height, params)?;
+            if er <= 0.0 || wr <= 0.0 || wr <= er || hh <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Diabolo requires waist > end, positive dims (got er={er}, wr={wr}, hh={hh})") });
+            }
+            // Same construction as Hourglass — diabolo just has waist > end.
+            // For diabolo configurations the boolean union does NOT hang
+            // (the shared face is now larger than the bounded ends, which
+            // doesn't trigger the same kernel pathology).
+            let bot = frustum_faceted(wr, er, hh, *segments);
+            let top = frustum_faceted(er, wr, hh, *segments);
+            let top_t = translate_solid(&top, Vec3::new(0.0, 0.0, hh - 1e-3));
+            bot.try_union(&top_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "diabolo_join", message: e.message })
+        }
+        Feature::TripleStep { bottom_radius, bottom_height, middle_radius, middle_height, top_radius, top_height, segments, .. } => {
+            let br = resolve_one(id, bottom_radius, params)?;
+            let bh = resolve_one(id, bottom_height, params)?;
+            let mr = resolve_one(id, middle_radius, params)?;
+            let mh = resolve_one(id, middle_height, params)?;
+            let tr = resolve_one(id, top_radius, params)?;
+            let th = resolve_one(id, top_height, params)?;
+            if br <= 0.0 || bh <= 0.0 || mr <= 0.0 || mh <= 0.0 || tr <= 0.0 || th <= 0.0
+                || mr >= br || tr >= mr || *segments < 6
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("TripleStep requires top<middle<bottom radii, positive dims (got br={br}, mr={mr}, tr={tr})") });
+            }
+            let eps = (bh.min(mh).min(th) * 0.05).max(1e-3);
+            let bot = cylinder_along_axis(br, bh, *segments, 2, 0.0, 0.0, 0.0);
+            let mid = cylinder_along_axis(mr, mh + eps, *segments, 2, bh - eps, 0.0, 0.0);
+            let tp = cylinder_along_axis(tr, th + eps, *segments, 2, bh + mh - eps, 0.0, 0.0);
+            let lower = bot.try_union(&mid).map_err(|e| EvalError::Boolean { id: id.into(), op: "triple_step_bm", message: e.message })?;
+            lower.try_union(&tp).map_err(|e| EvalError::Boolean { id: id.into(), op: "triple_step_mt", message: e.message })
+        }
+        Feature::WingedScrew { shaft_radius, shaft_length, head_radius, head_height, wing_length, wing_thickness, segments, .. } => {
+            let sr = resolve_one(id, shaft_radius, params)?;
+            let sl = resolve_one(id, shaft_length, params)?;
+            let hr = resolve_one(id, head_radius, params)?;
+            let hh = resolve_one(id, head_height, params)?;
+            let wl = resolve_one(id, wing_length, params)?;
+            let wt = resolve_one(id, wing_thickness, params)?;
+            if sr <= 0.0 || sl <= 0.0 || hr <= 0.0 || hh <= 0.0 || wl <= 0.0 || wt <= 0.0 || sr >= hr || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("WingedScrew requires shaft<head, positive dims (got sr={sr}, hr={hr})") });
+            }
+            // Hex head + two rectangular wings projecting +x and -x at head height.
+            let mut head_prof = Vec::with_capacity(6);
+            for i in 0..6 {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / 6.0;
+                head_prof.push(Point3::new(hr * theta.cos(), hr * theta.sin(), 0.0));
+            }
+            let head = extrude_polygon(&head_prof, Vec3::new(0.0, 0.0, hh));
+            let wing_w = wt;
+            let wing_h = hh * 0.6;
+            let wing_z0 = (hh - wing_h) / 2.0;
+            let wing_left = box_at(
+                Vec3::new(wl, wing_w, wing_h),
+                Point3::new(-hr - wl + 1e-3, -wing_w / 2.0, wing_z0),
+            );
+            let wing_right = box_at(
+                Vec3::new(wl, wing_w, wing_h),
+                Point3::new(hr - 1e-3, -wing_w / 2.0, wing_z0),
+            );
+            let head_w_l = head.try_union(&wing_left).map_err(|e| EvalError::Boolean { id: id.into(), op: "winged_screw_left_wing", message: e.message })?;
+            let head_w_lr = head_w_l.try_union(&wing_right).map_err(|e| EvalError::Boolean { id: id.into(), op: "winged_screw_right_wing", message: e.message })?;
+            let eps = (hh * 0.05).max(1e-3);
+            let shaft = cylinder_along_axis(sr, sl + eps, *segments, 2, -sl, 0.0, 0.0);
+            head_w_lr.try_union(&shaft).map_err(|e| EvalError::Boolean { id: id.into(), op: "winged_screw_shaft", message: e.message })
+        }
+        Feature::KneadHandle { length, width, plate_thickness, pad_radius, pad_height, segments, .. } => {
+            let l = resolve_one(id, length, params)?;
+            let w = resolve_one(id, width, params)?;
+            let pt = resolve_one(id, plate_thickness, params)?;
+            let pr = resolve_one(id, pad_radius, params)?;
+            let ph = resolve_one(id, pad_height, params)?;
+            if l <= 0.0 || w <= 0.0 || pt <= 0.0 || pr <= 0.0 || ph <= 0.0 || pr >= l / 2.0 || pr >= w / 2.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("KneadHandle requires pad_radius < l&w/2, positive dims (got l={l}, w={w}, pr={pr})") });
+            }
+            let plate = box_at(Vec3::new(l, w, pt), Point3::new(0.0, 0.0, 0.0));
+            let pad = cylinder_along_axis(pr, ph + 1e-3, *segments, 2, pt - 1e-3, l / 2.0, w / 2.0);
+            plate.try_union(&pad).map_err(|e| EvalError::Boolean { id: id.into(), op: "knead_handle_pad", message: e.message })
+        }
+        Feature::ZigzagBar { length, depth, base_height, zigzag_height, n_zigs, .. } => {
+            let l = resolve_one(id, length, params)?;
+            let d = resolve_one(id, depth, params)?;
+            let bh = resolve_one(id, base_height, params)?;
+            let zh = resolve_one(id, zigzag_height, params)?;
+            if l <= 0.0 || d <= 0.0 || bh <= 0.0 || zh <= 0.0 || *n_zigs == 0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ZigzagBar requires positive dims, n_zigs>=1 (got l={l}, d={d}, bh={bh}, zh={zh})") });
+            }
+            // Build profile in xy plane: bottom rectangle [0,l] x [0,bh], top zigzag.
+            // Walk CCW: (0,0) → (l,0) → up the right edge → top zigzag right-to-left → (0,bh).
+            let n = *n_zigs;
+            let dx = l / (2.0 * n as f64);
+            let mut prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(l, 0.0, 0.0),
+            ];
+            for k in 0..=(2 * n) {
+                let x = l - (k as f64) * dx;
+                let y = if k % 2 == 0 { bh + zh } else { bh };
+                prof.push(Point3::new(x, y, 0.0));
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
+        Feature::FishingFloat { body_radius, pin_radius, pin_length, stacks, slices, .. } => {
+            let br = resolve_one(id, body_radius, params)?;
+            let pr = resolve_one(id, pin_radius, params)?;
+            let pl = resolve_one(id, pin_length, params)?;
+            if br <= 0.0 || pr <= 0.0 || pl <= 0.0 || pr >= br || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("FishingFloat requires pin<body, positive dims (got br={br}, pr={pr})") });
+            }
+            // Sphere body at origin, top pin from z=br to z=br+pl, bottom pin from z=-(br+pl) to z=-br.
+            let body = sphere_faceted(br, *stacks, *slices);
+            let top_pin = cylinder_along_axis(pr, pl + 1e-3, *slices, 2, br - 1e-3, 0.0, 0.0);
+            let bot_pin = cylinder_along_axis(pr, pl + 1e-3, *slices, 2, -br - pl, 0.0, 0.0);
+            let with_top = body.try_union(&top_pin).map_err(|e| EvalError::Boolean { id: id.into(), op: "fishing_float_top", message: e.message })?;
+            with_top.try_union(&bot_pin).map_err(|e| EvalError::Boolean { id: id.into(), op: "fishing_float_bot", message: e.message })
+        }
         Feature::HoleArray {
             input,
             axis,
