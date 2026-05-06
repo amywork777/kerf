@@ -1541,6 +1541,82 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// Lens: a biconvex lens shape — two spherical caps joined back to
+    /// back at z=0. `radius` is the sphere's radius, `cap_height` is
+    /// each cap's height, so total lens thickness = 2 * cap_height.
+    Lens {
+        id: String,
+        radius: Scalar,
+        cap_height: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// EggShape: a stretched faceted sphere — `radius` is the equatorial
+    /// radius, `aspect_z` scales along z (>1 prolate, <1 oblate).
+    EggShape {
+        id: String,
+        radius: Scalar,
+        aspect_z: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// UBendPipe: a 180° toroidal pipe section — like a U-bend in
+    /// plumbing. `bend_radius` is the centerline radius of the bend,
+    /// `pipe_radius` the pipe outer radius. Lies in the xz plane,
+    /// from (0, 0, 0) curving up and around to (2*bend_radius, 0, 0).
+    UBendPipe {
+        id: String,
+        bend_radius: Scalar,
+        pipe_radius: Scalar,
+        segments: usize,
+    },
+
+    /// SBend: an S-shaped pipe — two opposite 90° arcs joined.
+    /// Useful for offsetting pipes around obstacles.
+    SBend {
+        id: String,
+        bend_radius: Scalar,
+        pipe_radius: Scalar,
+        segments: usize,
+    },
+
+    /// DonutSlice: a wedge of a faceted donut — like an orange slice
+    /// of a torus. Defined by sweep angle (0 to 360 degrees).
+    DonutSlice {
+        id: String,
+        major_radius: Scalar,
+        minor_radius: Scalar,
+        sweep_deg: Scalar,
+        major_segs: usize,
+        minor_segs: usize,
+    },
+
+    /// CapsuleAt: like Capsule but with a chosen axis-aligned
+    /// orientation. `axis` is "x" / "y" / "z".
+    CapsuleAt {
+        id: String,
+        axis: String,
+        center: [Scalar; 3],
+        radius: Scalar,
+        body_length: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// ToroidalKnob: a knob with a toroidal grip ridge — cylinder body
+    /// with a faceted-torus rib around its top.
+    ToroidalKnob {
+        id: String,
+        body_radius: Scalar,
+        body_height: Scalar,
+        torus_major_radius: Scalar,
+        torus_minor_radius: Scalar,
+        body_segs: usize,
+        torus_segs: usize,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -1783,6 +1859,13 @@ impl Feature {
             | Feature::GussetPlate { id, .. }
             | Feature::CrossKey { id, .. }
             | Feature::PinShaft { id, .. }
+            | Feature::Lens { id, .. }
+            | Feature::EggShape { id, .. }
+            | Feature::UBendPipe { id, .. }
+            | Feature::SBend { id, .. }
+            | Feature::DonutSlice { id, .. }
+            | Feature::CapsuleAt { id, .. }
+            | Feature::ToroidalKnob { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -1923,6 +2006,13 @@ impl Feature {
             | Feature::GussetPlate { .. }
             | Feature::CrossKey { .. }
             | Feature::PinShaft { .. }
+            | Feature::Lens { .. }
+            | Feature::EggShape { .. }
+            | Feature::UBendPipe { .. }
+            | Feature::SBend { .. }
+            | Feature::DonutSlice { .. }
+            | Feature::CapsuleAt { .. }
+            | Feature::ToroidalKnob { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }

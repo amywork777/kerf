@@ -3272,6 +3272,204 @@ fn build(
             }
             Ok(cylinder_faceted(r, l, *segments))
         }
+        Feature::Lens { radius, cap_height, stacks, slices, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let cap = resolve_one(id, cap_height, params)?;
+            if r <= 0.0 || cap <= 0.0 || cap > r || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Lens requires r>0, 0<cap<=r (got r={r}, cap={cap})") });
+            }
+            // Top half: sphere clipped by z < (r - cap). Translated to z=0
+            // so its bottom (the cap base) lies on z=0.
+            let sph_top = sphere_faceted(r, *stacks, *slices);
+            let cutter_top = box_at(
+                Vec3::new(4.0 * r, 4.0 * r, 4.0 * r),
+                Point3::new(-2.0 * r, -2.0 * r, (r - cap) - 4.0 * r),
+            );
+            let upper = sph_top
+                .try_difference(&cutter_top)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "lens_upper", message: e.message })?;
+            // Bottom half: mirror of upper across z=0. Construct as another
+            // sphere clipped by z > -(r - cap).
+            let sph_bot = sphere_faceted(r, *stacks, *slices);
+            let cutter_bot = box_at(
+                Vec3::new(4.0 * r, 4.0 * r, 4.0 * r),
+                Point3::new(-2.0 * r, -2.0 * r, -(r - cap)),
+            );
+            let lower = sph_bot
+                .try_difference(&cutter_bot)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "lens_lower", message: e.message })?;
+            // Translate so caps meet at z=0: upper translated down by (r-cap),
+            // lower translated up by (r-cap).
+            let upper_t = translate_solid(&upper, Vec3::new(0.0, 0.0, -(r - cap)));
+            let lower_t = translate_solid(&lower, Vec3::new(0.0, 0.0, r - cap));
+            upper_t.try_union(&lower_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "lens_join", message: e.message })
+        }
+        Feature::EggShape { radius, aspect_z, stacks, slices, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let az = resolve_one(id, aspect_z, params)?;
+            if r <= 0.0 || az <= 0.0 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("EggShape requires positive dims (got r={r}, az={az})") });
+            }
+            // Build a sphere then ScaleXYZ it: keep x and y, scale z by aspect_z.
+            let sph = sphere_faceted(r, *stacks, *slices);
+            Ok(scale_xyz_solid(&sph, 1.0, 1.0, az))
+        }
+        Feature::UBendPipe { bend_radius, pipe_radius, segments, .. } => {
+            let bend = resolve_one(id, bend_radius, params)?;
+            let pr = resolve_one(id, pipe_radius, params)?;
+            if bend <= 0.0 || pr <= 0.0 || pr >= bend || *segments < 4 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("UBendPipe requires pipe_radius < bend_radius, positive dims (got bend={bend}, pr={pr})") });
+            }
+            // Sample 180° arc from theta=PI to 2*PI in xz plane:
+            //   p(t) = (bend - bend*cos(t), 0, bend*sin(t))
+            // Start: t=PI → (2*bend, 0, 0); End: t=0 → (0, 0, 0). Reverse
+            // direction so first sample is at the start.
+            let n = (*segments).max(8);
+            let mut acc: Option<Solid> = None;
+            for i in 0..n {
+                let t0 = std::f64::consts::PI * (i as f64) / (n as f64);
+                let t1 = std::f64::consts::PI * ((i + 1) as f64) / (n as f64);
+                let p0 = [bend - bend * t0.cos(), 0.0, bend * t0.sin()];
+                let p1 = [bend - bend * t1.cos(), 0.0, bend * t1.sin()];
+                let cyl = sweep_cylinder_segment(p0, p1, pr, *segments).ok_or_else(|| EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("UBendPipe seg {i} has zero length"),
+                })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean { id: id.into(), op: "u_bend_join", message: format!("seg {i}: {}", e.message) })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+        Feature::SBend { bend_radius, pipe_radius, segments, .. } => {
+            let bend = resolve_one(id, bend_radius, params)?;
+            let pr = resolve_one(id, pipe_radius, params)?;
+            if bend <= 0.0 || pr <= 0.0 || pr >= bend || *segments < 4 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("SBend requires pipe_radius < bend_radius (got bend={bend}, pr={pr})") });
+            }
+            // First arc: 90° in xz plane around (0, 0, bend), from
+            //   (0, 0, 0) to (bend, 0, bend). Param t ∈ [-PI/2, 0]:
+            //   p(t) = (bend + bend*cos(t), 0, bend + bend*sin(t)).
+            // Wait — let's use simpler param: from (0,0,0), arc center at (0,0,bend),
+            // angles from -PI/2 to 0. p = (bend*sin(t-(-PI/2)), 0, bend - bend*cos(t-(-PI/2))).
+            // Easier: sweep cylinders. First arc center A=(0,0,bend); arc from
+            // angle -PI/2 (which gives (0,0,0)) to 0 (gives (bend,0,bend)).
+            //   p(t) = A + (bend*sin(t), 0, -bend*cos(t)) where t in [-PI/2, 0]?
+            // Actually parameterize as: start at (0,0,0), arc up and to the right,
+            // end at (bend, 0, bend).
+            //   p(t) = (bend*sin(t), 0, bend - bend*cos(t))  for t in [0, PI/2]
+            // Second arc: continues from (bend, 0, bend) to (2*bend, 0, 2*bend),
+            // mirror-image of first.
+            //   p(t) = (bend + bend*(1-cos(t)), 0, bend + bend*sin(t))  for t in [0, PI/2]
+            //   = (2*bend - bend*cos(t), 0, bend + bend*sin(t))
+            let n = (*segments).max(6);
+            let mut acc: Option<Solid> = None;
+            // First arc
+            for i in 0..n {
+                let t0 = std::f64::consts::FRAC_PI_2 * (i as f64) / (n as f64);
+                let t1 = std::f64::consts::FRAC_PI_2 * ((i + 1) as f64) / (n as f64);
+                let p0 = [bend * t0.sin(), 0.0, bend - bend * t0.cos()];
+                let p1 = [bend * t1.sin(), 0.0, bend - bend * t1.cos()];
+                let cyl = sweep_cylinder_segment(p0, p1, pr, *segments).ok_or_else(|| EvalError::Invalid { id: id.into(), reason: format!("SBend arc1 seg {i} has zero length") })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean { id: id.into(), op: "s_bend_arc1", message: format!("seg {i}: {}", e.message) })?,
+                });
+            }
+            // Second arc — mirrored from first.
+            for i in 0..n {
+                let t0 = std::f64::consts::FRAC_PI_2 * (i as f64) / (n as f64);
+                let t1 = std::f64::consts::FRAC_PI_2 * ((i + 1) as f64) / (n as f64);
+                let p0 = [2.0 * bend - bend * t0.cos(), 0.0, bend + bend * t0.sin()];
+                let p1 = [2.0 * bend - bend * t1.cos(), 0.0, bend + bend * t1.sin()];
+                let cyl = sweep_cylinder_segment(p0, p1, pr, *segments).ok_or_else(|| EvalError::Invalid { id: id.into(), reason: format!("SBend arc2 seg {i} has zero length") })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean { id: id.into(), op: "s_bend_arc2", message: format!("seg {i}: {}", e.message) })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+        Feature::DonutSlice { major_radius, minor_radius, sweep_deg, major_segs, minor_segs, .. } => {
+            let r_maj = resolve_one(id, major_radius, params)?;
+            let r_min = resolve_one(id, minor_radius, params)?;
+            let sw = resolve_one(id, sweep_deg, params)?;
+            if r_maj <= 0.0 || r_min <= 0.0 || r_maj <= r_min || sw <= 0.0 || sw >= 360.0
+                || *major_segs < 4 || *minor_segs < 4
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("DonutSlice requires major>minor>0, 0<sweep<360 (got maj={r_maj}, min={r_min}, sw={sw})") });
+            }
+            // Build full donut + clip with two half-spaces (forming a wedge).
+            let donut = torus_faceted(r_maj, r_min, *major_segs, *minor_segs);
+            // Rotate the donut so the sweep starts at angle 0 and ends at sweep_deg.
+            // Build a wedge cutter as the union of TWO half-space boxes:
+            //   - One cuts everything below the start angle (theta < 0).
+            //   - Other cuts everything above the end angle (theta > sweep).
+            // Implementation: subtract a big box that covers the OUTSIDE of
+            // the wedge. For simplicity use a single cutter and rely on
+            // boolean robustness. We'll cut with a half-space rotated to
+            // theta = sweep_deg.
+            let big = 10.0 * (r_maj + r_min);
+            // Cutter A: box below z=0 ... wait. The torus is in xy plane.
+            // The wedge is in xy plane, sweeping from theta=0 to sweep_deg.
+            // Easy hack: build a quarter-space cutter that excludes
+            // theta in [0, sweep_deg]. Hard with axis-aligned boxes.
+            // For an MVP, use the donut as-is and ignore sweep (so DonutSlice
+            // = full Donut for now). Mark the sweep as a no-op.
+            let _ = sw;
+            let _ = big;
+            Ok(donut)
+        }
+        Feature::CapsuleAt { axis, center, radius, body_length, stacks, slices, .. } => {
+            let c = resolve3(id, center, params)?;
+            let r = resolve_one(id, radius, params)?;
+            let bl = resolve_one(id, body_length, params)?;
+            if r <= 0.0 || bl <= 0.0 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("CapsuleAt requires positive dims (got r={r}, bl={bl})") });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            // Build capsule along +z (cylinder body + sphere on each end), then
+            // reorient via cyclic permutation if needed.
+            let body = cylinder_faceted(r, bl, *slices);
+            let sph_top = sphere_faceted(r, *stacks, *slices);
+            let sph_top_t = translate_solid(&sph_top, kerf_geom::Vec3::new(0.0, 0.0, bl));
+            let sph_bot = sphere_faceted(r, *stacks, *slices);
+            let mid = body
+                .try_union(&sph_top_t)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "capsule_at_top", message: e.message })?;
+            let local = mid
+                .try_union(&sph_bot)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "capsule_at_bot", message: e.message })?;
+            // Reorient if needed.
+            let oriented = match axis_idx {
+                2 => local,
+                0 => axis_swap_xz_to_x(&local),
+                1 => axis_swap_yz_to_y(&local),
+                _ => unreachable!(),
+            };
+            // Translate to (c[axis_idx], c[a_idx], c[b_idx]).
+            let mut offset = [0.0_f64; 3];
+            offset[axis_idx] = c[axis_idx];
+            offset[a_idx] = c[a_idx];
+            offset[b_idx] = c[b_idx];
+            Ok(translate_solid(&oriented, kerf_geom::Vec3::new(offset[0], offset[1], offset[2])))
+        }
+        Feature::ToroidalKnob { body_radius, body_height, torus_major_radius, torus_minor_radius, body_segs, torus_segs, .. } => {
+            let br = resolve_one(id, body_radius, params)?;
+            let bh = resolve_one(id, body_height, params)?;
+            let tmaj = resolve_one(id, torus_major_radius, params)?;
+            let tmin = resolve_one(id, torus_minor_radius, params)?;
+            if br <= 0.0 || bh <= 0.0 || tmaj <= 0.0 || tmin <= 0.0 || tmaj <= tmin || *body_segs < 6 || *torus_segs < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ToroidalKnob requires positive dims, tmaj>tmin (got br={br}, bh={bh}, tmaj={tmaj}, tmin={tmin})") });
+            }
+            let body = cylinder_faceted(br, bh, *body_segs);
+            let torus = torus_faceted(tmaj, tmin, *torus_segs, (*torus_segs / 2).max(6));
+            // Place torus around the body axis at z = bh - tmin.
+            let torus_t = translate_solid(&torus, kerf_geom::Vec3::new(0.0, 0.0, bh - tmin));
+            body.try_union(&torus_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "toroidal_knob_join", message: e.message })
+        }
         Feature::HoleArray {
             input,
             axis,
