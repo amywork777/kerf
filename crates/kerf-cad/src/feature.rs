@@ -1365,6 +1365,82 @@ pub enum Feature {
         depth: Scalar,
     },
 
+    /// Handle: rectangular grip — a horizontal bar with rounded ends
+    /// (cylinder caps). `bar_length` is the straight portion; total
+    /// length = bar_length + 2 * cap_radius.
+    Handle {
+        id: String,
+        bar_length: Scalar,
+        bar_radius: Scalar,
+        cap_radius: Scalar,
+        segments: usize,
+    },
+
+    /// HookHandle: a hook — straight shaft + 180° curved tip.
+    /// `shaft_length` is the straight portion along +z; `bend_radius`
+    /// is the radius of the U-curve at the top.
+    HookHandle {
+        id: String,
+        shaft_length: Scalar,
+        shaft_radius: Scalar,
+        bend_radius: Scalar,
+        segments: usize,
+    },
+
+    /// CornerBracket: a 3-leg corner support — three perpendicular
+    /// rectangular plates meeting at a corner. Useful for box
+    /// reinforcement.
+    CornerBracket {
+        id: String,
+        leg_x: Scalar,
+        leg_y: Scalar,
+        leg_z: Scalar,
+        thickness: Scalar,
+    },
+
+    /// ArcSegment: a partial torus arc — like a Donut sliced by an
+    /// angular range. Approximated using AngleArc (chained cylinders).
+    ArcSegment {
+        id: String,
+        major_radius: Scalar,
+        minor_radius: Scalar,
+        start_deg: Scalar,
+        sweep_deg: Scalar,
+        segments: usize,
+    },
+
+    /// CrossBrace: an X-shaped support — two diagonal rectangular
+    /// bars crossed in a square frame. Useful for truss panels.
+    CrossBrace {
+        id: String,
+        frame_size: Scalar,
+        bar_thickness: Scalar,
+        depth: Scalar,
+    },
+
+    /// WireMesh: a thin grid of crossing rods (cylinders) instead of
+    /// rectangular bars. Like Lattice but with cylindrical bars.
+    WireMesh {
+        id: String,
+        nx: usize,
+        ny: usize,
+        cell_size: Scalar,
+        wire_radius: Scalar,
+        segments: usize,
+    },
+
+    /// AnchorPoint: a clip-style anchor — a flat plate with a
+    /// projecting tab and a hole through the tab.
+    AnchorPoint {
+        id: String,
+        plate_width: Scalar,
+        plate_height: Scalar,
+        plate_thickness: Scalar,
+        tab_height: Scalar,
+        hole_radius: Scalar,
+        segments: usize,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -1591,6 +1667,13 @@ impl Feature {
             | Feature::SerratedDisk { id, .. }
             | Feature::FerruleEnd { id, .. }
             | Feature::Trapezoid { id, .. }
+            | Feature::Handle { id, .. }
+            | Feature::HookHandle { id, .. }
+            | Feature::CornerBracket { id, .. }
+            | Feature::ArcSegment { id, .. }
+            | Feature::CrossBrace { id, .. }
+            | Feature::WireMesh { id, .. }
+            | Feature::AnchorPoint { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -1715,6 +1798,13 @@ impl Feature {
             | Feature::SerratedDisk { .. }
             | Feature::FerruleEnd { .. }
             | Feature::Trapezoid { .. }
+            | Feature::Handle { .. }
+            | Feature::HookHandle { .. }
+            | Feature::CornerBracket { .. }
+            | Feature::ArcSegment { .. }
+            | Feature::CrossBrace { .. }
+            | Feature::WireMesh { .. }
+            | Feature::AnchorPoint { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }
