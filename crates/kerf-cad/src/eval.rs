@@ -4583,6 +4583,122 @@ fn build(
             }
             Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
         }
+        Feature::CoinShape { outer_radius, face_thickness, rim_height, rim_width, segments, .. } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let ft = resolve_one(id, face_thickness, params)?;
+            let rh = resolve_one(id, rim_height, params)?;
+            let rw = resolve_one(id, rim_width, params)?;
+            if r_out <= 0.0 || ft <= 0.0 || rh <= 0.0 || rw <= 0.0 || rw >= r_out || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("CoinShape requires rim_width<outer_radius, positive dims (got r={r_out}, rw={rw})") });
+            }
+            // Face: full disk (radius r_out, thickness ft).
+            let face = cylinder_faceted(r_out, ft, *segments);
+            // Rim: ring (outer r_out, inner r_out - rw) of height rh on top of face.
+            let rim_outer = cylinder_along_axis(r_out, rh, *segments, 2, ft, 0.0, 0.0);
+            let eps = (rh * 0.05).max(1e-3);
+            let rim_inner = cylinder_along_axis(r_out - rw, rh + 2.0 * eps, *segments, 2, ft - eps, 0.0, 0.0);
+            let rim = rim_outer.try_difference(&rim_inner).map_err(|e| EvalError::Boolean { id: id.into(), op: "coin_rim", message: e.message })?;
+            face.try_union(&rim).map_err(|e| EvalError::Boolean { id: id.into(), op: "coin_face_rim", message: e.message })
+        }
+        Feature::CylindricalCap { radius, length, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let l = resolve_one(id, length, params)?;
+            if r <= 0.0 || l <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("CylindricalCap requires positive dims (got r={r}, l={l})") });
+            }
+            // Cylinder along +y, radius r, length l, axis at z=0. Cut by box at z<0 to keep top half.
+            let cyl = cylinder_along_axis(r, l, *segments, 1, 0.0, 0.0, 0.0);
+            let cutter = box_at(
+                Vec3::new(4.0 * r, l + 2.0 * 1e-3, r),
+                Point3::new(-2.0 * r, -1e-3, -r),
+            );
+            cyl.try_difference(&cutter).map_err(|e| EvalError::Boolean { id: id.into(), op: "cylindrical_cap_cut", message: e.message })
+        }
+        Feature::SquaredRing { outer_width, outer_height, wall_thickness, depth, .. } => {
+            let ow = resolve_one(id, outer_width, params)?;
+            let oh = resolve_one(id, outer_height, params)?;
+            let t = resolve_one(id, wall_thickness, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if ow <= 0.0 || oh <= 0.0 || t <= 0.0 || d <= 0.0 || 2.0 * t >= ow || 2.0 * t >= oh {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("SquaredRing requires 2t < ow & oh (got ow={ow}, oh={oh}, t={t})") });
+            }
+            let outer = box_at(Vec3::new(ow, oh, d), Point3::new(0.0, 0.0, 0.0));
+            let inner = box_at(
+                Vec3::new(ow - 2.0 * t, oh - 2.0 * t, d + 2.0 * 1e-3),
+                Point3::new(t, t, -1e-3),
+            );
+            outer.try_difference(&inner).map_err(|e| EvalError::Boolean { id: id.into(), op: "squared_ring_carve", message: e.message })
+        }
+        Feature::WaveProfile { wavelength, amplitude, n_waves, depth, height, .. } => {
+            let wl = resolve_one(id, wavelength, params)?;
+            let amp = resolve_one(id, amplitude, params)?;
+            let d = resolve_one(id, depth, params)?;
+            let h = resolve_one(id, height, params)?;
+            if wl <= 0.0 || amp <= 0.0 || d <= 0.0 || h <= 0.0 || *n_waves == 0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("WaveProfile requires positive dims, n_waves >= 1 (got wl={wl}, amp={amp}, n={n_waves})") });
+            }
+            // Build a triangle-wave outline in the xy plane (top wavy, bottom flat).
+            // CCW walk: bottom-left → bottom-right → wavy top from right to left.
+            let total_l = (*n_waves as f64) * wl;
+            let mut prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(total_l, 0.0, 0.0),
+            ];
+            // Wavy top: for each wave, walk from peak → valley → peak.
+            // Total points: 2*n_waves + 1 alternating peak/valley.
+            for k in 0..=(2 * *n_waves) {
+                let x = total_l - (k as f64) * wl / 2.0;
+                let y = if k % 2 == 0 { h + amp } else { h };
+                prof.push(Point3::new(x, y, 0.0));
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
+        Feature::BulletShape { radius, body_length, stacks, slices, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let bl = resolve_one(id, body_length, params)?;
+            if r <= 0.0 || bl <= 0.0 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("BulletShape requires positive dims (got r={r}, bl={bl})") });
+            }
+            let body = cylinder_along_axis(r, bl, *slices, 2, 0.0, 0.0, 0.0);
+            let sph = sphere_faceted(r, *stacks, *slices);
+            // Hemisphere clip — keep only upper half.
+            let cutter = box_at(
+                Vec3::new(4.0 * r, 4.0 * r, 2.0 * r),
+                Point3::new(-2.0 * r, -2.0 * r, -2.0 * r),
+            );
+            let hemi = sph.try_difference(&cutter).map_err(|e| EvalError::Boolean { id: id.into(), op: "bullet_hemi_cut", message: e.message })?;
+            let hemi_t = translate_solid(&hemi, Vec3::new(0.0, 0.0, bl));
+            body.try_union(&hemi_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "bullet_join", message: e.message })
+        }
+        Feature::TriangularPlate { a, b, c, thickness, .. } => {
+            let av = [resolve_one(id, &a[0], params)?, resolve_one(id, &a[1], params)?];
+            let bv = [resolve_one(id, &b[0], params)?, resolve_one(id, &b[1], params)?];
+            let cv = [resolve_one(id, &c[0], params)?, resolve_one(id, &c[1], params)?];
+            let t = resolve_one(id, thickness, params)?;
+            if t <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("TriangularPlate requires positive thickness (got {t})") });
+            }
+            // Check triangle non-degeneracy.
+            let area2 = (bv[0] - av[0]) * (cv[1] - av[1]) - (cv[0] - av[0]) * (bv[1] - av[1]);
+            if area2.abs() < 1e-12 {
+                return Err(EvalError::Invalid { id: id.into(), reason: "TriangularPlate corners are colinear".into() });
+            }
+            // Ensure CCW.
+            let prof = if area2 > 0.0 {
+                vec![
+                    Point3::new(av[0], av[1], 0.0),
+                    Point3::new(bv[0], bv[1], 0.0),
+                    Point3::new(cv[0], cv[1], 0.0),
+                ]
+            } else {
+                vec![
+                    Point3::new(av[0], av[1], 0.0),
+                    Point3::new(cv[0], cv[1], 0.0),
+                    Point3::new(bv[0], bv[1], 0.0),
+                ]
+            };
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, t)))
+        }
         Feature::HoleArray {
             input,
             axis,

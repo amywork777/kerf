@@ -2218,6 +2218,71 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// CoinShape: a flat disk with a raised rim around its edge.
+    /// `outer_radius` is the disk radius, `face_thickness` the flat
+    /// portion's thickness, `rim_height` how much the rim projects
+    /// above the face, `rim_width` the rim's radial width.
+    CoinShape {
+        id: String,
+        outer_radius: Scalar,
+        face_thickness: Scalar,
+        rim_height: Scalar,
+        rim_width: Scalar,
+        segments: usize,
+    },
+
+    /// CylindricalCap: top half of a cylinder, sliced by a vertical
+    /// plane through the axis. Useful for half-pipe shapes.
+    CylindricalCap {
+        id: String,
+        radius: Scalar,
+        length: Scalar,
+        segments: usize,
+    },
+
+    /// SquaredRing: rectangular outer outline minus rectangular inner
+    /// outline (both axis-aligned), extruded along +z.
+    SquaredRing {
+        id: String,
+        outer_width: Scalar,
+        outer_height: Scalar,
+        wall_thickness: Scalar,
+        depth: Scalar,
+    },
+
+    /// WaveProfile: a sinusoidal-approximated wave plate — N peaks
+    /// approximated as triangle ridges (like CorrugatedPanel) but
+    /// with the profile in the xy plane and extruded along +z.
+    /// Different orientation than CorrugatedPanel.
+    WaveProfile {
+        id: String,
+        wavelength: Scalar,
+        amplitude: Scalar,
+        n_waves: usize,
+        depth: Scalar,
+        height: Scalar,
+    },
+
+    /// BulletShape: a cylinder with a hemispherical cap on top —
+    /// the classic projectile profile.
+    BulletShape {
+        id: String,
+        radius: Scalar,
+        body_length: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// TriangularPlate: an equilateral or arbitrary triangle plate
+    /// extruded by `thickness`. Specified by 3 (x, y) corner points.
+    TriangularPlate {
+        id: String,
+        a: [Scalar; 2],
+        b: [Scalar; 2],
+        c: [Scalar; 2],
+        thickness: Scalar,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -2520,6 +2585,12 @@ impl Feature {
             | Feature::CamLobe { id, .. }
             | Feature::ButtonShape { id, .. }
             | Feature::FilletedSlot { id, .. }
+            | Feature::CoinShape { id, .. }
+            | Feature::CylindricalCap { id, .. }
+            | Feature::SquaredRing { id, .. }
+            | Feature::WaveProfile { id, .. }
+            | Feature::BulletShape { id, .. }
+            | Feature::TriangularPlate { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -2720,6 +2791,12 @@ impl Feature {
             | Feature::CamLobe { .. }
             | Feature::ButtonShape { .. }
             | Feature::FilletedSlot { .. }
+            | Feature::CoinShape { .. }
+            | Feature::CylindricalCap { .. }
+            | Feature::SquaredRing { .. }
+            | Feature::WaveProfile { .. }
+            | Feature::BulletShape { .. }
+            | Feature::TriangularPlate { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }
