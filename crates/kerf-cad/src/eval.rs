@@ -4699,6 +4699,195 @@ fn build(
             };
             Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, t)))
         }
+        Feature::Heart { size, thickness, segments, .. } => {
+            let sz = resolve_one(id, size, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if sz <= 0.0 || t <= 0.0 || *segments < 8 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Heart requires positive dims, segments>=8 (got sz={sz}, t={t})") });
+            }
+            // Parametric heart curve: x = 16 sin³(t), y = 13 cos(t) - 5 cos(2t) - 2 cos(3t) - cos(4t).
+            // Scale to fit `size`. Sample N points around the curve.
+            let n = *segments;
+            let mut prof = Vec::with_capacity(n);
+            // Compute raw points and find bounding box for scaling.
+            let mut raw: Vec<(f64, f64)> = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                let x = 16.0 * theta.sin().powi(3);
+                let y = 13.0 * theta.cos()
+                    - 5.0 * (2.0 * theta).cos()
+                    - 2.0 * (3.0 * theta).cos()
+                    - (4.0 * theta).cos();
+                raw.push((x, y));
+            }
+            // Find max extent.
+            let max_extent = raw.iter().fold(0.0_f64, |a, &(x, y)| a.max(x.abs()).max(y.abs()));
+            let scale = sz / (2.0 * max_extent);
+            // The curve as parameterized goes CW above; we need CCW for extrude_polygon.
+            // Reverse the order.
+            for &(x, y) in raw.iter().rev() {
+                prof.push(Point3::new(x * scale, y * scale, 0.0));
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, t)))
+        }
+        Feature::ChainLink { length, width, wall_thickness, depth, segments, .. } => {
+            let l = resolve_one(id, length, params)?;
+            let w = resolve_one(id, width, params)?;
+            let wt = resolve_one(id, wall_thickness, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if l <= 0.0 || w <= 0.0 || wt <= 0.0 || d <= 0.0 || 2.0 * wt >= w || *segments < 8 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ChainLink requires 2wt < w (got l={l}, w={w}, wt={wt})") });
+            }
+            // Build outer stadium then subtract inner stadium.
+            let outer_r = w / 2.0;
+            let inner_r = (w / 2.0) - wt;
+            let inner_l = l - 2.0 * wt;
+            if inner_l <= 0.0 || inner_r <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ChainLink wall too thick (got l={l}, w={w}, wt={wt})") });
+            }
+            let n = (*segments).max(8);
+            let mut outer_prof = Vec::with_capacity(2 * n + 4);
+            for k in 0..=n {
+                let theta = -std::f64::consts::FRAC_PI_2
+                    + std::f64::consts::PI * (k as f64) / (n as f64);
+                outer_prof.push(Point3::new(l + outer_r * theta.cos() - l / 2.0, outer_r * theta.sin(), 0.0));
+            }
+            for k in 0..=n {
+                let theta = std::f64::consts::FRAC_PI_2
+                    + std::f64::consts::PI * (k as f64) / (n as f64);
+                outer_prof.push(Point3::new(outer_r * theta.cos() - l / 2.0, outer_r * theta.sin(), 0.0));
+            }
+            let outer = extrude_polygon(&outer_prof, Vec3::new(0.0, 0.0, d));
+            let mut inner_prof = Vec::with_capacity(2 * n + 4);
+            for k in 0..=n {
+                let theta = -std::f64::consts::FRAC_PI_2
+                    + std::f64::consts::PI * (k as f64) / (n as f64);
+                inner_prof.push(Point3::new(inner_l + inner_r * theta.cos() - inner_l / 2.0, inner_r * theta.sin(), 0.0));
+            }
+            for k in 0..=n {
+                let theta = std::f64::consts::FRAC_PI_2
+                    + std::f64::consts::PI * (k as f64) / (n as f64);
+                inner_prof.push(Point3::new(inner_r * theta.cos() - inner_l / 2.0, inner_r * theta.sin(), 0.0));
+            }
+            let eps = (d * 0.05).max(1e-3);
+            let inner = extrude_polygon(&inner_prof, Vec3::new(0.0, 0.0, d + 2.0 * eps));
+            let inner_t = translate_solid(&inner, Vec3::new(0.0, 0.0, -eps));
+            outer.try_difference(&inner_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "chain_link_carve", message: e.message })
+        }
+        Feature::SpiralPlate { max_radius, revolutions, rod_radius, z, segments_per_revolution, .. } => {
+            let r_max = resolve_one(id, max_radius, params)?;
+            let revs = resolve_one(id, revolutions, params)?;
+            let rod_r = resolve_one(id, rod_radius, params)?;
+            let zv = resolve_one(id, z, params)?;
+            if r_max <= 0.0 || revs <= 0.0 || rod_r <= 0.0 || *segments_per_revolution < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("SpiralPlate requires positive dims (got rmax={r_max}, revs={revs}, rod_r={rod_r})") });
+            }
+            // Archimedean spiral: r(theta) = r_max * theta / (2π * revs), theta in [0, 2π*revs].
+            let total_samples = (*segments_per_revolution as f64 * revs).ceil() as usize + 1;
+            let total_angle = 2.0 * std::f64::consts::PI * revs;
+            let mut acc: Option<Solid> = None;
+            for i in 0..total_samples - 1 {
+                let t0 = total_angle * i as f64 / (total_samples - 1) as f64;
+                let t1 = total_angle * (i + 1) as f64 / (total_samples - 1) as f64;
+                let r0 = r_max * t0 / total_angle;
+                let r1 = r_max * t1 / total_angle;
+                let p0 = [r0 * t0.cos(), r0 * t0.sin(), zv];
+                let p1 = [r1 * t1.cos(), r1 * t1.sin(), zv];
+                if (p1[0] - p0[0]).powi(2) + (p1[1] - p0[1]).powi(2) < 1e-18 {
+                    continue;
+                }
+                let cyl = sweep_cylinder_segment(p0, p1, rod_r, 8).ok_or_else(|| EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("SpiralPlate seg {i} zero length"),
+                })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean { id: id.into(), op: "spiral_join", message: format!("seg {i}: {}", e.message) })?,
+                });
+            }
+            acc.ok_or_else(|| EvalError::Invalid { id: id.into(), reason: "SpiralPlate produced no segments".into() })
+        }
+        Feature::WindowFrame { outer_width, outer_height, frame_thickness, depth, .. } => {
+            let ow = resolve_one(id, outer_width, params)?;
+            let oh = resolve_one(id, outer_height, params)?;
+            let t = resolve_one(id, frame_thickness, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if ow <= 0.0 || oh <= 0.0 || t <= 0.0 || d <= 0.0 || 2.0 * t >= ow || 2.0 * t >= oh {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("WindowFrame requires 2t < ow & oh (got ow={ow}, oh={oh}, t={t})") });
+            }
+            let outer = box_at(Vec3::new(ow, oh, d), Point3::new(0.0, 0.0, 0.0));
+            let inner = box_at(
+                Vec3::new(ow - 2.0 * t, oh - 2.0 * t, d + 2.0 * 1e-3),
+                Point3::new(t, t, -1e-3),
+            );
+            outer.try_difference(&inner).map_err(|e| EvalError::Boolean { id: id.into(), op: "window_frame_carve", message: e.message })
+        }
+        Feature::SquareKey { side, length, .. } => {
+            let sd = resolve_one(id, side, params)?;
+            let l = resolve_one(id, length, params)?;
+            if sd <= 0.0 || l <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("SquareKey requires positive dims (got sd={sd}, l={l})") });
+            }
+            Ok(box_at(Vec3::new(sd, sd, l), Point3::new(-sd / 2.0, -sd / 2.0, 0.0)))
+        }
+        Feature::DiskWithSlots { radius, slot_count, slot_width, slot_depth, thickness, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let sw = resolve_one(id, slot_width, params)?;
+            let sd = resolve_one(id, slot_depth, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r <= 0.0 || sw <= 0.0 || sd <= 0.0 || t <= 0.0 || sd >= r || *slot_count < 2 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("DiskWithSlots requires sd<r, slot_count>=2 (got r={r}, sd={sd}, sc={slot_count})") });
+            }
+            let disk = cylinder_faceted(r, t, *segments);
+            let mut acc = disk;
+            // For each slot: a thin radial box from r-sd to r+1, of width sw.
+            // Position around the perimeter using rotation.
+            for k in 0..*slot_count {
+                let theta = 2.0 * std::f64::consts::PI * (k as f64) / (*slot_count as f64);
+                // Build the slot box at the +x position then rotate.
+                let slot_at_zero = box_at(
+                    Vec3::new(sd + 1e-3, sw, t + 2.0 * 1e-3),
+                    Point3::new(r - sd, -sw / 2.0, -1e-3),
+                );
+                let rotated = rotate_solid(&slot_at_zero, Vec3::new(0.0, 0.0, 1.0), theta, Point3::origin());
+                acc = acc.try_difference(&rotated).map_err(|e| EvalError::Boolean { id: id.into(), op: "disk_slot_carve", message: format!("slot {k}: {}", e.message) })?;
+            }
+            Ok(acc)
+        }
+        Feature::FivePointedBadge { outer_radius, inner_radius, thickness, .. } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r_out <= 0.0 || r_in <= 0.0 || r_in >= r_out || t <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("FivePointedBadge requires inner<outer, positive dims (got out={r_out}, in={r_in})") });
+            }
+            // 5-pointed star: 10 vertices alternating outer/inner.
+            let n = 10;
+            let mut prof = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = std::f64::consts::FRAC_PI_2
+                    + 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                let r = if i % 2 == 0 { r_out } else { r_in };
+                prof.push(Point3::new(r * theta.cos(), r * theta.sin(), 0.0));
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, t)))
+        }
+        Feature::Crescent { outer_radius, inner_radius, offset, thickness, segments, .. } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let off = resolve_one(id, offset, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r_out <= 0.0 || r_in <= 0.0 || off <= 0.0 || t <= 0.0
+                || r_in >= r_out || off + r_in <= r_out
+                || off >= r_out + r_in || *segments < 8
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Crescent requires offset such that inner partially overlaps outer (got out={r_out}, in={r_in}, off={off})") });
+            }
+            let outer = cylinder_faceted(r_out, t, *segments);
+            let eps = (t * 0.05).max(1e-3);
+            let inner = cylinder_along_axis(r_in, t + 2.0 * eps, *segments, 2, -eps, off, 0.0);
+            outer.try_difference(&inner).map_err(|e| EvalError::Boolean { id: id.into(), op: "crescent_carve", message: e.message })
+        }
         Feature::HoleArray {
             input,
             axis,

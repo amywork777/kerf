@@ -2283,6 +2283,93 @@ pub enum Feature {
         thickness: Scalar,
     },
 
+    /// Heart: a heart-shaped extruded plate. `size` is the bounding box
+    /// edge length, `thickness` the extrusion depth.
+    Heart {
+        id: String,
+        size: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
+    /// ChainLink: an oval ring — a stadium-shaped outer profile minus
+    /// a stadium-shaped inner profile. `length` and `width` are the
+    /// outer dimensions, `wall_thickness` the wall around the inner
+    /// stadium hole. Extruded along +z by `depth`.
+    ChainLink {
+        id: String,
+        length: Scalar,
+        width: Scalar,
+        wall_thickness: Scalar,
+        depth: Scalar,
+        segments: usize,
+    },
+
+    /// SpiralPlate: an Archimedean-spiral pattern of N revolutions
+    /// approximated as a chain of straight segments swept as a thin
+    /// rod. Decorative.
+    SpiralPlate {
+        id: String,
+        max_radius: Scalar,
+        revolutions: Scalar,
+        rod_radius: Scalar,
+        z: Scalar,
+        segments_per_revolution: usize,
+    },
+
+    /// WindowFrame: a rectangular frame — outer rectangle minus inner
+    /// rectangular cutout, extruded along +z. Like SquaredRing but
+    /// with explicit "window frame" intent and asymmetric inner offset.
+    WindowFrame {
+        id: String,
+        outer_width: Scalar,
+        outer_height: Scalar,
+        frame_thickness: Scalar,
+        depth: Scalar,
+    },
+
+    /// SquareKey: a square cross-section key — extruded along +z by
+    /// `length`. Used for keyed shaft connections.
+    SquareKey {
+        id: String,
+        side: Scalar,
+        length: Scalar,
+    },
+
+    /// DiskWithSlots: a disk with N evenly-spaced radial rectangular
+    /// slots cut from the rim. Used for slotted couplings, wheels.
+    DiskWithSlots {
+        id: String,
+        radius: Scalar,
+        slot_count: usize,
+        slot_width: Scalar,
+        slot_depth: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
+    /// FivePointedBadge: a 5-pointed star plate (alias of Star with
+    /// fixed 5 points and explicit "badge" intent).
+    FivePointedBadge {
+        id: String,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        thickness: Scalar,
+    },
+
+    /// Crescent: two overlapping disks where the smaller disk is
+    /// subtracted from the larger to form a crescent moon shape.
+    /// Both disks lie in xy plane, extruded along +z. The small disk
+    /// is offset by `offset` from the large disk's center.
+    Crescent {
+        id: String,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        offset: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -2591,6 +2678,14 @@ impl Feature {
             | Feature::WaveProfile { id, .. }
             | Feature::BulletShape { id, .. }
             | Feature::TriangularPlate { id, .. }
+            | Feature::Heart { id, .. }
+            | Feature::ChainLink { id, .. }
+            | Feature::SpiralPlate { id, .. }
+            | Feature::WindowFrame { id, .. }
+            | Feature::SquareKey { id, .. }
+            | Feature::DiskWithSlots { id, .. }
+            | Feature::FivePointedBadge { id, .. }
+            | Feature::Crescent { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -2797,6 +2892,14 @@ impl Feature {
             | Feature::WaveProfile { .. }
             | Feature::BulletShape { .. }
             | Feature::TriangularPlate { .. }
+            | Feature::Heart { .. }
+            | Feature::ChainLink { .. }
+            | Feature::SpiralPlate { .. }
+            | Feature::WindowFrame { .. }
+            | Feature::SquareKey { .. }
+            | Feature::DiskWithSlots { .. }
+            | Feature::FivePointedBadge { .. }
+            | Feature::Crescent { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }
