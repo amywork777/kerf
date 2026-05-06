@@ -1137,6 +1137,126 @@ pub enum Feature {
         depth: Scalar,
     },
 
+    /// SocketHeadCapScrew: a hex socket head + cylindrical shaft. Head
+    /// is a hex prism (6-sided, fits a hex key); shaft is a cylinder.
+    SocketHeadCapScrew {
+        id: String,
+        head_radius: Scalar,
+        head_height: Scalar,
+        shaft_radius: Scalar,
+        shaft_length: Scalar,
+        segments: usize,
+    },
+
+    /// FlatHeadScrew: a countersunk flat-head screw — frustum head
+    /// (cone-shaped) tapering from `head_radius` at the top to
+    /// `shaft_radius` at the join, then cylindrical shaft below.
+    FlatHeadScrew {
+        id: String,
+        head_radius: Scalar,
+        head_height: Scalar,
+        shaft_radius: Scalar,
+        shaft_length: Scalar,
+        segments: usize,
+    },
+
+    /// Rivet: cylindrical body + dome head. The dome is approximated
+    /// by a frustum (small radius at top, larger at the body join) to
+    /// avoid sphere boolean limitations.
+    Rivet {
+        id: String,
+        body_radius: Scalar,
+        body_length: Scalar,
+        head_radius: Scalar,
+        head_height: Scalar,
+        segments: usize,
+    },
+
+    /// ShoulderBolt: a bolt with two diameters — a wider "shoulder"
+    /// near the head and a narrower threaded portion below. Useful for
+    /// precise positioning bolts.
+    ShoulderBolt {
+        id: String,
+        head_radius: Scalar,
+        head_height: Scalar,
+        shoulder_radius: Scalar,
+        shoulder_length: Scalar,
+        thread_radius: Scalar,
+        thread_length: Scalar,
+        segments: usize,
+    },
+
+    /// EyeBolt: a bolt with a ring (eye) instead of a flat head. The
+    /// ring is approximated as a faceted donut (torus_faceted) joined
+    /// to a cylindrical shaft.
+    EyeBolt {
+        id: String,
+        ring_major_radius: Scalar,
+        ring_minor_radius: Scalar,
+        shaft_radius: Scalar,
+        shaft_length: Scalar,
+        ring_segs: usize,
+        shaft_segments: usize,
+    },
+
+    /// ThreadInsert: a tubular insert with a hex outer (so it can be
+    /// driven into the workpiece) and a smooth inner bore. Used for
+    /// strengthening threads in soft materials.
+    ThreadInsert {
+        id: String,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        length: Scalar,
+        segments: usize,
+    },
+
+    /// Cam: a circular disk with an offset hole — when rotated about
+    /// the hole, the outer profile traces an eccentric path. `radius`
+    /// is the disk outer radius, `hole_radius` the central hole, and
+    /// `eccentricity` the offset of the hole from the disk's geometric
+    /// center.
+    Cam {
+        id: String,
+        radius: Scalar,
+        hole_radius: Scalar,
+        eccentricity: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
+    /// Crank: a horizontal arm with two cylinders at each end (the
+    /// pivot and the wrist pin). `arm_length` is between the two pin
+    /// centers; `arm_thickness` and `arm_width` define the connecting
+    /// arm cross-section.
+    Crank {
+        id: String,
+        pivot_radius: Scalar,
+        wrist_radius: Scalar,
+        arm_length: Scalar,
+        arm_width: Scalar,
+        arm_thickness: Scalar,
+        segments: usize,
+    },
+
+    /// Tee: a 3-way pipe junction. Three cylinders meeting at the
+    /// origin, all the same radius. Two run along the same axis (e.g.
+    /// +x and -x), the third runs perpendicular (+y).
+    Tee {
+        id: String,
+        radius: Scalar,
+        leg_length: Scalar,
+        segments: usize,
+    },
+
+    /// Cross: a 4-way pipe junction. Four cylinders meeting at the
+    /// origin, all the same radius. Two pairs of antiparallel legs.
+    Cross {
+        id: String,
+        radius: Scalar,
+        leg_length: Scalar,
+        segments: usize,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -1343,6 +1463,16 @@ impl Feature {
             | Feature::Hinge { id, .. }
             | Feature::Cleat { id, .. }
             | Feature::Lattice { id, .. }
+            | Feature::SocketHeadCapScrew { id, .. }
+            | Feature::FlatHeadScrew { id, .. }
+            | Feature::Rivet { id, .. }
+            | Feature::ShoulderBolt { id, .. }
+            | Feature::EyeBolt { id, .. }
+            | Feature::ThreadInsert { id, .. }
+            | Feature::Cam { id, .. }
+            | Feature::Crank { id, .. }
+            | Feature::Tee { id, .. }
+            | Feature::Cross { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -1447,6 +1577,16 @@ impl Feature {
             | Feature::Hinge { .. }
             | Feature::Cleat { .. }
             | Feature::Lattice { .. }
+            | Feature::SocketHeadCapScrew { .. }
+            | Feature::FlatHeadScrew { .. }
+            | Feature::Rivet { .. }
+            | Feature::ShoulderBolt { .. }
+            | Feature::EyeBolt { .. }
+            | Feature::ThreadInsert { .. }
+            | Feature::Cam { .. }
+            | Feature::Crank { .. }
+            | Feature::Tee { .. }
+            | Feature::Cross { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }

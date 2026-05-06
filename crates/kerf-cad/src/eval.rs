@@ -2642,6 +2642,163 @@ fn build(
             }
             Ok(acc.unwrap())
         }
+        Feature::SocketHeadCapScrew { head_radius, head_height, shaft_radius, shaft_length, segments, .. } => {
+            let hr = resolve_one(id, head_radius, params)?;
+            let hh = resolve_one(id, head_height, params)?;
+            let sr = resolve_one(id, shaft_radius, params)?;
+            let sl = resolve_one(id, shaft_length, params)?;
+            if hr <= 0.0 || hh <= 0.0 || sr <= 0.0 || sl <= 0.0 || sr >= hr || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("SocketHeadCapScrew requires shaft_radius < head_radius and positive dims (got hr={hr}, sr={sr})") });
+            }
+            // Head: 6-sided prism (hex). Shaft: cylinder.
+            let mut head_prof = Vec::with_capacity(6);
+            for i in 0..6 {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / 6.0;
+                head_prof.push(Point3::new(hr * theta.cos(), hr * theta.sin(), 0.0));
+            }
+            let head = extrude_polygon(&head_prof, Vec3::new(0.0, 0.0, hh));
+            let eps = (hh * 0.05).max(1e-3);
+            let shaft = cylinder_along_axis(sr, sl + eps, *segments, 2, -sl, 0.0, 0.0);
+            head.try_union(&shaft).map_err(|e| EvalError::Boolean { id: id.into(), op: "socket_head_join", message: e.message })
+        }
+        Feature::FlatHeadScrew { head_radius, head_height, shaft_radius, shaft_length, segments, .. } => {
+            let hr = resolve_one(id, head_radius, params)?;
+            let hh = resolve_one(id, head_height, params)?;
+            let sr = resolve_one(id, shaft_radius, params)?;
+            let sl = resolve_one(id, shaft_length, params)?;
+            if hr <= 0.0 || hh <= 0.0 || sr <= 0.0 || sl <= 0.0 || sr >= hr || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("FlatHeadScrew requires shaft_radius < head_radius and positive dims (got hr={hr}, sr={sr})") });
+            }
+            // Head: countersunk frustum from hr at z=0 down to sr at z=-hh.
+            let head = frustum_faceted(hr, sr, hh, *segments);
+            let head_translated = translate_solid(&head, Vec3::new(0.0, 0.0, -hh));
+            let eps = (hh * 0.05).max(1e-3);
+            let shaft = cylinder_along_axis(sr, sl + eps, *segments, 2, -hh - sl, 0.0, 0.0);
+            head_translated.try_union(&shaft).map_err(|e| EvalError::Boolean { id: id.into(), op: "flat_head_join", message: e.message })
+        }
+        Feature::Rivet { body_radius, body_length, head_radius, head_height, segments, .. } => {
+            let br = resolve_one(id, body_radius, params)?;
+            let bl = resolve_one(id, body_length, params)?;
+            let hr = resolve_one(id, head_radius, params)?;
+            let hh = resolve_one(id, head_height, params)?;
+            if br <= 0.0 || bl <= 0.0 || hr <= 0.0 || hh <= 0.0 || br >= hr || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Rivet requires body_radius < head_radius and positive dims (got br={br}, hr={hr})") });
+            }
+            // Body cylinder + dome head (approximated as a frustum from br at top
+            // to hr at bottom).
+            let body = cylinder_along_axis(br, bl, *segments, 2, 0.0, 0.0, 0.0);
+            let head_top_r = br * 1.1;
+            let head = frustum_faceted(head_top_r, hr, hh, *segments);
+            let head_translated = translate_solid(&head, Vec3::new(0.0, 0.0, bl - 1e-3));
+            body.try_union(&head_translated).map_err(|e| EvalError::Boolean { id: id.into(), op: "rivet_join", message: e.message })
+        }
+        Feature::ShoulderBolt { head_radius, head_height, shoulder_radius, shoulder_length, thread_radius, thread_length, segments, .. } => {
+            let hr = resolve_one(id, head_radius, params)?;
+            let hh = resolve_one(id, head_height, params)?;
+            let sr = resolve_one(id, shoulder_radius, params)?;
+            let sl = resolve_one(id, shoulder_length, params)?;
+            let tr = resolve_one(id, thread_radius, params)?;
+            let tl = resolve_one(id, thread_length, params)?;
+            if hr <= 0.0 || hh <= 0.0 || sr <= 0.0 || sl <= 0.0 || tr <= 0.0 || tl <= 0.0
+                || tr >= sr || sr >= hr || *segments < 6
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ShoulderBolt requires thread < shoulder < head and positive dims (got hr={hr}, sr={sr}, tr={tr})") });
+            }
+            let head = cylinder_along_axis(hr, hh, *segments, 2, 0.0, 0.0, 0.0);
+            let eps = (hh * 0.05).max(1e-3);
+            let shoulder = cylinder_along_axis(sr, sl + 2.0 * eps, *segments, 2, -sl - eps, 0.0, 0.0);
+            let thread = cylinder_along_axis(tr, tl + eps, *segments, 2, -sl - tl, 0.0, 0.0);
+            let upper = head.try_union(&shoulder).map_err(|e| EvalError::Boolean { id: id.into(), op: "shoulder_bolt_head_shoulder", message: e.message })?;
+            upper.try_union(&thread).map_err(|e| EvalError::Boolean { id: id.into(), op: "shoulder_bolt_thread", message: e.message })
+        }
+        Feature::EyeBolt { ring_major_radius, ring_minor_radius, shaft_radius, shaft_length, ring_segs, shaft_segments, .. } => {
+            let r_maj = resolve_one(id, ring_major_radius, params)?;
+            let r_min = resolve_one(id, ring_minor_radius, params)?;
+            let sr = resolve_one(id, shaft_radius, params)?;
+            let sl = resolve_one(id, shaft_length, params)?;
+            if r_maj <= 0.0 || r_min <= 0.0 || r_maj <= r_min || sr <= 0.0 || sl <= 0.0 || *ring_segs < 6 || *shaft_segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("EyeBolt requires major>minor>0, segments>=6 (got maj={r_maj}, min={r_min})") });
+            }
+            // Ring: faceted torus, axis along +y so the ring is upright.
+            // Build it +z then rotate-via-cyclic-permutation if needed.
+            // For simplicity: build at origin with axis +z (ring lies in xy plane),
+            // then translate up so the bottom of the ring is at z = sl.
+            // Actually the eyebolt should hang from the ring, so the shaft
+            // is below the ring along -z. Place ring at z = sl + r_maj so
+            // the bottom of the ring touches the shaft top.
+            let ring = torus_faceted(r_maj, r_min, *ring_segs, (*ring_segs / 2).max(6));
+            let ring_translated = translate_solid(&ring, Vec3::new(0.0, 0.0, sl + r_maj));
+            let shaft = cylinder_along_axis(sr, sl + r_min, *shaft_segments, 2, 0.0, 0.0, 0.0);
+            ring_translated.try_union(&shaft).map_err(|e| EvalError::Boolean { id: id.into(), op: "eyebolt_join", message: e.message })
+        }
+        Feature::ThreadInsert { outer_radius, inner_radius, length, segments, .. } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let l = resolve_one(id, length, params)?;
+            if r_out <= 0.0 || r_in <= 0.0 || r_in >= r_out || l <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ThreadInsert requires inner < outer, positive dims (got out={r_out}, in={r_in})") });
+            }
+            let outer = cylinder_faceted(r_out, l, *segments);
+            let eps = (l * 0.05).max(1e-3);
+            let bore = cylinder_along_axis(r_in, l + 2.0 * eps, *segments, 2, -eps, 0.0, 0.0);
+            outer.try_difference(&bore).map_err(|e| EvalError::Boolean { id: id.into(), op: "thread_insert_bore", message: e.message })
+        }
+        Feature::Cam { radius, hole_radius, eccentricity, thickness, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let hr = resolve_one(id, hole_radius, params)?;
+            let e = resolve_one(id, eccentricity, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r <= 0.0 || hr <= 0.0 || hr >= r || t <= 0.0 || e < 0.0 || e + hr >= r || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Cam requires hole < disk, e+hr < r, positive dims (got r={r}, hr={hr}, e={e})") });
+            }
+            let disk = cylinder_faceted(r, t, *segments);
+            let eps = (t * 0.05).max(1e-3);
+            let hole = cylinder_along_axis(hr, t + 2.0 * eps, *segments, 2, -eps, e, 0.0);
+            disk.try_difference(&hole).map_err(|e| EvalError::Boolean { id: id.into(), op: "cam_bore", message: e.message })
+        }
+        Feature::Crank { pivot_radius, wrist_radius, arm_length, arm_width, arm_thickness, segments, .. } => {
+            let pr = resolve_one(id, pivot_radius, params)?;
+            let wr = resolve_one(id, wrist_radius, params)?;
+            let al = resolve_one(id, arm_length, params)?;
+            let aw = resolve_one(id, arm_width, params)?;
+            let at = resolve_one(id, arm_thickness, params)?;
+            if pr <= 0.0 || wr <= 0.0 || al <= 0.0 || aw <= 0.0 || at <= 0.0 || aw < 2.0 * pr.max(wr) || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Crank requires arm_width >= 2 * max(pivot, wrist), positive dims (got pr={pr}, wr={wr}, aw={aw})") });
+            }
+            // Pivot cylinder at origin, wrist cylinder at (al, 0, 0),
+            // arm rectangular bar between centers.
+            let pivot = cylinder_along_axis(pr, at, *segments, 2, 0.0, 0.0, 0.0);
+            let wrist = cylinder_along_axis(wr, at, *segments, 2, 0.0, al, 0.0);
+            let arm = box_at(
+                Vec3::new(al, aw, at),
+                Point3::new(0.0, -aw / 2.0, 0.0),
+            );
+            let lower = pivot.try_union(&arm).map_err(|e| EvalError::Boolean { id: id.into(), op: "crank_pivot_arm", message: e.message })?;
+            lower.try_union(&wrist).map_err(|e| EvalError::Boolean { id: id.into(), op: "crank_arm_wrist", message: e.message })
+        }
+        Feature::Tee { radius, leg_length, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let ll = resolve_one(id, leg_length, params)?;
+            if r <= 0.0 || ll <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Tee requires positive dims, segments>=6 (got r={r}, ll={ll})") });
+            }
+            // Three cylinders: x leg from -ll to +ll (one cylinder),
+            // y leg from 0 to +ll. Slight overlap for boolean robustness.
+            let x_leg = cylinder_along_axis(r, 2.0 * ll, *segments, 0, -ll, 0.0, 0.0);
+            let y_leg = cylinder_along_axis(r, ll + r, *segments, 1, -r, 0.0, 0.0);
+            x_leg.try_union(&y_leg).map_err(|e| EvalError::Boolean { id: id.into(), op: "tee_join", message: e.message })
+        }
+        Feature::Cross { radius, leg_length, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let ll = resolve_one(id, leg_length, params)?;
+            if r <= 0.0 || ll <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Cross requires positive dims, segments>=6 (got r={r}, ll={ll})") });
+            }
+            // x leg (full length 2*ll) + y leg (full length 2*ll, slightly extended).
+            let x_leg = cylinder_along_axis(r, 2.0 * ll, *segments, 0, -ll, 0.0, 0.0);
+            let y_leg = cylinder_along_axis(r, 2.0 * ll + 2.0 * r, *segments, 1, -ll - r, 0.0, 0.0);
+            x_leg.try_union(&y_leg).map_err(|e| EvalError::Boolean { id: id.into(), op: "cross_join", message: e.message })
+        }
         Feature::HoleArray {
             input,
             axis,
