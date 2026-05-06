@@ -1257,6 +1257,114 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// SteppedShaft: cylinder with monotonically decreasing diameter
+    /// steps. `radii` is a list of radii (descending recommended) and
+    /// `step_lengths` is the length of each step. Both must be the
+    /// same length.
+    SteppedShaft {
+        id: String,
+        radii: Vec<Scalar>,
+        step_lengths: Vec<Scalar>,
+        segments: usize,
+    },
+
+    /// Trough: long U-shaped channel — same cross-section as UChannel
+    /// but with closed ends (front and back walls). Useful for tray /
+    /// drainage channel modelling.
+    Trough {
+        id: String,
+        outer_width: Scalar,
+        outer_height: Scalar,
+        wall_thickness: Scalar,
+        length: Scalar,
+    },
+
+    /// Knob: a cylinder with axial slots ("flutes") around its
+    /// perimeter — like a knurling but with deeper grooves.
+    Knob {
+        id: String,
+        radius: Scalar,
+        height: Scalar,
+        flute_count: usize,
+        flute_depth: Scalar,
+    },
+
+    /// Plug: a tapered cylinder — same as Frustum but expressed in
+    /// "plug" terms (top/bottom radius, length). Useful for sealing.
+    Plug {
+        id: String,
+        top_radius: Scalar,
+        bottom_radius: Scalar,
+        length: Scalar,
+        segments: usize,
+    },
+
+    /// Spike: a cone (faceted) — apex at +z, base at z=0. Same as Cone
+    /// but expressed as Spike for catalogue clarity.
+    Spike {
+        id: String,
+        base_radius: Scalar,
+        height: Scalar,
+        segments: usize,
+    },
+
+    /// CapBolt: a wider-headed version of Bolt with a concave cap.
+    /// Shape: a cylinder for the head + a cylinder for the shaft.
+    /// Ratio: head_radius is significantly larger than shaft_radius.
+    CapBolt {
+        id: String,
+        head_radius: Scalar,
+        head_height: Scalar,
+        shaft_radius: Scalar,
+        shaft_length: Scalar,
+        segments: usize,
+    },
+
+    /// FlangedBolt: a bolt with an integrated wider washer-like
+    /// flange under the head. Three cylinders stacked: head, flange,
+    /// shaft.
+    FlangedBolt {
+        id: String,
+        head_radius: Scalar,
+        head_height: Scalar,
+        flange_radius: Scalar,
+        flange_thickness: Scalar,
+        shaft_radius: Scalar,
+        shaft_length: Scalar,
+        segments: usize,
+    },
+
+    /// SerratedDisk: a thin disk with very fine teeth — like a
+    /// crown / star washer. `tooth_count` should be high (24+).
+    SerratedDisk {
+        id: String,
+        outer_radius: Scalar,
+        root_radius: Scalar,
+        tooth_count: usize,
+        thickness: Scalar,
+    },
+
+    /// FerruleEnd: a frustum-shaped tube end fitting (one end larger
+    /// than the other, like a flared pipe end).
+    FerruleEnd {
+        id: String,
+        small_radius: Scalar,
+        large_radius: Scalar,
+        wall_thickness: Scalar,
+        length: Scalar,
+        segments: usize,
+    },
+
+    /// Trapezoid: an isosceles trapezoidal prism extruded along +z.
+    /// Useful for keyway profiles and tapered joints.
+    Trapezoid {
+        id: String,
+        bottom_width: Scalar,
+        top_width: Scalar,
+        height: Scalar,
+        depth: Scalar,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -1473,6 +1581,16 @@ impl Feature {
             | Feature::Crank { id, .. }
             | Feature::Tee { id, .. }
             | Feature::Cross { id, .. }
+            | Feature::SteppedShaft { id, .. }
+            | Feature::Trough { id, .. }
+            | Feature::Knob { id, .. }
+            | Feature::Plug { id, .. }
+            | Feature::Spike { id, .. }
+            | Feature::CapBolt { id, .. }
+            | Feature::FlangedBolt { id, .. }
+            | Feature::SerratedDisk { id, .. }
+            | Feature::FerruleEnd { id, .. }
+            | Feature::Trapezoid { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -1587,6 +1705,16 @@ impl Feature {
             | Feature::Crank { .. }
             | Feature::Tee { .. }
             | Feature::Cross { .. }
+            | Feature::SteppedShaft { .. }
+            | Feature::Trough { .. }
+            | Feature::Knob { .. }
+            | Feature::Plug { .. }
+            | Feature::Spike { .. }
+            | Feature::CapBolt { .. }
+            | Feature::FlangedBolt { .. }
+            | Feature::SerratedDisk { .. }
+            | Feature::FerruleEnd { .. }
+            | Feature::Trapezoid { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }

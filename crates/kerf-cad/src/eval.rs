@@ -2799,6 +2799,165 @@ fn build(
             let y_leg = cylinder_along_axis(r, 2.0 * ll + 2.0 * r, *segments, 1, -ll - r, 0.0, 0.0);
             x_leg.try_union(&y_leg).map_err(|e| EvalError::Boolean { id: id.into(), op: "cross_join", message: e.message })
         }
+        Feature::SteppedShaft { radii, step_lengths, segments, .. } => {
+            if radii.len() != step_lengths.len() || radii.is_empty() {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("SteppedShaft: radii and step_lengths must be same nonzero length (got {} vs {})", radii.len(), step_lengths.len()) });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: "SteppedShaft requires segments >= 6".into() });
+            }
+            let mut z_acc = 0.0_f64;
+            let mut acc: Option<Solid> = None;
+            for (i, (r_s, l_s)) in radii.iter().zip(step_lengths.iter()).enumerate() {
+                let r = resolve_one(id, r_s, params)?;
+                let l = resolve_one(id, l_s, params)?;
+                if r <= 0.0 || l <= 0.0 {
+                    return Err(EvalError::Invalid { id: id.into(), reason: format!("SteppedShaft step {i}: r and length must be positive (got r={r}, l={l})") });
+                }
+                let eps = if i > 0 { (l * 0.05).max(1e-3) } else { 0.0 };
+                let cyl = cylinder_along_axis(r, l + eps, *segments, 2, z_acc - eps, 0.0, 0.0);
+                z_acc += l;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean { id: id.into(), op: "stepped_shaft_join", message: format!("step {i}: {}", e.message) })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+        Feature::Trough { outer_width, outer_height, wall_thickness, length, .. } => {
+            let w = resolve_one(id, outer_width, params)?;
+            let h = resolve_one(id, outer_height, params)?;
+            let t = resolve_one(id, wall_thickness, params)?;
+            let l = resolve_one(id, length, params)?;
+            if w <= 0.0 || h <= 0.0 || t <= 0.0 || l <= 0.0 || 2.0 * t >= w || t >= h {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Trough requires positive dims, 2t<w, t<h (got w={w}, h={h}, t={t}, l={l})") });
+            }
+            // Outer box - inner cavity (open top).
+            let outer = box_at(Vec3::new(w, l, h), Point3::new(0.0, 0.0, 0.0));
+            let inner = box_at(
+                Vec3::new(w - 2.0 * t, l - 2.0 * t, h),
+                Point3::new(t, t, t),
+            );
+            outer.try_difference(&inner).map_err(|e| EvalError::Boolean { id: id.into(), op: "trough_carve", message: e.message })
+        }
+        Feature::Knob { radius, height, flute_count, flute_depth, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            let fd = resolve_one(id, flute_depth, params)?;
+            if r <= 0.0 || h <= 0.0 || fd <= 0.0 || fd >= r || *flute_count < 4 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Knob requires fd<r, positive dims, flute_count>=4 (got r={r}, fd={fd}, fc={flute_count})") });
+            }
+            // Build a profile that alternates between r (between flutes)
+            // and r-fd (in the flute valleys). Like KnurledGrip but inverted
+            // (flutes are valleys, not ridges).
+            let n = 2 * *flute_count;
+            let mut prof = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                let rad = if i % 2 == 0 { r } else { r - fd };
+                prof.push(Point3::new(rad * theta.cos(), rad * theta.sin(), 0.0));
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, h)))
+        }
+        Feature::Plug { top_radius, bottom_radius, length, segments, .. } => {
+            let tr = resolve_one(id, top_radius, params)?;
+            let br = resolve_one(id, bottom_radius, params)?;
+            let l = resolve_one(id, length, params)?;
+            if tr <= 0.0 || br <= 0.0 || l <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Plug requires positive dims, segments>=6 (got tr={tr}, br={br}, l={l})") });
+            }
+            Ok(frustum_faceted(tr, br, l, *segments))
+        }
+        Feature::Spike { base_radius, height, segments, .. } => {
+            let r = resolve_one(id, base_radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            if r <= 0.0 || h <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Spike requires positive dims, segments>=6 (got r={r}, h={h})") });
+            }
+            Ok(cone_faceted(r, h, *segments))
+        }
+        Feature::CapBolt { head_radius, head_height, shaft_radius, shaft_length, segments, .. } => {
+            let hr = resolve_one(id, head_radius, params)?;
+            let hh = resolve_one(id, head_height, params)?;
+            let sr = resolve_one(id, shaft_radius, params)?;
+            let sl = resolve_one(id, shaft_length, params)?;
+            if hr <= 0.0 || hh <= 0.0 || sr <= 0.0 || sl <= 0.0 || sr >= hr || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("CapBolt requires shaft_radius<head_radius, positive dims (got hr={hr}, sr={sr})") });
+            }
+            let head = cylinder_along_axis(hr, hh, *segments, 2, 0.0, 0.0, 0.0);
+            let eps = (hh * 0.05).max(1e-3);
+            let shaft = cylinder_along_axis(sr, sl + eps, *segments, 2, -sl, 0.0, 0.0);
+            head.try_union(&shaft).map_err(|e| EvalError::Boolean { id: id.into(), op: "cap_bolt_join", message: e.message })
+        }
+        Feature::FlangedBolt { head_radius, head_height, flange_radius, flange_thickness, shaft_radius, shaft_length, segments, .. } => {
+            let hr = resolve_one(id, head_radius, params)?;
+            let hh = resolve_one(id, head_height, params)?;
+            let fr = resolve_one(id, flange_radius, params)?;
+            let ft = resolve_one(id, flange_thickness, params)?;
+            let sr = resolve_one(id, shaft_radius, params)?;
+            let sl = resolve_one(id, shaft_length, params)?;
+            if hr <= 0.0 || hh <= 0.0 || fr <= 0.0 || ft <= 0.0 || sr <= 0.0 || sl <= 0.0
+                || sr >= hr || hr >= fr || *segments < 6
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("FlangedBolt requires shaft<head<flange, positive dims (got hr={hr}, fr={fr}, sr={sr})") });
+            }
+            let eps = (ft * 0.05).max(1e-3);
+            let head = cylinder_along_axis(hr, hh, *segments, 2, 0.0, 0.0, 0.0);
+            let flange = cylinder_along_axis(fr, ft + 2.0 * eps, *segments, 2, -ft - eps, 0.0, 0.0);
+            let shaft = cylinder_along_axis(sr, sl + eps, *segments, 2, -ft - sl, 0.0, 0.0);
+            let upper = head.try_union(&flange).map_err(|e| EvalError::Boolean { id: id.into(), op: "flanged_bolt_head_flange", message: e.message })?;
+            upper.try_union(&shaft).map_err(|e| EvalError::Boolean { id: id.into(), op: "flanged_bolt_shaft", message: e.message })
+        }
+        Feature::SerratedDisk { outer_radius, root_radius, tooth_count, thickness, .. } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_root = resolve_one(id, root_radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r_out <= 0.0 || r_root <= 0.0 || r_root >= r_out || t <= 0.0 || *tooth_count < 8 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("SerratedDisk requires r_out>r_root>0, t>0, tooth_count>=8 (got out={r_out}, root={r_root}, tc={tooth_count})") });
+            }
+            // Same as GearBlank but with finer teeth (caller sets high tooth_count).
+            let n = 2 * *tooth_count;
+            let mut prof = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                let r = if i % 2 == 0 { r_out } else { r_root };
+                prof.push(Point3::new(r * theta.cos(), r * theta.sin(), 0.0));
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, t)))
+        }
+        Feature::FerruleEnd { small_radius, large_radius, wall_thickness, length, segments, .. } => {
+            let sr = resolve_one(id, small_radius, params)?;
+            let lr = resolve_one(id, large_radius, params)?;
+            let wt = resolve_one(id, wall_thickness, params)?;
+            let l = resolve_one(id, length, params)?;
+            if sr <= 0.0 || lr <= 0.0 || wt <= 0.0 || l <= 0.0
+                || sr - wt <= 0.0 || lr - wt <= 0.0 || *segments < 6
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("FerruleEnd requires sr-wt>0, lr-wt>0 (got sr={sr}, lr={lr}, wt={wt})") });
+            }
+            // Outer frustum minus inner frustum.
+            let outer = frustum_faceted(sr, lr, l, *segments);
+            let inner = frustum_faceted(sr - wt, lr - wt, l + 2.0 * 1e-3, *segments);
+            let inner_t = translate_solid(&inner, Vec3::new(0.0, 0.0, -1e-3));
+            outer.try_difference(&inner_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "ferrule_bore", message: e.message })
+        }
+        Feature::Trapezoid { bottom_width, top_width, height, depth, .. } => {
+            let bw = resolve_one(id, bottom_width, params)?;
+            let tw = resolve_one(id, top_width, params)?;
+            let h = resolve_one(id, height, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if bw <= 0.0 || tw <= 0.0 || h <= 0.0 || d <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Trapezoid requires positive dims (got bw={bw}, tw={tw}, h={h}, d={d})") });
+            }
+            // Centered trapezoid in xy plane, extruded along +z.
+            let prof = vec![
+                Point3::new(-bw / 2.0, 0.0, 0.0),
+                Point3::new( bw / 2.0, 0.0, 0.0),
+                Point3::new( tw / 2.0,   h, 0.0),
+                Point3::new(-tw / 2.0,   h, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
         Feature::HoleArray {
             input,
             axis,
