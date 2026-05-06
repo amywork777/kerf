@@ -1963,6 +1963,88 @@ pub enum Feature {
         rib_height: Scalar,
     },
 
+    /// Pediment: an architectural ornament — rectangular base with a
+    /// triangular gable top. Extruded along +z by `depth`. Used in
+    /// classical architecture above doors and windows.
+    Pediment {
+        id: String,
+        base_width: Scalar,
+        base_height: Scalar,
+        gable_height: Scalar,
+        depth: Scalar,
+    },
+
+    /// Vault: a rectangular base with a half-cylinder vault on top —
+    /// the classic vaulted ceiling profile. Half-cylinder spans the
+    /// full base_width; vault axis runs along +y.
+    Vault {
+        id: String,
+        base_width: Scalar,
+        base_length: Scalar,
+        base_height: Scalar,
+        segments: usize,
+    },
+
+    /// ShelfBracket: an L-shaped bracket with a diagonal brace from
+    /// the bottom of the vertical leg to the end of the horizontal
+    /// leg. Adds rigidity to a simple LBracket.
+    ShelfBracket {
+        id: String,
+        horizontal: Scalar,
+        vertical: Scalar,
+        thickness: Scalar,
+        depth: Scalar,
+    },
+
+    /// NameTag: a rounded-corner rectangular plate with a small
+    /// circular hanging hole near the top edge.
+    NameTag {
+        id: String,
+        width: Scalar,
+        height: Scalar,
+        thickness: Scalar,
+        corner_radius: Scalar,
+        hole_radius: Scalar,
+        hole_offset_from_top: Scalar,
+        segments: usize,
+    },
+
+    /// Plinth: a stepped square base — a wider square slab at the
+    /// bottom, a narrower square slab on top. Used as a column or
+    /// pedestal base.
+    Plinth {
+        id: String,
+        bottom_side: Scalar,
+        bottom_height: Scalar,
+        top_side: Scalar,
+        top_height: Scalar,
+    },
+
+    /// ParapetWall: a wall with a series of square crenellations
+    /// (battlements) along its top. `length` of wall, `wall_height`
+    /// before merlons, `merlon_count`, each merlon `merlon_height`
+    /// tall, `wall_thickness`.
+    ParapetWall {
+        id: String,
+        length: Scalar,
+        wall_height: Scalar,
+        wall_thickness: Scalar,
+        merlon_count: usize,
+        merlon_height: Scalar,
+    },
+
+    /// BeamWithHoles: a rectangular beam with a row of evenly spaced
+    /// circular through-holes. Used for trusses, lifting bars.
+    BeamWithHoles {
+        id: String,
+        length: Scalar,
+        width: Scalar,
+        height: Scalar,
+        hole_radius: Scalar,
+        hole_count: usize,
+        segments: usize,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -2243,6 +2325,13 @@ impl Feature {
             | Feature::FunnelTube { id, .. }
             | Feature::FlatWasher { id, .. }
             | Feature::RibbedPlate { id, .. }
+            | Feature::Pediment { id, .. }
+            | Feature::Vault { id, .. }
+            | Feature::ShelfBracket { id, .. }
+            | Feature::NameTag { id, .. }
+            | Feature::Plinth { id, .. }
+            | Feature::ParapetWall { id, .. }
+            | Feature::BeamWithHoles { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -2421,6 +2510,13 @@ impl Feature {
             | Feature::FunnelTube { .. }
             | Feature::FlatWasher { .. }
             | Feature::RibbedPlate { .. }
+            | Feature::Pediment { .. }
+            | Feature::Vault { .. }
+            | Feature::ShelfBracket { .. }
+            | Feature::NameTag { .. }
+            | Feature::Plinth { .. }
+            | Feature::ParapetWall { .. }
+            | Feature::BeamWithHoles { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }

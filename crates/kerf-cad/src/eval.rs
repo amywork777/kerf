@@ -4051,6 +4051,165 @@ fn build(
             }
             Ok(acc)
         }
+        Feature::Pediment { base_width, base_height, gable_height, depth, .. } => {
+            let bw = resolve_one(id, base_width, params)?;
+            let bh = resolve_one(id, base_height, params)?;
+            let gh = resolve_one(id, gable_height, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if bw <= 0.0 || bh <= 0.0 || gh <= 0.0 || d <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Pediment requires positive dims (got bw={bw}, bh={bh}, gh={gh}, d={d})") });
+            }
+            // Rectangle base + triangle on top, all in xy plane, extruded along +z.
+            // CCW outer walk:
+            //   (0, 0) -> (bw, 0) -> (bw, bh) -> (bw/2, bh + gh) -> (0, bh)
+            let prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(bw, 0.0, 0.0),
+                Point3::new(bw, bh, 0.0),
+                Point3::new(bw / 2.0, bh + gh, 0.0),
+                Point3::new(0.0, bh, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
+        Feature::Vault { base_width, base_length, base_height, segments, .. } => {
+            let bw = resolve_one(id, base_width, params)?;
+            let bl = resolve_one(id, base_length, params)?;
+            let bh = resolve_one(id, base_height, params)?;
+            if bw <= 0.0 || bl <= 0.0 || bh <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Vault requires positive dims (got bw={bw}, bl={bl}, bh={bh})") });
+            }
+            // Base box at z=[0, bh], x=[0, bw], y=[0, bl].
+            // Half-cylinder on top: radius = bw/2, axis along +y at (bw/2, *, bh).
+            let base = box_at(Vec3::new(bw, bl, bh), Point3::new(0.0, 0.0, 0.0));
+            // Build a full cylinder along +y with radius bw/2 at (bw/2, 0, bh),
+            // then carve away the bottom half with a box at z<bh.
+            let cyl = cylinder_along_axis(bw / 2.0, bl, *segments, 1, 0.0, bw / 2.0, bh);
+            let cutter = box_at(
+                Vec3::new(bw + 2.0 * bw, bl + 1e-3, bw),
+                Point3::new(-bw, -1e-3 / 2.0, bh - bw),
+            );
+            let half_cyl = cyl.try_difference(&cutter)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "vault_half_cyl", message: e.message })?;
+            base.try_union(&half_cyl).map_err(|e| EvalError::Boolean { id: id.into(), op: "vault_join", message: e.message })
+        }
+        Feature::ShelfBracket { horizontal, vertical, thickness, depth, .. } => {
+            let h = resolve_one(id, horizontal, params)?;
+            let v = resolve_one(id, vertical, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if h <= 0.0 || v <= 0.0 || t <= 0.0 || d <= 0.0 || t >= h || t >= v {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ShelfBracket requires t < h and t < v, positive dims (got h={h}, v={v}, t={t})") });
+            }
+            // L-bracket profile + diagonal brace from corner (h, t) to (t, v).
+            // The CCW polygon walk: outer L + diagonal cut.
+            // Simpler: build LBracket profile, then add a triangular brace.
+            // For v1: just build a single profile that walks the outer edge:
+            //   (0, 0) -> (h, 0) -> (h, t) -> (t, v) -> (0, v) -> (0, 0)
+            // This includes the diagonal as one straight edge (not a separate brace).
+            // Useful for visualisation, not a real reinforced bracket — but
+            // captures the typical shelf-bracket silhouette.
+            let prof = vec![
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(h, 0.0, 0.0),
+                Point3::new(h, t, 0.0),
+                Point3::new(t, v, 0.0),
+                Point3::new(0.0, v, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, d)))
+        }
+        Feature::NameTag { width, height, thickness, corner_radius, hole_radius, hole_offset_from_top, segments, .. } => {
+            let w = resolve_one(id, width, params)?;
+            let h = resolve_one(id, height, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            let r = resolve_one(id, corner_radius, params)?;
+            let hr = resolve_one(id, hole_radius, params)?;
+            let off = resolve_one(id, hole_offset_from_top, params)?;
+            if w <= 0.0 || h <= 0.0 || t <= 0.0 || r < 0.0 || hr <= 0.0 || off <= hr || 2.0 * r >= w || 2.0 * r >= h || hr >= w / 2.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("NameTag invalid params (got w={w}, h={h}, t={t}, r={r}, hr={hr}, off={off})") });
+            }
+            // Build a rounded-rect plate, drill a hole near the top.
+            let mut prof: Vec<Point3> = Vec::new();
+            let q = (*segments).max(4) / 4;
+            let corners = [
+                (r, r, std::f64::consts::PI),
+                (w - r, r, 1.5 * std::f64::consts::PI),
+                (w - r, h - r, 0.0),
+                (r, h - r, 0.5 * std::f64::consts::PI),
+            ];
+            for (cx, cy, start_ang) in corners {
+                for k in 0..=q {
+                    let a = start_ang + 0.5 * std::f64::consts::PI * (k as f64) / (q as f64);
+                    let x = cx + r * a.cos();
+                    let y = cy + r * a.sin();
+                    prof.push(Point3::new(x, y, 0.0));
+                }
+            }
+            let plate = extrude_polygon(&prof, Vec3::new(0.0, 0.0, t));
+            // Hole at (w/2, h - off, *), through the plate.
+            let eps = (t * 0.05).max(1e-3);
+            let hole = cylinder_along_axis(hr, t + 2.0 * eps, *segments, 2, -eps, w / 2.0, h - off);
+            plate.try_difference(&hole).map_err(|e| EvalError::Boolean { id: id.into(), op: "name_tag_hole", message: e.message })
+        }
+        Feature::Plinth { bottom_side, bottom_height, top_side, top_height, .. } => {
+            let bs = resolve_one(id, bottom_side, params)?;
+            let bh = resolve_one(id, bottom_height, params)?;
+            let ts = resolve_one(id, top_side, params)?;
+            let th = resolve_one(id, top_height, params)?;
+            if bs <= 0.0 || bh <= 0.0 || ts <= 0.0 || th <= 0.0 || ts > bs {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Plinth requires top_side <= bottom_side, positive dims (got bs={bs}, ts={ts})") });
+            }
+            // Bottom slab centered, top slab centered on top.
+            let bottom = box_at(Vec3::new(bs, bs, bh), Point3::new(-bs / 2.0, -bs / 2.0, 0.0));
+            let eps = (th * 0.05).max(1e-3);
+            let top = box_at(Vec3::new(ts, ts, th + eps), Point3::new(-ts / 2.0, -ts / 2.0, bh - eps));
+            bottom.try_union(&top).map_err(|e| EvalError::Boolean { id: id.into(), op: "plinth_join", message: e.message })
+        }
+        Feature::ParapetWall { length, wall_height, wall_thickness, merlon_count, merlon_height, .. } => {
+            let l = resolve_one(id, length, params)?;
+            let wh = resolve_one(id, wall_height, params)?;
+            let wt = resolve_one(id, wall_thickness, params)?;
+            let mh = resolve_one(id, merlon_height, params)?;
+            if l <= 0.0 || wh <= 0.0 || wt <= 0.0 || mh <= 0.0 || *merlon_count == 0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ParapetWall requires positive dims, merlon_count >= 1 (got l={l}, wh={wh}, mh={mh})") });
+            }
+            // Wall base: l × wt × wh.
+            let wall = box_at(Vec3::new(l, wt, wh), Point3::new(0.0, 0.0, 0.0));
+            // Merlons: a row along +x. Width of each merlon = l / (2 * merlon_count - 1)
+            // (alternates with gaps of same width, with merlons at positions 0, 2, 4, ...).
+            // For simplicity: place merlon_count merlons, each centered at (k+0.5)/(merlon_count) * l,
+            // each of width = l / (merlon_count * 2).
+            let mut acc = wall;
+            let merlon_w = l / (*merlon_count as f64 * 2.0);
+            for k in 0..*merlon_count {
+                let cx = (k as f64 + 0.5) * (l / *merlon_count as f64);
+                let merlon = box_at(
+                    Vec3::new(merlon_w, wt, mh + 1e-3),
+                    Point3::new(cx - merlon_w / 2.0, 0.0, wh - 1e-3),
+                );
+                acc = acc.try_union(&merlon).map_err(|e| EvalError::Boolean { id: id.into(), op: "parapet_merlon", message: format!("merlon {k}: {}", e.message) })?;
+            }
+            Ok(acc)
+        }
+        Feature::BeamWithHoles { length, width, height, hole_radius, hole_count, segments, .. } => {
+            let l = resolve_one(id, length, params)?;
+            let w = resolve_one(id, width, params)?;
+            let h = resolve_one(id, height, params)?;
+            let r = resolve_one(id, hole_radius, params)?;
+            if l <= 0.0 || w <= 0.0 || h <= 0.0 || r <= 0.0 || *hole_count == 0
+                || 2.0 * r >= h || *segments < 6
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("BeamWithHoles requires 2r<h, positive dims, hole_count>=1 (got l={l}, h={h}, r={r}, hc={hole_count})") });
+            }
+            let beam = box_at(Vec3::new(l, w, h), Point3::new(0.0, 0.0, 0.0));
+            let mut acc = beam;
+            let eps = (w * 0.05).max(1e-3);
+            for k in 0..*hole_count {
+                let cx = ((k as f64) + 0.5) * (l / *hole_count as f64);
+                let hole = cylinder_along_axis(r, w + 2.0 * eps, *segments, 1, -eps, cx, h / 2.0);
+                acc = acc.try_difference(&hole).map_err(|e| EvalError::Boolean { id: id.into(), op: "beam_holes_drill", message: format!("hole {k}: {}", e.message) })?;
+            }
+            Ok(acc)
+        }
         Feature::HoleArray {
             input,
             axis,
