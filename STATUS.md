@@ -151,7 +151,7 @@ real kernel additions:
 - **Decorative composites**: Arrow, Funnel, TruncatedPyramid.
 - **Transforms**: ScaleXYZ.
 
-718 tests pass, 9 ignored. 210+ Features in catalog.
+727 tests pass, 9 ignored. 220+ Features in catalog.
 
 The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
 are real manufacturing features even if multi-edge fillet is still
