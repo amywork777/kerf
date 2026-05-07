@@ -2455,6 +2455,98 @@ pub enum Feature {
         slices: usize,
     },
 
+    /// Tetrahedron: regular 4-faced pyramid with equilateral triangle
+    /// base. `edge_length` is the side length of every edge.
+    Tetrahedron {
+        id: String,
+        edge_length: Scalar,
+    },
+
+    /// Spool: a cable reel — a cylinder body with two wider disk
+    /// flanges on each end. `body_radius` < `flange_radius`,
+    /// `body_length` is the central cylinder length, `flange_thickness`
+    /// the thickness of each end disk.
+    Spool {
+        id: String,
+        body_radius: Scalar,
+        body_length: Scalar,
+        flange_radius: Scalar,
+        flange_thickness: Scalar,
+        segments: usize,
+    },
+
+    /// Lampshade: an open hollow frustum — same as FunnelTube but
+    /// with explicit "lampshade" intent and a guaranteed open top
+    /// (no rim).
+    Lampshade {
+        id: String,
+        top_radius: Scalar,
+        bottom_radius: Scalar,
+        height: Scalar,
+        wall_thickness: Scalar,
+        segments: usize,
+    },
+
+    /// PrismHole: an n-sided regular prism with a central cylindrical
+    /// hole through it.
+    PrismHole {
+        id: String,
+        sides: usize,
+        outer_radius: Scalar,
+        hole_radius: Scalar,
+        height: Scalar,
+        segments: usize,
+    },
+
+    /// KeyholeShape: a keyhole-shaped extruded plate — circular hole
+    /// at the top with a rectangular slot beneath it. The classic
+    /// keyhole silhouette.
+    KeyholeShape {
+        id: String,
+        circle_radius: Scalar,
+        slot_width: Scalar,
+        slot_height: Scalar,
+        plate_width: Scalar,
+        plate_height: Scalar,
+        plate_thickness: Scalar,
+        segments: usize,
+    },
+
+    /// AcornShape: a stylised acorn — sphere body topped by a small
+    /// cylindrical stem. Two pieces unioned.
+    AcornShape {
+        id: String,
+        body_radius: Scalar,
+        stem_radius: Scalar,
+        stem_length: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// Volute: a decorative scroll/spiral disk — Archimedean spiral
+    /// rod plus a central disk. Used as classical column-capital
+    /// ornament.
+    Volute {
+        id: String,
+        max_radius: Scalar,
+        revolutions: Scalar,
+        rod_radius: Scalar,
+        center_disk_radius: Scalar,
+        thickness: Scalar,
+        segments_per_revolution: usize,
+        center_segments: usize,
+    },
+
+    /// ScrollPlate: a flat S-curve scroll plate — two oppositely-curving
+    /// arc segments joined. Decorative ornament.
+    ScrollPlate {
+        id: String,
+        radius: Scalar,
+        rod_radius: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -2778,6 +2870,14 @@ impl Feature {
             | Feature::KneadHandle { id, .. }
             | Feature::ZigzagBar { id, .. }
             | Feature::FishingFloat { id, .. }
+            | Feature::Tetrahedron { id, .. }
+            | Feature::Spool { id, .. }
+            | Feature::Lampshade { id, .. }
+            | Feature::PrismHole { id, .. }
+            | Feature::KeyholeShape { id, .. }
+            | Feature::AcornShape { id, .. }
+            | Feature::Volute { id, .. }
+            | Feature::ScrollPlate { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -2999,6 +3099,14 @@ impl Feature {
             | Feature::KneadHandle { .. }
             | Feature::ZigzagBar { .. }
             | Feature::FishingFloat { .. }
+            | Feature::Tetrahedron { .. }
+            | Feature::Spool { .. }
+            | Feature::Lampshade { .. }
+            | Feature::PrismHole { .. }
+            | Feature::KeyholeShape { .. }
+            | Feature::AcornShape { .. }
+            | Feature::Volute { .. }
+            | Feature::ScrollPlate { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }

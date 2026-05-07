@@ -5024,6 +5024,236 @@ fn build(
             let with_top = body.try_union(&top_pin).map_err(|e| EvalError::Boolean { id: id.into(), op: "fishing_float_top", message: e.message })?;
             with_top.try_union(&bot_pin).map_err(|e| EvalError::Boolean { id: id.into(), op: "fishing_float_bot", message: e.message })
         }
+        Feature::Tetrahedron { edge_length, .. } => {
+            let e = resolve_one(id, edge_length, params)?;
+            if e <= 0.0 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Tetrahedron requires positive edge_length (got {e})") });
+            }
+            // Regular tetrahedron with edge length e:
+            //   base equilateral triangle side e at z=0 centered on origin,
+            //   apex at z = e * sqrt(2/3) above the centroid.
+            // Place base vertices: (e/2, -e/(2*sqrt(3)), 0),
+            //                       (-e/2, -e/(2*sqrt(3)), 0),
+            //                       (0,  e/sqrt(3), 0).
+            let r = e / std::f64::consts::SQRT_2.sqrt() * std::f64::consts::SQRT_2; // not used
+            let _ = r;
+            let s3 = 3.0_f64.sqrt();
+            // Base CCW from +z: top vertex first, then bottom-left, then
+            // bottom-right (signed area positive). The earlier ordering
+            // gave a CW walk and produced an inverted (negative-volume)
+            // solid.
+            let base = vec![
+                Point3::new(0.0,       e / s3,          0.0),
+                Point3::new(-e / 2.0, -e / (2.0 * s3), 0.0),
+                Point3::new( e / 2.0, -e / (2.0 * s3), 0.0),
+            ];
+            let apex_z = e * (2.0_f64 / 3.0_f64).sqrt();
+            let apex_sz = e * 1e-3;
+            let apex = vec![
+                Point3::new(0.0,             apex_sz / s3,         apex_z),
+                Point3::new(-apex_sz / 2.0, -apex_sz / (2.0 * s3), apex_z),
+                Point3::new( apex_sz / 2.0, -apex_sz / (2.0 * s3), apex_z),
+            ];
+            Ok(extrude_lofted(&base, &apex))
+        }
+        Feature::Spool { body_radius, body_length, flange_radius, flange_thickness, segments, .. } => {
+            let br = resolve_one(id, body_radius, params)?;
+            let bl = resolve_one(id, body_length, params)?;
+            let fr = resolve_one(id, flange_radius, params)?;
+            let ft = resolve_one(id, flange_thickness, params)?;
+            if br <= 0.0 || bl <= 0.0 || fr <= 0.0 || ft <= 0.0 || br >= fr || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Spool requires body_radius < flange_radius, positive dims (got br={br}, fr={fr})") });
+            }
+            // Two flange disks + body cylinder between them.
+            let flange_a = cylinder_along_axis(fr, ft, *segments, 2, 0.0, 0.0, 0.0);
+            let body = cylinder_along_axis(br, bl + 2.0 * 1e-3, *segments, 2, ft - 1e-3, 0.0, 0.0);
+            let flange_b = cylinder_along_axis(fr, ft, *segments, 2, ft + bl, 0.0, 0.0);
+            let lower = flange_a.try_union(&body).map_err(|e| EvalError::Boolean { id: id.into(), op: "spool_body", message: e.message })?;
+            lower.try_union(&flange_b).map_err(|e| EvalError::Boolean { id: id.into(), op: "spool_top_flange", message: e.message })
+        }
+        Feature::Lampshade { top_radius, bottom_radius, height, wall_thickness, segments, .. } => {
+            let tr = resolve_one(id, top_radius, params)?;
+            let br = resolve_one(id, bottom_radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            let wt = resolve_one(id, wall_thickness, params)?;
+            if tr <= 0.0 || br <= 0.0 || h <= 0.0 || wt <= 0.0
+                || tr - wt <= 0.0 || br - wt <= 0.0 || *segments < 6
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Lampshade requires inner > 0 at both ends (got tr={tr}, br={br}, wt={wt})") });
+            }
+            let outer = frustum_faceted(tr, br, h, *segments);
+            let inner = frustum_faceted(tr - wt, br - wt, h + 2.0 * 1e-3, *segments);
+            let inner_t = translate_solid(&inner, Vec3::new(0.0, 0.0, -1e-3));
+            outer.try_difference(&inner_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "lampshade_carve", message: e.message })
+        }
+        Feature::PrismHole { sides, outer_radius, hole_radius, height, segments, .. } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let hr = resolve_one(id, hole_radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            if *sides < 3 || r_out <= 0.0 || hr <= 0.0 || hr >= r_out || h <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("PrismHole requires sides>=3, hole<outer, positive dims (got sides={sides}, r_out={r_out}, hr={hr})") });
+            }
+            // Build n-sided prism via extrude_polygon.
+            let mut prof = Vec::with_capacity(*sides);
+            for i in 0..*sides {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (*sides as f64);
+                prof.push(Point3::new(r_out * theta.cos(), r_out * theta.sin(), 0.0));
+            }
+            let prism = extrude_polygon(&prof, Vec3::new(0.0, 0.0, h));
+            let eps = (h * 0.05).max(1e-3);
+            let hole = cylinder_along_axis(hr, h + 2.0 * eps, *segments, 2, -eps, 0.0, 0.0);
+            prism.try_difference(&hole).map_err(|e| EvalError::Boolean { id: id.into(), op: "prism_hole_drill", message: e.message })
+        }
+        Feature::KeyholeShape { circle_radius, slot_width, slot_height, plate_width, plate_height, plate_thickness, segments, .. } => {
+            let cr = resolve_one(id, circle_radius, params)?;
+            let sw = resolve_one(id, slot_width, params)?;
+            let sh = resolve_one(id, slot_height, params)?;
+            let pw = resolve_one(id, plate_width, params)?;
+            let ph = resolve_one(id, plate_height, params)?;
+            let pt = resolve_one(id, plate_thickness, params)?;
+            if cr <= 0.0 || sw <= 0.0 || sh <= 0.0 || pt <= 0.0
+                || sw >= 2.0 * cr || cr >= pw / 2.0 || cr + sh >= ph
+                || *segments < 6
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("KeyholeShape invalid params (got cr={cr}, sw={sw}, sh={sh}, pw={pw}, ph={ph})") });
+            }
+            // Build the keyhole as a single combined cutout polygon to avoid
+            // the boolean stitch panic that hits when the circle and slot
+            // are adjacent (their boundaries meet along a tangent edge).
+            // Combined profile: walk CCW around (slot rectangle + half-arc
+            // circle on top, with the two halves of the circle joined to
+            // the slot edges).
+            //
+            // Layout: circle center at (pw/2, ph - cr). Slot from
+            // y = ph - cr - sh to y = ph - cr (top of slot meets circle
+            // center y). Slot is centered on x=pw/2, width sw.
+            //
+            // Walk (CCW): start at slot bottom-left → bottom-right → up the
+            // right edge of slot → out to where slot meets circle
+            // (x = pw/2 + sw/2, y = ph - cr) → arc CCW around circle
+            // (which becomes the OUTER side of the cutout) → down to where
+            // slot meets circle on the LEFT (x = pw/2 - sw/2, y = ph - cr)
+            // → down the left slot edge to start.
+            let cx = pw / 2.0;
+            let cy = ph - cr;
+            let half_sw = sw / 2.0;
+            // Angle of slot-top intersection with circle: x = ±sw/2 → cos(theta) = ±sw/(2cr)
+            // theta = ±acos(sw/(2cr)) measured from +x axis.
+            // Right intersection: theta = -acos(sw/(2cr)) (lower right of circle).
+            // For our walk we go from right-slot-corner up and around to left-slot-corner,
+            // so theta sweeps from -acos(sw/(2cr)) through PI back to PI+acos(sw/(2cr)).
+            // Actually simpler: angle of right-slot-circle intersection above the circle center is
+            //   sin(alpha) = (slot_top_y - cy) / cr = 0 / cr = 0... wait.
+            //
+            // The slot top is at y = cy = ph - cr (same y as circle center).
+            // So the slot intersects the circle at x = ±sw/2, y = cy.
+            // These points are on the equator of the circle (theta=0 and theta=PI).
+            // We want to walk the arc from right (theta=0) → top (theta=PI/2)
+            //   → left (theta=PI), which is the UPPER half of the circle.
+            //
+            // Cutout walk CCW (from outside of plate looking down +z):
+            //   slot_bl (cx - half_sw, cy - sh)
+            //   slot_br (cx + half_sw, cy - sh)
+            //   slot_tr (cx + half_sw, cy)             — also right intersection with circle
+            //   arc CCW from theta=0 to theta=PI       — upper half-circle
+            //   slot_tl (cx - half_sw, cy)             — left intersection with circle
+            //   back to slot_bl
+            let mut hole_prof = Vec::new();
+            hole_prof.push(Point3::new(cx - half_sw, cy - sh, 0.0));
+            hole_prof.push(Point3::new(cx + half_sw, cy - sh, 0.0));
+            // arc: theta from 0 to PI (sample n_arc segments, skip endpoints
+            // since they're already in the polygon).
+            let n_arc = (*segments).max(8);
+            for k in 0..=n_arc {
+                let theta = std::f64::consts::PI * (k as f64) / (n_arc as f64);
+                hole_prof.push(Point3::new(cx + cr * theta.cos(), cy + cr * theta.sin(), 0.0));
+            }
+            let plate = box_at(Vec3::new(pw, ph, pt), Point3::new(0.0, 0.0, 0.0));
+            let eps = (pt * 0.05).max(1e-3);
+            let cutter = extrude_polygon(&hole_prof, Vec3::new(0.0, 0.0, pt + 2.0 * eps));
+            let cutter_t = translate_solid(&cutter, Vec3::new(0.0, 0.0, -eps));
+            plate.try_difference(&cutter_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "keyhole_carve", message: e.message })
+        }
+        Feature::AcornShape { body_radius, stem_radius, stem_length, stacks, slices, .. } => {
+            let br = resolve_one(id, body_radius, params)?;
+            let sr = resolve_one(id, stem_radius, params)?;
+            let sl = resolve_one(id, stem_length, params)?;
+            if br <= 0.0 || sr <= 0.0 || sr >= br || sl <= 0.0 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("AcornShape requires stem<body, positive dims (got br={br}, sr={sr})") });
+            }
+            let body = sphere_faceted(br, *stacks, *slices);
+            let stem = cylinder_along_axis(sr, sl + 1e-3, *slices, 2, br - 1e-3, 0.0, 0.0);
+            body.try_union(&stem).map_err(|e| EvalError::Boolean { id: id.into(), op: "acorn_join", message: e.message })
+        }
+        Feature::Volute { max_radius, revolutions, rod_radius, center_disk_radius, thickness, segments_per_revolution, center_segments, .. } => {
+            let r_max = resolve_one(id, max_radius, params)?;
+            let revs = resolve_one(id, revolutions, params)?;
+            let rod_r = resolve_one(id, rod_radius, params)?;
+            let cdr = resolve_one(id, center_disk_radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r_max <= 0.0 || revs <= 0.0 || rod_r <= 0.0 || cdr <= 0.0 || t <= 0.0
+                || cdr >= r_max || *segments_per_revolution < 6 || *center_segments < 6
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Volute invalid params (got rmax={r_max}, revs={revs}, cdr={cdr})") });
+            }
+            // Spiral rod (Archimedean) from r=cdr to r=r_max, plus a center disk.
+            let center = cylinder_along_axis(cdr, t, *center_segments, 2, 0.0, 0.0, 0.0);
+            let total_samples = (*segments_per_revolution as f64 * revs).ceil() as usize + 1;
+            let total_angle = 2.0 * std::f64::consts::PI * revs;
+            let mut acc = center;
+            for i in 0..total_samples - 1 {
+                let t0 = total_angle * i as f64 / (total_samples - 1) as f64;
+                let t1 = total_angle * (i + 1) as f64 / (total_samples - 1) as f64;
+                let r0 = cdr + (r_max - cdr) * t0 / total_angle;
+                let r1 = cdr + (r_max - cdr) * t1 / total_angle;
+                let p0 = [r0 * t0.cos(), r0 * t0.sin(), t / 2.0];
+                let p1 = [r1 * t1.cos(), r1 * t1.sin(), t / 2.0];
+                if (p1[0] - p0[0]).powi(2) + (p1[1] - p0[1]).powi(2) < 1e-18 {
+                    continue;
+                }
+                let cyl = sweep_cylinder_segment(p0, p1, rod_r, 8).ok_or_else(|| EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Volute seg {i} zero length"),
+                })?;
+                acc = acc.try_union(&cyl).map_err(|e| EvalError::Boolean { id: id.into(), op: "volute_spiral", message: format!("seg {i}: {}", e.message) })?;
+            }
+            Ok(acc)
+        }
+        Feature::ScrollPlate { radius, rod_radius, thickness: _, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let rod_r = resolve_one(id, rod_radius, params)?;
+            if r <= 0.0 || rod_r <= 0.0 || *segments < 4 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ScrollPlate requires positive dims, segments>=4 (got r={r}, rod_r={rod_r})") });
+            }
+            // Two semicircular arcs forming an S-curve. First arc:
+            // center at (r, 0), radius r, sweeping from theta=PI to 2PI
+            // (right half-circle below y=0). Second arc: center at (3r, 0),
+            // radius r, sweeping from theta=0 to PI (left half-circle above y=0).
+            let mut acc: Option<Solid> = None;
+            for i in 0..*segments {
+                let t0 = std::f64::consts::PI + std::f64::consts::PI * (i as f64) / (*segments as f64);
+                let t1 = std::f64::consts::PI + std::f64::consts::PI * ((i + 1) as f64) / (*segments as f64);
+                let p0 = [r + r * t0.cos(), r * t0.sin(), 0.0];
+                let p1 = [r + r * t1.cos(), r * t1.sin(), 0.0];
+                let cyl = sweep_cylinder_segment(p0, p1, rod_r, 8).ok_or_else(|| EvalError::Invalid { id: id.into(), reason: format!("ScrollPlate arc1 seg {i} zero length") })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean { id: id.into(), op: "scroll_arc1", message: format!("seg {i}: {}", e.message) })?,
+                });
+            }
+            for i in 0..*segments {
+                let t0 = std::f64::consts::PI * (i as f64) / (*segments as f64);
+                let t1 = std::f64::consts::PI * ((i + 1) as f64) / (*segments as f64);
+                let p0 = [3.0 * r + r * t0.cos(), r * t0.sin(), 0.0];
+                let p1 = [3.0 * r + r * t1.cos(), r * t1.sin(), 0.0];
+                let cyl = sweep_cylinder_segment(p0, p1, rod_r, 8).ok_or_else(|| EvalError::Invalid { id: id.into(), reason: format!("ScrollPlate arc2 seg {i} zero length") })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean { id: id.into(), op: "scroll_arc2", message: format!("seg {i}: {}", e.message) })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
         Feature::HoleArray {
             input,
             axis,
