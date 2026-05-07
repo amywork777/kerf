@@ -92,7 +92,7 @@ fn flip_surface_normal(s: crate::geometry::SurfaceKind) -> crate::geometry::Surf
 /// Recursive booleans are now possible:
 /// `boolean_solid(boolean_solid(a, b, op), c, op2)`.
 pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> Solid {
-    use crate::booleans::stitch::{KeptFace, stitch};
+    use crate::booleans::stitch::{KeptFace, stitch_with_rescue};
 
     let mut a = a.clone();
     let mut b = b.clone();
@@ -211,7 +211,12 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
         tol,
     );
 
-    stitch(&kept, tol)
+    // GAP C: stitch_with_rescue passes the dropped pile so the stitcher can
+    // promote a coplanar partner when the kept pile would leave a canonical
+    // edge with exactly one half-edge. Without this, multi-edge fillets
+    // (sequential subtract chains) panic on the second wedge that shares a
+    // body face with the first.
+    stitch_with_rescue(&kept, &dropped, tol)
 }
 
 #[cfg(test)]

@@ -32,6 +32,34 @@ pub struct KeptFace {
 /// Panics if the input is non-manifold (any canonical edge has != 2 incident
 /// half-edges) or if `validate()` rejects the resulting topology.
 pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
+    stitch_with_rescue(kept, &[], tol)
+}
+
+/// Like [`stitch`], but with a "rescue from dropped" pre-pass: when the kept
+/// pile would leave a canonical edge with exactly one half-edge (i.e., one
+/// directed edge in the kept polygons has no twin among the kept set), search
+/// the `dropped` pile for a coplanar face whose polygon contains the reverse
+/// directed edge and promote it back into kept.
+///
+/// This is the GAP C multi-edge fillet repair: a sequential subtract chain
+/// (e.g., Box - wedge1 - wedge2 - wedge3 - wedge4 for a 4-corner Fillets)
+/// occasionally drops a face that shares an edge with a kept face's
+/// boundary, leaving a single half-edge orphan. Promoting the dropped
+/// partner closes the loop without altering volume (the dropped face was
+/// already contributing surface to the boolean — it just got mis-classified
+/// at the boundary).
+///
+/// Falls back to the same panic as [`stitch`] when no rescue partner exists.
+pub fn stitch_with_rescue(
+    kept: &[KeptFace],
+    dropped: &[KeptFace],
+    tol: &Tolerance,
+) -> Solid {
+    let kept_owned = rescue_one_half_edge_orphans(kept, dropped, tol);
+    stitch_inner(&kept_owned, tol)
+}
+
+fn stitch_inner(kept: &[KeptFace], tol: &Tolerance) -> Solid {
     let mut new_solid = Solid::new();
 
     if kept.is_empty() {
@@ -513,6 +541,158 @@ fn find_or_add(positions: &mut Vec<Point3>, p: Point3, tol: &Tolerance) -> usize
     }
     positions.push(p);
     positions.len() - 1
+}
+
+/// GAP C: rescue 1-half-edge orphans from the dropped pool.
+///
+/// After the boolean classifier drops some faces, a kept polygon's edge can
+/// be left without a partner — typically a sequential subtract that drops a
+/// boundary-coincident face that was actually still needed to close the
+/// outer surface (or a partial shadowing of a body face by a cutter).
+///
+/// For each canonical edge (u, v) appearing exactly once in the kept set,
+/// look in `dropped` for a coplanar face whose polygon contains the reverse
+/// directed edge (v, u). Promote the first such match to kept and recheck.
+/// Iterate until no rescue is possible.
+///
+/// Position-equality is computed at a relaxed tolerance (`point_eq * 1000`),
+/// matching `chord_merge`'s practice (default `point_eq` is 1e-9 which is
+/// tighter than typical CAD precision and would miss legitimate matches).
+///
+/// This pass is conservative: it never drops, never modifies polygons. It
+/// only PROMOTES dropped faces. If no rescue applies, the kept pile is
+/// returned unchanged.
+fn rescue_one_half_edge_orphans(
+    kept: &[KeptFace],
+    dropped: &[KeptFace],
+    tol: &Tolerance,
+) -> Vec<KeptFace> {
+    if dropped.is_empty() {
+        return kept.to_vec();
+    }
+    let pt_tol = tol.point_eq * 1000.0;
+
+    let mut kept = kept.to_vec();
+    let mut available: Vec<bool> = vec![true; dropped.len()];
+    // Cap iterations as a safety net — each iteration must promote a face.
+    for _ in 0..(dropped.len().max(1)) {
+        // Build a vertex dedup table over the current kept polygons.
+        let mut positions: Vec<Point3> = Vec::new();
+        let mut face_vidx: Vec<Vec<usize>> = Vec::with_capacity(kept.len());
+        for kf in &kept {
+            let mut indices = Vec::with_capacity(kf.polygon.len());
+            for p in &kf.polygon {
+                let idx = find_or_add(&mut positions, *p, tol);
+                indices.push(idx);
+            }
+            face_vidx.push(indices);
+        }
+        // Edge → directed entries (forward = matches canonical key order).
+        let mut edge_dir: HashMap<(usize, usize), Vec<bool>> = HashMap::new();
+        for vidx in &face_vidx {
+            let n = vidx.len();
+            for i in 0..n {
+                let a = vidx[i];
+                let b = vidx[(i + 1) % n];
+                if a == b {
+                    continue;
+                }
+                let key = canonical_edge_key(a, b);
+                let forward = (a, b) == key;
+                edge_dir.entry(key).or_default().push(forward);
+            }
+        }
+        // Identify canonical edges with exactly one half-edge entry. The
+        // missing direction is the one we need a dropped face to provide.
+        let mut singles: Vec<((usize, usize), bool)> = Vec::new();
+        for (key, dirs) in &edge_dir {
+            if dirs.len() == 1 {
+                singles.push((*key, dirs[0]));
+            }
+        }
+        if singles.is_empty() {
+            return kept;
+        }
+        // Find a dropped face whose polygon walks the reverse of any single
+        // edge AND whose surface is coplanar with at least one currently-kept
+        // face that touches that edge (avoids promoting unrelated geometry
+        // that happens to share two vertex positions).
+        let mut promoted = false;
+        for ((u, v), present_forward) in singles {
+            // Reverse directed edge in 3D.
+            let p_u = positions[u];
+            let p_v = positions[v];
+            let (ra, rb) = if present_forward { (p_v, p_u) } else { (p_u, p_v) };
+            // Identify a kept face that owns this edge so we know the
+            // coplanarity reference.
+            let mut ref_surface: Option<SurfaceKind> = None;
+            'outer: for (fi, vidx) in face_vidx.iter().enumerate() {
+                let n = vidx.len();
+                for i in 0..n {
+                    let a = vidx[i];
+                    let b = vidx[(i + 1) % n];
+                    if (a, b) == (u, v) || (a, b) == (v, u) {
+                        ref_surface = Some(kept[fi].surface.clone());
+                        break 'outer;
+                    }
+                }
+            }
+            let Some(ref_surface) = ref_surface else {
+                continue;
+            };
+            for di in 0..dropped.len() {
+                if !available[di] {
+                    continue;
+                }
+                if !surfaces_coplanar(&dropped[di].surface, &ref_surface, tol) {
+                    continue;
+                }
+                if polygon_has_directed_edge(&dropped[di].polygon, ra, rb, pt_tol) {
+                    kept.push(dropped[di].clone());
+                    available[di] = false;
+                    promoted = true;
+                    break;
+                }
+            }
+            if promoted {
+                break;
+            }
+        }
+        if !promoted {
+            return kept;
+        }
+    }
+    kept
+}
+
+/// Coplanar test mirroring `chord_merge::coplanar` so the rescue pass agrees
+/// with chord-merge on which surfaces "are the same plane". Curved surface
+/// kinds are out of scope (rescue only repairs planar 1-half-edge orphans).
+fn surfaces_coplanar(s1: &SurfaceKind, s2: &SurfaceKind, tol: &Tolerance) -> bool {
+    match (s1, s2) {
+        (SurfaceKind::Plane(p1), SurfaceKind::Plane(p2)) => {
+            let n1 = p1.frame.z;
+            let n2 = p2.frame.z;
+            let parallel = (n1.dot(&n2).abs() - 1.0).abs() < 1e-6;
+            if !parallel {
+                return false;
+            }
+            let d = (p2.frame.origin - p1.frame.origin).dot(&n1);
+            d.abs() < tol.point_eq * 1000.0
+        }
+        _ => false,
+    }
+}
+
+/// Does `poly` contain the directed edge (a → b) within point-tolerance?
+fn polygon_has_directed_edge(poly: &[Point3], a: Point3, b: Point3, pt_tol: f64) -> bool {
+    let n = poly.len();
+    for i in 0..n {
+        if (poly[i] - a).norm() <= pt_tol && (poly[(i + 1) % n] - b).norm() <= pt_tol {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
