@@ -168,7 +168,7 @@ describe("PropertyManager — expression mode", () => {
     exprInput.dispatchEvent(new Event("input"));
     const preview = plateRow.querySelector(".pm-expr-preview");
     expect(preview).not.toBeNull();
-    expect(preview!.textContent).toContain("10");
+    expect(preview!.textContent).toMatch(/^=\s*10(\.0+)?$/);
   });
 
   it("entering an invalid expression shows red error", () => {
