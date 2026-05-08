@@ -29,7 +29,10 @@ A typical model is ~10 lines of JSON declaring a tree of:
   `LinearPattern`, `PolarPattern`.
 - **Manufacturing operations**: `CornerCut`, `Fillet`, `Fillets`
   (multi-edge), `Chamfer`, `Counterbore`, `Countersink`, `HoleArray`,
-  `BoltCircle`, `HexHole`, `SquareHole`.
+  `BoltCircle`, `HexHole`, `SquareHole`, `EndChamfer`,
+  `InternalChamfer`, `ConicalCounterbore`, `CrossDrilledHole`,
+  `BlindHole`. Plus dowel/pin/nut primitives: `TaperedPin`,
+  `FlangedNut`, `DowelPin`.
 - **Booleans**: `Union`, `Intersection`, `Difference`.
 
 Every numeric field accepts literals, `$param` references, or arbitrary
@@ -54,13 +57,48 @@ kernel + authoring + viewer + production output).
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
-| Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
+| Manufacturing features (170+ — see catalog) | 12% | 96% | 11.52 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.0%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~65.1%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
+
+## Latest session (2026-05-08): Manufacturing edge cases
+
+Added 8 manufacturing edge-case Features that fill gaps in the existing
+Counterbore / Countersink / Chamfer family. Manufacturing 95% → 96%
+(+0.12 SW pts). 727 tests → 740 tests, 0 failed.
+
+- **EndChamfer**: bevels the rim of a cylindrical boss at its +axis
+  end. Two-step construction (cylinder strip + chamfer-frustum union)
+  avoids the ring-topology stitch panic that a single-step ring cutter
+  trips on.
+- **InternalChamfer**: bevels the inside rim of a hole. Single-frustum
+  cutter — like a Countersink without the through-drill.
+- **ConicalCounterbore**: counterbore-style stepped hole whose lower
+  section ends in a drill-tip cone instead of a flat bottom. Three-piece
+  cutter (cbore disk + drill body + tip cone) unioned then subtracted.
+- **CrossDrilledHole**: two perpendicular through-holes intersecting at
+  a center point. Validates `axis_a != axis_b`.
+- **TaperedPin**: roll-pin / alignment pin shape. Pure
+  `frustum_faceted` primitive.
+- **FlangedNut**: hex nut with integrated wide flange. Bores each
+  section separately before stacking — bore-through-stacked-mismatched-
+  segments tripped the boolean stitcher in early attempts.
+- **DowelPin**: cylinder with chamfered ends on both sides.
+  Bottom-frustum + body-cylinder + top-frustum unioned axially.
+- **BlindHole**: closed-bottom hole — single drill cylinder with
+  overhang past the +axis face only.
+
+Each feature has a volume-bounded test against an analytic
+decomposition (using shared `faceted_cyl_volume` and
+`faceted_frustum_volume` helpers — exact n-gon-prism volume formulas
+for the inscribed-radius approximation kerf-brep uses), plus
+validation tests for malformed inputs. All 8 features participate in
+a consolidated JSON round-trip test that asserts byte-stable
+serialization.
 
 ## Latest session (2026-05-06)
 

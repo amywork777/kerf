@@ -249,6 +249,154 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// **EndChamfer**: bevel the rim of an axis-aligned cylindrical hole
+    /// or boss. Cuts a conical ring chamfer where the cylindrical face
+    /// meets the +axis end face. Differs from `Chamfer` (which bevels a
+    /// straight edge of a box-like body).
+    ///
+    /// The cutter is a frustum: outer radius `outer_radius` at the top
+    /// surface (z = `top_center[axis]`), inner radius `outer_radius -
+    /// chamfer` at depth `chamfer` below the top. Subtracted from `input`,
+    /// it removes a conical ring around the cylinder rim.
+    ///
+    /// Common use: deburring a turned shaft end so the ring chamfer
+    /// matches the lead-in for a mating part.
+    EndChamfer {
+        id: String,
+        input: String,
+        axis: String,
+        top_center: [Scalar; 3],
+        outer_radius: Scalar,
+        chamfer: Scalar,
+        segments: usize,
+    },
+
+    /// **InternalChamfer**: bevel the inside rim of a cylindrical hole.
+    /// Like a Countersink but the chamfered cone is the only cut — there's
+    /// no through-drill. Used to add a lead-in to an existing hole or
+    /// to break the sharp interior edge of a bored cavity.
+    ///
+    /// The cone widens from `hole_radius` at depth `chamfer_depth` to
+    /// `hole_radius + chamfer_width` at the top surface (the +axis face
+    /// of the body, at `top_center`).
+    InternalChamfer {
+        id: String,
+        input: String,
+        axis: String,
+        top_center: [Scalar; 3],
+        hole_radius: Scalar,
+        chamfer_width: Scalar,
+        chamfer_depth: Scalar,
+        segments: usize,
+    },
+
+    /// **ConicalCounterbore**: counterbore-style stepped hole whose lower
+    /// section ends in a conical (drill-tip-shaped) bottom rather than a
+    /// flat bottom. The drill portion runs full `body_depth`, then tapers
+    /// to a point over `tip_depth`. The wider counterbore at the top has
+    /// `cbore_radius` and `cbore_depth`.
+    ///
+    /// Approximates a drill bit's natural conical tip — useful for
+    /// representing real machined holes in non-through configurations.
+    ConicalCounterbore {
+        id: String,
+        input: String,
+        axis: String,
+        top_center: [Scalar; 3],
+        drill_radius: Scalar,
+        cbore_radius: Scalar,
+        cbore_depth: Scalar,
+        body_depth: Scalar,
+        tip_depth: Scalar,
+        segments: usize,
+    },
+
+    /// **CrossDrilledHole**: two perpendicular through-holes drilled
+    /// through `input`, intersecting at `center`. Hole 1 runs along
+    /// `axis_a`, hole 2 runs along `axis_b` (must be different "x"|"y"|"z").
+    /// Both holes share `radius`. `length_a` and `length_b` are the
+    /// drill-cylinder lengths along each axis (must be long enough to
+    /// pierce both surfaces).
+    ///
+    /// Common in clevis pins, alignment dowels with retainer holes,
+    /// hydraulic fittings.
+    CrossDrilledHole {
+        id: String,
+        input: String,
+        center: [Scalar; 3],
+        axis_a: String,
+        axis_b: String,
+        radius: Scalar,
+        length_a: Scalar,
+        length_b: Scalar,
+        segments: usize,
+    },
+
+    /// **TaperedPin**: pin (cylinder) that tapers from `large_radius` at
+    /// one end to `small_radius` at the other over `length` along the +z
+    /// axis. Like a roll pin or alignment dowel that drives into a
+    /// matching tapered hole.
+    ///
+    /// `large_radius` is at z=0, `small_radius` at z=`length`.
+    TaperedPin {
+        id: String,
+        large_radius: Scalar,
+        small_radius: Scalar,
+        length: Scalar,
+        segments: usize,
+    },
+
+    /// **FlangedNut**: hexagonal nut with an integrated wide circular
+    /// flange at the bottom. Combines a hex prism (the wrenching
+    /// surface) on top with a thinner, larger-radius cylindrical flange
+    /// underneath, with a through-bore along the z axis.
+    ///
+    /// `inscribed_radius` is the hex inscribed radius (across-flats /2).
+    /// `flange_radius` is the flange disk radius (must exceed the hex
+    /// circumradius). `bore_radius` runs through both pieces.
+    FlangedNut {
+        id: String,
+        inscribed_radius: Scalar,
+        flange_radius: Scalar,
+        flange_thickness: Scalar,
+        nut_thickness: Scalar,
+        bore_radius: Scalar,
+        segments: usize,
+    },
+
+    /// **DowelPin**: cylindrical alignment dowel with chamfered ends on
+    /// both sides. The chamfers (sloped lead-ins) help drive the dowel
+    /// into a press-fit hole without scuffing.
+    ///
+    /// `radius` is the cylinder radius. `length` is the total length
+    /// along +z. `chamfer` is the axial setback at each end (a 45°
+    /// chamfer reduces the radius linearly from `radius` to `radius -
+    /// chamfer` over the chamfer length).
+    DowelPin {
+        id: String,
+        radius: Scalar,
+        length: Scalar,
+        chamfer: Scalar,
+        segments: usize,
+    },
+
+    /// **BlindHole**: closed-bottom drilled hole in `input`. Unlike a
+    /// through-hole, the hole stops at `depth` from the +axis-facing
+    /// surface — leaves a closed floor. Typically used when fastener
+    /// pull-through is undesired (e.g. tapped holes, set-screw seats).
+    ///
+    /// Drill goes from `top_center` along -axis for `depth`. `axis` is
+    /// "x"|"y"|"z".
+    BlindHole {
+        id: String,
+        input: String,
+        axis: String,
+        top_center: [Scalar; 3],
+        radius: Scalar,
+        depth: Scalar,
+        segments: usize,
+    },
+
     /// Multiple `Fillet`s applied to the same `input` in one operation.
     /// Builds each fillet's wedge cutter relative to the unmodified input,
     /// unions the wedges, and subtracts the composite cutter once. This
@@ -2689,6 +2837,14 @@ impl Feature {
             | Feature::Chamfer { id, .. }
             | Feature::Counterbore { id, .. }
             | Feature::Countersink { id, .. }
+            | Feature::EndChamfer { id, .. }
+            | Feature::InternalChamfer { id, .. }
+            | Feature::ConicalCounterbore { id, .. }
+            | Feature::CrossDrilledHole { id, .. }
+            | Feature::TaperedPin { id, .. }
+            | Feature::FlangedNut { id, .. }
+            | Feature::DowelPin { id, .. }
+            | Feature::BlindHole { id, .. }
             | Feature::Slot { id, .. }
             | Feature::HollowCylinder { id, .. }
             | Feature::Wedge { id, .. }
@@ -3114,7 +3270,10 @@ impl Feature {
             | Feature::Nut { .. }
             | Feature::Washer { .. }
             | Feature::RoundBoss { .. }
-            | Feature::RectBoss { .. } => Vec::new(),
+            | Feature::RectBoss { .. }
+            | Feature::TaperedPin { .. }
+            | Feature::FlangedNut { .. }
+            | Feature::DowelPin { .. } => Vec::new(),
             Feature::HoleArray { input, .. }
             | Feature::BoltCircle { input, .. }
             | Feature::HexHole { input, .. }
@@ -3133,7 +3292,12 @@ impl Feature {
             | Feature::Fillets { input, .. }
             | Feature::Chamfer { input, .. }
             | Feature::Counterbore { input, .. }
-            | Feature::Countersink { input, .. } => {
+            | Feature::Countersink { input, .. }
+            | Feature::EndChamfer { input, .. }
+            | Feature::InternalChamfer { input, .. }
+            | Feature::ConicalCounterbore { input, .. }
+            | Feature::CrossDrilledHole { input, .. }
+            | Feature::BlindHole { input, .. } => {
                 vec![input.as_str()]
             }
             Feature::Union { inputs, .. }
