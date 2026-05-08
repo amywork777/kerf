@@ -68,7 +68,7 @@ impl Model {
         }
         stack.pop();
 
-        let mut result = build(feature, &self.parameters, cache)?;
+        let mut result = build(feature, &self.parameters, cache, self)?;
         // Picking provenance: tag any face in this feature's result that
         // doesn't already carry an owner tag with this feature's id. Boolean
         // operations propagate inputs' owner tags through stitch, so they
@@ -90,6 +90,7 @@ fn build(
     feature: &Feature,
     params: &HashMap<String, f64>,
     cache: &HashMap<String, Solid>,
+    model: &Model,
 ) -> Result<Solid, EvalError> {
     let id = feature.id();
     match feature {
@@ -265,7 +266,7 @@ fn build(
 
         Feature::SketchExtrude {
             sketch, direction, ..
-        } => build_sketch_extrude(id, sketch, direction, params),
+        } => build_sketch_extrude(id, sketch, direction, params, model),
 
         Feature::SketchRevolve { sketch, .. } => build_sketch_revolve(id, sketch, params),
 
@@ -5813,21 +5814,141 @@ fn build_sketch_extrude(
     sketch: &Sketch,
     direction: &[Scalar; 3],
     params: &HashMap<String, f64>,
+    model: &Model,
 ) -> Result<Solid, EvalError> {
     let profiles = sketch.to_profile_2d(params).map_err(|e| EvalError::Invalid {
         id: id.into(),
         reason: format!("sketch trace: {e}"),
     })?;
-    if profiles.len() != 1 {
+    if profiles.is_empty() {
         return Err(EvalError::Invalid {
             id: id.into(),
-            reason: format!(
-                "SketchExtrude expects exactly one closed loop in the sketch, got {}",
-                profiles.len()
-            ),
+            reason: "SketchExtrude has no closed profile".into(),
         });
     }
-    build_extrude(id, &profiles[0], direction, params)
+
+    // Multi-loop policy: if there are 2+ profiles, ensure none of them
+    // CROSS each other (they may be fully disjoint or fully nested). For
+    // now we union all profiles via the boolean engine — polygon-with-
+    // holes isn't yet wired through `extrude_polygon`, so a fully-nested
+    // inner loop becomes a separate solid that overlaps the outer; the
+    // boolean engine handles the union naturally for the disjoint case
+    // and reports an error for the overlapping case (which we surface as
+    // DisjointSubLoops).
+    if profiles.len() >= 2 {
+        let pts: Vec<Vec<[f64; 2]>> = profiles
+            .iter()
+            .map(|p| {
+                crate::sketch::profile_points_xy(p, params).map_err(|e| EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("sketch profile: {e}"),
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        for i in 0..pts.len() {
+            for j in (i + 1)..pts.len() {
+                if crate::sketch::polygons_cross(&pts[i], &pts[j]) {
+                    return Err(EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!(
+                            "{}",
+                            crate::sketch::SketchError::DisjointSubLoops
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
+    // Build each profile in the LOCAL sketch frame (XY plane). We then
+    // apply an optional ref-plane transform to the unioned result.
+    let mut acc: Option<Solid> = None;
+    for prof in &profiles {
+        let one = build_extrude(id, prof, direction, params)?;
+        acc = Some(match acc {
+            None => one,
+            Some(prev) => prev.try_union(&one).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "sketch_multi_loop_union",
+                message: e.message,
+            })?,
+        });
+    }
+    let solid = acc.expect("at least one profile");
+
+    // Apply ref-plane transform, if any.
+    let positioned = apply_sketch_plane_transform(id, &sketch.plane, &solid, params, model)?;
+    Ok(positioned)
+}
+
+/// If the sketch's plane is a `NamedRefPlane(name)`, look up the
+/// corresponding `Feature::RefPlane` in `model` and apply a rigid-body
+/// transform to `solid` so its local +Z direction maps to the named
+/// plane's normal axis, with the local origin translated to the named
+/// plane's `position`. For axis-aligned plane variants (Xy / Xz / Yz)
+/// no transform is applied — the sketch is built in-place.
+fn apply_sketch_plane_transform(
+    id: &str,
+    plane: &crate::sketch::SketchPlane,
+    solid: &Solid,
+    params: &HashMap<String, f64>,
+    model: &Model,
+) -> Result<Solid, EvalError> {
+    use crate::sketch::SketchPlane;
+    use crate::transform::{rotate_solid, translate_solid};
+
+    let name = match plane {
+        SketchPlane::Xy | SketchPlane::Xz | SketchPlane::Yz => return Ok(solid.clone()),
+        SketchPlane::NamedRefPlane(n) => n.clone(),
+    };
+
+    let target = model
+        .feature(&name)
+        .ok_or_else(|| EvalError::Invalid {
+            id: id.into(),
+            reason: format!("SketchPlane::NamedRefPlane references unknown feature '{name}'"),
+        })?;
+    let (axis_str, position) = match target {
+        Feature::RefPlane { axis, position, .. } => (axis.clone(), position.clone()),
+        _ => {
+            return Err(EvalError::Invalid {
+                id: id.into(),
+                reason: format!(
+                    "SketchPlane::NamedRefPlane '{name}' must reference a RefPlane feature"
+                ),
+            });
+        }
+    };
+    let axis_idx = parse_axis(id, &axis_str)?;
+    let pos = resolve3(id, &position, params)?;
+    let pos_v = Vec3::new(pos[0], pos[1], pos[2]);
+
+    // Sketch local frame: +X = local x, +Y = local y, +Z = normal.
+    // Map local +Z -> world axis. axis_idx 0=x, 1=y, 2=z.
+    // For axis 'z': identity (no rotation needed); just translate.
+    // For axis 'x': rotate +Y around -Y by ?? — easiest: rotate around the
+    //   y-axis by +90° so +Z -> +X; +X -> -Z; +Y stays.
+    // For axis 'y': rotate around the x-axis by -90° so +Z -> +Y; +Y -> -Z;
+    //   +X stays.
+    let center = Point3::new(0.0, 0.0, 0.0);
+    let rotated = match axis_idx {
+        0 => rotate_solid(
+            solid,
+            Vec3::new(0.0, 1.0, 0.0),
+            std::f64::consts::FRAC_PI_2,
+            center,
+        ),
+        1 => rotate_solid(
+            solid,
+            Vec3::new(1.0, 0.0, 0.0),
+            -std::f64::consts::FRAC_PI_2,
+            center,
+        ),
+        2 => solid.clone(),
+        _ => unreachable!(),
+    };
+    let translated = translate_solid(&rotated, pos_v);
+    Ok(translated)
 }
 
 fn build_sketch_revolve(

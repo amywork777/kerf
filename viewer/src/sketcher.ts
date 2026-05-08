@@ -39,7 +39,13 @@ export type SketchPrim =
       start_angle: number;
       end_angle: number;
       n_segments: number;
-    };
+    }
+  // 2D editing operations: rewritten before loop tracing in the rust
+  // sketcher. The TS canvas does not yet PROPOSE these (no dedicated
+  // tool), but importing JSON containing them round-trips correctly.
+  | { kind: "TrimLine"; id: string; line: string; at_point: string }
+  | { kind: "ExtendLine"; id: string; line: string; to_point: string }
+  | { kind: "FilletCorner"; id: string; corner_point: string; radius: number };
 
 export type SketchConstraint =
   | { kind: "Coincident"; a: string; b: string }
@@ -98,6 +104,11 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
       <button data-tool="pan" title="Pan (space)">✣</button>
       <button data-tool="select" title="Select (S)">▢</button>
       <button data-tool="delete" title="Delete (D)">✕</button>
+    </div>
+    <div class="sk-toolbar sk-edit-toolbar">
+      <button class="sk-trim" title="Trim a Line at a Point (prompts for ids)">Trim</button>
+      <button class="sk-extend" title="Extend a Line to a Point (prompts for ids)">Extend</button>
+      <button class="sk-fillet" title="Fillet a corner Point with a tangent arc (prompts for id and radius)">Fillet</button>
     </div>
     <canvas class="sk-canvas" width="400" height="400"></canvas>
     <div class="sk-row">
@@ -851,6 +862,41 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
     inp.click();
   });
   (host.querySelector(".sk-clear") as HTMLButtonElement).addEventListener("click", () => clearSketch());
+
+  // 2D editing operations: Trim / Extend / Fillet. The current canvas
+  // doesn't have dedicated multi-click tools for these — instead we
+  // prompt the user for the relevant primitive ids. The operations are
+  // applied by the rust sketcher at extrude time.
+  (host.querySelector(".sk-trim") as HTMLButtonElement).addEventListener("click", () => {
+    const lineId = window.prompt("Trim: Line id?");
+    if (!lineId) return;
+    const atPoint = window.prompt("Trim: at_point id (Point already in the sketch)?");
+    if (!atPoint) return;
+    addPrim({ kind: "TrimLine", id: freshId("tr"), line: lineId, at_point: atPoint });
+    setStatus(`trim ${lineId} @ ${atPoint}`);
+  });
+  (host.querySelector(".sk-extend") as HTMLButtonElement).addEventListener("click", () => {
+    const lineId = window.prompt("Extend: Line id?");
+    if (!lineId) return;
+    const toPoint = window.prompt("Extend: to_point id?");
+    if (!toPoint) return;
+    addPrim({ kind: "ExtendLine", id: freshId("ex"), line: lineId, to_point: toPoint });
+    setStatus(`extend ${lineId} → ${toPoint}`);
+  });
+  (host.querySelector(".sk-fillet") as HTMLButtonElement).addEventListener("click", () => {
+    const cornerPoint = window.prompt("Fillet: corner Point id?");
+    if (!cornerPoint) return;
+    const rStr = window.prompt("Fillet: radius?", "0.5");
+    if (!rStr) return;
+    const r = Number.parseFloat(rStr);
+    if (!Number.isFinite(r) || r <= 0) {
+      setStatus("fillet: invalid radius");
+      return;
+    }
+    addPrim({ kind: "FilletCorner", id: freshId("f"), corner_point: cornerPoint, radius: r });
+    setStatus(`fillet @${cornerPoint} r=${r}`);
+  });
+
   gridInput.addEventListener("change", () => redraw());
   snapInput.addEventListener("change", () => redraw());
 
@@ -944,6 +990,12 @@ function formatPrim(p: SketchPrim): string {
       return `${p.id} Circle c=${p.center} r=${p.radius.toFixed(2)} n=${p.n_segments}`;
     case "Arc":
       return `${p.id} Arc c=${p.center} r=${p.radius.toFixed(2)} ${(p.start_angle).toFixed(2)}→${(p.end_angle).toFixed(2)}`;
+    case "TrimLine":
+      return `${p.id} Trim ${p.line} @ ${p.at_point}`;
+    case "ExtendLine":
+      return `${p.id} Extend ${p.line} → ${p.to_point}`;
+    case "FilletCorner":
+      return `${p.id} Fillet @${p.corner_point} r=${p.radius.toFixed(2)}`;
   }
 }
 
