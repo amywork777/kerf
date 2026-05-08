@@ -54,272 +54,15 @@ kernel + authoring + viewer + production output).
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
-| Manufacturing features (170+ — see catalog, multi-edge Fillets handles 4-corner; chained Fillet handles cross-axis cases via score-based stitch rescue) | 12% | 97% | 11.64 |
+| Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
-| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases; closed-form Cylinder×Plane, Sphere×Plane, Cylinder×Cylinder, **Cone×Plane** (full conic-section taxonomy: Circle/Ellipse/Parabola/Hyperbola/TwoLines/Apex), **Torus×Plane** (concentric circles / tangent circle / two tube circles / spiric polylines), and **Sphere×Sphere** analytic intersections lift to brep-layer EllipseSegment / sampled polylines; face_intersections emits Arc-kind chords for Cylinder×Plane, Sphere×Plane, **Cone×Plane**, and **Torus×Plane** face pairs; stitch canonical edge key + face_polygon walker remain arc-aware end-to-end, with arc chords gated behind a feature-flag-style filter awaiting the curve-aware splice/split work) | 8% | 80% | 6.4 |
+| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob + 20 new compositions) | 8% | 50% | 4.0 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~67.0%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~65.5%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08, curved-tier-b — Tier C)
-
-Tier C of the curved-tier-3-plus session shipped on top of Tier A. Three
-more closed-form analytic surface×surface intersections lifted into the
-brep layer (Cone×Plane, Torus×Plane, Sphere×Sphere), plus brep-level
-face_intersections wiring for both Plane pairs. Curved-surface jumps
-65 → 80% (+1.2 SW pt), 764 → 782 tests (18 new), 0 failed, 8 ignored
-(no new ignored). GAP C/D fillet tests all still pass. Tier B (routing arc chords
-through splice/split) remained deferred — same blockers as Tier A; see
-the Tier A writeup below for the multi-week scope. The Tier C wiring
-populates the same Arc-kind data channel Cylinder/Sphere×Plane already
-expose, so when Tier B does land, all four Plane×curved analytic regimes
-flow through it together.
-
-- **Cone×Plane analytic intersection** (`cone_plane_intersection`,
-  `ConePlaneIntersection { Empty | Apex(Point3) | TwoLines(Line, Line)
-  | Circle(EllipseSegment) | Ellipse(EllipseSegment) | Parabola(Vec<Point3>)
-  | Hyperbola(Vec<Point3>) }`). Full conic-section taxonomy: classifies
-  the cut by the angle β between plane and cone-axis vs the cone's
-  half-angle α. β > α → ellipse (closed loop); β = α → parabola (sampled
-  polyline); β < α → hyperbola (sampled polyline, two branches);
-  perpendicular plane → circle. Through-apex degenerates handled
-  separately: TwoLines (when plane cuts both sides of the cone),
-  apex-only (otherwise). The Parabola/Hyperbola samplers solve the cone
-  ring equation `R cos(u − φ) = -(d0 + v·an) / (|v|·tan α · R)` for u
-  at each `v ∈ [-4, 4]`. Each accepted sample lies on both surfaces to
-  better than 1e-6.
-- **Torus×Plane analytic intersection** (`torus_plane_intersection`,
-  `TorusPlaneIntersection { Empty | Circle | TwoCircles | TwoTubeCircles
-  | Spiric(Vec<Point3>) }`). Three closed-form regimes (perpendicular
-  plane: TwoCircles for `|d| < r`, Circle (radius R) for `|d| = r`,
-  Empty for `|d| > r`; plane through axis: TwoTubeCircles of radius `r`
-  centered at `±R`); general oblique planes return a sampled polyline
-  of the 4th-degree spiric section, traced by zero-crossing detection
-  along each fixed-`u` ring of a 96×48 (u, v) grid.
-- **face_intersections wiring for Cone×Plane and Torus×Plane**. New
-  `intersect_cone_plane_pair` and `intersect_torus_plane_pair` emit
-  `FaceIntersectionKind::Arc(EllipseSegment)` chords for the closed-
-  conic regimes (Cone Circle/Ellipse, Torus TwoCircles outer ring /
-  TwoTubeCircles outer / Circle), gated by the existing pipeline's
-  arc filter exactly the same way Cylinder×Plane is. No regression on
-  planar paths.
-- **Sphere×Sphere analytic intersection** (`sphere_sphere_intersection`,
-  `SphereSphereIntersection { Empty | Coincident | Tangent(Point3) |
-  Circle(EllipseSegment) }`). Wraps `kerf_geom::intersect::intersect_sphere_sphere`;
-  the radical-circle case is lifted to a degenerate full ellipse so
-  it shares one curve type with Cylinder×Plane / Sphere×Plane / Cone×Plane
-  / Torus×Plane downstream.
-- **Tests added (18)**:
-  `cone_plane_perp_axis_returns_circle`,
-  `cone_plane_through_apex_perp_returns_apex`,
-  `cone_plane_through_apex_steep_returns_two_lines`,
-  `cone_plane_parallel_generator_returns_parabola`,
-  `cone_plane_oblique_steep_returns_ellipse`,
-  `cone_plane_oblique_shallow_returns_hyperbola`,
-  `torus_plane_perp_at_center_returns_two_concentric_circles`,
-  `torus_plane_perp_offset_returns_two_concentric_circles`,
-  `torus_plane_perp_above_torus_returns_empty`,
-  `torus_plane_perp_at_top_tangent_returns_circle`,
-  `torus_plane_through_axis_returns_two_tube_circles`,
-  `torus_plane_oblique_returns_spiric_polyline`,
-  `face_intersection_returns_arc_for_cone_plane`,
-  `face_intersection_returns_arc_for_torus_plane`,
-  `sphere_sphere_overlap_returns_circle`,
-  `sphere_sphere_disjoint_returns_empty`,
-  `sphere_sphere_external_tangent_returns_point`,
-  `sphere_sphere_identical_returns_coincident`.
-  Each verifies regime classification AND that sample points lie on
-  both surfaces.
-- **Why Tier B (still) didn't ship**: same blockers documented under
-  Tier A. Routing arc chords through splice/split needs `mef_arc`,
-  `resolve_interior_endpoints` extended to walk `(u, v)` along the
-  conic parameter, and `classify_chord_interiorness` taught to treat
-  arc chords as not-single-line crossings of a face. The brief
-  proposed a sample-arc-to-polyline approach, but the closed-conic
-  arcs from Cylinder/Sphere/Cone/Torus×Plane have `start == end`
-  (full loops), and the polyline-segment approach also breaks because
-  the arc samples don't lie on the face's outer-loop polygon as
-  walked by `face_polygon` (cylinder lateral face, for instance, is a
-  4-half-edge loop on a closed conic — its polygon vertices are the
-  bot/top circle anchor points, not the arc samples). Honestly
-  deferred as out-of-session-budget work.
-
-## Earlier session (2026-05-08, curved-tier-3-plus — Tier A)
-
-Tier A of the curved-tier-3-plus session shipped on top of curved-stitch
-arc edges (PR #13). Two more closed-form analytic surface×surface
-intersections lifted into the brep layer, plus brep-level wiring for one
-of them. Curved-surface jumps 58 → 65% (+0.6 SW pt), 755 → 764 tests (9
-new), 0 failed, 8 ignored (no new ignored). GAP C/D fillet tests all
-still pass. Tier B (routing arc chords through splice/split) was
-deferred — the existing infrastructure assumes line-chord endpoints with
-distinct vertices, and Cylinder/Sphere×Plane both produce closed conic
-loops where `start == end`. Teaching mef + interior resolution + classify
-to handle that correctly is multi-week.
-
-- **Sphere×Plane analytic intersection** (`sphere_plane_intersection`,
-  `SpherePlaneIntersection { Empty | Tangent(Point3) | Circle(EllipseSegment) }`).
-  Wraps `kerf_geom::intersect::intersect_plane_sphere`; the circle case
-  is lifted to a degenerate full ellipse so it shares one curve type
-  with Cylinder×Plane downstream. Math: distance d from sphere center
-  to plane; |d| > r → Empty, |d| = r → Tangent at center − d·n,
-  |d| < r → Circle of radius √(r² − d²) centered there.
-- **Cylinder×Cylinder analytic intersection** (`cylinder_cylinder_intersection`,
-  `CylinderCylinderIntersection { Empty | Tangent(Line) | TwoLines(Line, Line) | Polyline(Vec<Point3>) }`).
-  Three regimes: parallel-axis (closed-form: empty/disjoint, tangent
-  external/internal, two ruling lines via cross-section circle-circle
-  intersection); non-parallel (perpendicular or skew) axes (sampled
-  polyline of 32 angular steps along cylinder A's surface, with
-  cylinder B-surface roots solved via the analytic poly::solve_quadratic
-  per sample). For two unit cylinders meeting at right angles
-  (Steinmetz solid) this recovers the saddle curves up to sample
-  resolution; every sample lies on both cylinders to better than 1e-6.
-- **face_intersections wiring for Sphere×Plane**. New
-  `intersect_sphere_plane_pair` mirrors PR #13's `intersect_cylinder_plane_pair`:
-  Sphere/Plane face pairs emit `FaceIntersectionKind::Arc(EllipseSegment)`
-  closed-loop chords, gated by the existing pipeline's arc filter
-  exactly the same way Cylinder×Plane is. No regression on planar paths.
-- **Why Cylinder×Cylinder isn't yet wired into face_intersections**:
-  the polyline result doesn't fit the closed-loop EllipseSegment
-  abstraction the rest of the brep layer uses. Adding it would either
-  need a new `Polyline(Vec<Point3>)` variant of `FaceIntersectionKind`
-  (filtered out the same way Arc is today) or proper polyline-segment
-  half-edges through stitch — that crosses into Tier-B territory and
-  was deferred to keep the session green.
-- **Tests added (6+)**:
-  `sphere_plane_intersection_perp_origin`,
-  `sphere_plane_intersection_offset_below_returns_empty`,
-  `sphere_plane_intersection_intersects_returns_circle`,
-  `cylinder_cylinder_parallel_offset_returns_empty`,
-  `cylinder_cylinder_parallel_overlap_returns_two_lines`,
-  `cylinder_cylinder_parallel_external_tangent_returns_one_line`,
-  `cylinder_cylinder_perpendicular_returns_4th_degree_polyline`,
-  `cylinder_cylinder_skew_axes_returns_polyline_or_empty`,
-  `face_intersection_returns_arc_for_sphere_plane`. Each verifies both
-  the regime classification and that sample points lie on both surfaces.
-- **What Tier B would have shipped (and why it didn't)**: removing the
-  `is_linear()` filter in pipeline.rs and routing closed-conic chords
-  through a `splice_arc_chord` helper. The blocker is that today's
-  splice/split assumes distinct start/end vertices to feed `mef`; a
-  closed conic has `start == end`, which mef rejects. A correct fix
-  needs: (a) injecting a synthetic "split point" on the arc parameter,
-  (b) `mef_arc` that accepts a `CurveSegment::Ellipse` and the
-  parametric range it covers, (c) `resolve_interior_endpoints`
-  extended to walk the cylinder/sphere u-v domain along the conic
-  parameter, and (d) `classify_chord_interiorness` taught that
-  arc chords aren't single line crossings of a face. That's a
-  multi-week project, well outside the session budget.
-
-## Earlier session (2026-05-08, curved-stitch arc edges)
-
-Tier 1 + Tier 2 of curved-surface stitch wiring shipped on top of GAP D.
-The brep stitcher and face-intersection layer are now arc-aware — the
-pipeline still runs the planar code path for everything that flows
-through to splice/split (Tier 3 deferred), but the data model carries
-arc identity end-to-end and `face_intersections` emits
-`Arc(EllipseSegment)` chords for Cylinder×Plane face pairs.
-~65.2% → ~65.8% (+0.6 SW pt: Curved-surface 50 → 58). 747 → 755 tests
-(8 new), 0 failed, 0 ignored. GAP C/D tests all still pass.
-
-- **Tier 1 — canonical edge key includes curve identity**
-  (`EdgeCurveTag::{Line, Arc(u32)}`). Stitch's `edge_pairs` HashMap is
-  rekeyed from `(v_lo, v_hi)` to `(v_lo, v_hi, EdgeCurveTag)`; line
-  edges (the entire pre-existing universe) hash to the same bucket
-  they did before, so behavior is byte-for-byte unchanged for planar
-  inputs. Arc edges between the same vertex pair as a line edge now
-  live in their own bucket. Stage 1c (drop_orphan_contributors) was
-  also rekeyed so it can't spuriously drop arc-bearing faces. `KeptFace`
-  gains optional `edge_tags: Vec<EdgeCurveTag>` and
-  `arc_segments: Vec<EllipseSegment>` (both default-empty for the
-  legacy path). Stage 5 picks line vs arc edge geometry from the tag
-  and emits `CurveSegment::Ellipse` directly instead of synthesizing
-  a line through the endpoints.
-- **Tier 2 — face_intersections emits Arc kind for Cylinder×Plane**.
-  `FaceIntersection` gains a `kind: FaceIntersectionKind` field
-  (`Linear` for the legacy planar chord, `Arc(EllipseSegment)` for the
-  closed conic from `cylinder_plane_intersection`). The pipeline's
-  `boolean_solid` filters out Arc-kind chords *before* feeding them to
-  `splice_solids_at_intersections` / `add_intersection_edges` — those
-  steps still assume linear chords. The arc list is collected and
-  held; current behavior for planar inputs is byte-for-byte
-  unchanged. This is the brief's "preserve correctness via fallback"
-  safety mechanism: the data-model wiring lands without breaking
-  anything in the planar path.
-- **Tier 3-lite — arc-aware polygon walker**. New
-  `face_polygon_with_arcs` returns `Vec<LoopStep>` where each step has
-  the vertex position AND the underlying `CurveSegment` of the
-  outgoing edge. A consumer that wants to triangulate an arc-bounded
-  face at finer resolution than the stitched polygon can branch on
-  `CurveKind::Line` vs `Circle`/`Ellipse`. Tested via a stitch round-
-  trip that recovers the arc `CurveSegment::Ellipse` from a face built
-  with an `Arc(0)`-tagged edge.
-- **What's still deferred**: routing arc chords *through* splice/split
-  into the eventual stitched solid. Doing this requires teaching mef
-  to add an arc edge (not just a line) and `add_intersection_edges` /
-  `resolve_interior_endpoints` to walk the cylinder face's u-v domain
-  along the conic parameter. That is multi-week and remains outside
-  this session's scope. Today the Cylinder×Plane arc data is detected
-  and packaged but isn't yet woven into the result solid by the
-  boolean engine.
-
-## Earlier session (2026-05-08, GAP D)
-
-GAP D (chained Fillet stitch repair) shipped on top of GAP C. Chaining
-multiple `Fillet` features in sequence now succeeds for both axis-aligned
-chains (z-z-z-z, the same family handled by the plural `Fillets` feature)
-and cross-axis chains (z-then-x sharing a corner, where the second
-fillet's wedge cutter meets the first fillet's cylindrical face). The
-two new chained-Fillet failure modes that pre-GAP-D panicked at the
-stitch step now pass. ~65.1% → ~65.2% (+0.1 SW pt: Manufacturing 96 → 97).
-731 tests → 736 (4 new chained_fillet tests + 1 un-ignored).
-
-- **Score-based stitch rescue (GAP D)**: replaced the GAP C greedy
-  first-match dropped-pile rescue with a single best-candidate-per-
-  iteration selection. For each available dropped face we compute
-  `closed - created` where `closed` counts directed edges that match a
-  current 1-half-edge orphan and `created` counts edges that would
-  introduce a same-direction conflict (2× weight) or a permanent
-  orphan with no future partner in the pool (1× weight). Promote the
-  highest-scoring candidate when the score is positive, stop when no
-  candidate scores. Coplanarity preference (small tiebreak boost)
-  preserved from GAP C. The chained Fillet z-then-x failure was
-  caused by greedy promotion exhausting the dropped pool with
-  same-direction duplicates instead of true reverse-direction
-  partners — the score gate rejects those candidates outright.
-  **Manufacturing category bumps 96% → 97%.**
-
-- **Earlier in session: Stitch rescue + prune (GAP C)**:
-  `stitch_with_rescue(kept, dropped, tol)` added a two-stage repair
-  before the manifold check. Stage 1d (excursion vertex prune) removes
-  detour vertices that intersection-edge propagation thread into a
-  kept polygon — vertices unique to one polygon whose adjacent edges
-  have no twin elsewhere. Stage 1e (dropped-pile rescue) promotes a
-  dropped face whose polygon contains the reverse of a 1-half-edge
-  orphan, with a relaxed coplanarity gate (coplanar partners
-  preferred, non-coplanar accepted on second pass for cylinder-facet
-  seam edges). pipeline.rs's `boolean_solid` passes the dropped pool
-  through. The 4-corner z-edge Fillets ignored test
-  (`fillets_all_four_z_corners_succeeds`) un-ignored at this stage.
-
-## Previous session (analytic-curve-cylinder-plane, merged in)
-
-Curved-surface category 45% → 50% (+0.4 SW pts).
-
-- **Brep-layer `EllipseSegment`**: new arc-bounded ellipse type in
-  `crates/kerf-brep/src/geometry.rs` with explicit start/end angles, `Sense`
-  (forward/reverse), `directed_span`, `start_point`/`end_point`, `is_full`,
-  and lossless conversion to the existing `CurveSegment`. Added
-  `CurveSegment::circle` and `CurveSegment::ellipse` arc constructors mirroring
-  `CurveSegment::line`.
-- **Brep-layer `cylinder_plane_intersection`**: new
-  `crates/kerf-brep/src/booleans/analytic_curves.rs` lifts `kerf-geom`'s
-  closed-form `intersect_plane_cylinder` to the brep layer, returning
-  `CylinderPlaneIntersection { Empty | Tangent(Line) | TwoLines(Line, Line)
-  | Circle(EllipseSegment) | Ellipse(EllipseSegment) }`.
-- 11 new math sanity tests for the analytic intersection regimes.
-
-## Earlier session (2026-05-06)
+## Latest session (2026-05-06)
 
 GAP 1 (Picking → edit) shipped. GAP 2 Plan B (SweepPath) shipped. Bonus
 faceted torus + Donut feature shipped. ~52.7% → ~54.7% (+2 SW pts), 518
@@ -408,7 +151,7 @@ real kernel additions:
 - **Decorative composites**: Arrow, Funnel, TruncatedPyramid.
 - **Transforms**: ScaleXYZ.
 
-736 tests pass, 8 ignored. 220+ Features in catalog.
+727 tests pass, 9 ignored. 220+ Features in catalog.
 
 The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
 are real manufacturing features even if multi-edge fillet is still
@@ -430,8 +173,7 @@ multi-week engineering projects in their own right:
   bidirectional constraint solver is its own discipline.
 - **Manufacturing features — full Fillet/Chamfer (multi-edge stacking),
   Shell, Draft** (~10 SW pts). Single-edge axis-aligned Fillet/Chamfer
-  and chained Fillet (axis-aligned + cross-axis) both ship today;
-  stacking multiple Fillets on the same body trips the
+  ship today; stacking multiple Fillets on the same body trips the
   boolean engine where the second fillet's wedge cutter meets the first
   fillet's curved face. Shell + Draft both need true offset-surface math
   the kernel doesn't have. Each is multi-week work.
@@ -488,18 +230,10 @@ proprietary product): years.
 **Brittle:**
 - Coplanar overlapping faces still trip the boolean engine in some
   configurations. Not all multi-cylinder unions work.
-- Stacking multiple chained `Fillet`s now works for both axis-aligned
-  chains (z-z-z-z) and cross-axis chains (z-then-x sharing a corner)
-  via the GAP D score-based stitch rescue. The plural `Fillets`
-  feature handles the same configurations and remains the more
-  expressive option for "round all four z-corners at once". Untested
-  edge cases that *might* still be brittle: chains of 5+ fillets,
-  fillets whose curved faces have very different segment counts, and
-  fillets that share BOTH endpoints (a corner where three filleted
-  edges meet — the body becomes a curvilinear tetrahedron at that
-  vertex). The score-based rescue is more conservative than greedy
-  GAP C in failure modes, so it won't make things worse, but it may
-  decline to repair these untested configurations.
+- Stacking multiple `Fillet`s on the same body fails at the second
+  fillet whose wedge cutter meets the first fillet's rounded face.
+  Single-corner fillets work; designs that want multiple fillets must
+  union pre-filleted parts.
 - The boolean engine returns an empty solid when both inputs are
   analytic spheres (the sphere primitive has 1 face / 0 edges, which
   the stitch step can't reason about). That's why `HollowSphere` was
