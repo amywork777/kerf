@@ -62,6 +62,15 @@ function lastFeatureIds(json: string, n: number): string[] {
   }
 }
 
+function featureCount(json: string): number {
+  try {
+    const parsed = JSON.parse(json) as { features?: unknown[] };
+    return (parsed.features ?? []).length;
+  } catch {
+    return 0;
+  }
+}
+
 /** Append a feature object to the model JSON and return the updated JSON. */
 function appendFeature(
   json: string,
@@ -126,8 +135,12 @@ function buildBoolean(
     difference: "Difference",
     intersection: "Intersection",
   } as const;
-  const prefix = sub;
-  const id = nextId(json, prefix);
+  const prefixMap = {
+    union: "bool_union",
+    difference: "bool_diff",
+    intersection: "bool_intersect",
+  } as const;
+  const id = nextId(json, prefixMap[sub]);
   const inputs = lastFeatureIds(json, 2);
   const feature: Record<string, unknown> = {
     kind: kindMap[sub],
@@ -272,6 +285,8 @@ export function mountToolbar(
 
   // Track all buttons that require a model so we can disable/enable them.
   const modelButtons: HTMLButtonElement[] = [];
+  // Buttons that additionally require >= 2 features (booleans).
+  const multiFeatureButtons: HTMLButtonElement[] = [];
   // All open dropdowns (at most one at a time).
   let openDropdown: HTMLDivElement | null = null;
 
@@ -282,9 +297,10 @@ export function mountToolbar(
     }
   }
 
-  document.addEventListener("click", (e) => {
+  const onDocClick = (e: MouseEvent) => {
     if (!bar.contains(e.target as Node)) closeDropdowns();
-  });
+  };
+  document.addEventListener("click", onDocClick);
 
   function addButton(
     label: string,
@@ -313,6 +329,7 @@ export function mountToolbar(
     dropdownId: string,
     items: { label: string; sub: string; onClick: () => void }[],
     title?: string,
+    minFeatures = 0,
   ): HTMLButtonElement {
     const wrapper = document.createElement("div");
     wrapper.style.cssText = "position:relative;display:flex;";
@@ -337,6 +354,7 @@ export function mountToolbar(
 
     b.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (b.disabled) return;
       const wasOpen = openDropdown === dd;
       closeDropdowns();
       if (!wasOpen) {
@@ -344,6 +362,12 @@ export function mountToolbar(
         openDropdown = dd;
       }
     });
+
+    if (minFeatures >= 2) {
+      multiFeatureButtons.push(b);
+    } else if (minFeatures >= 1) {
+      modelButtons.push(b);
+    }
 
     return b;
   }
@@ -452,6 +476,7 @@ export function mountToolbar(
       },
     ],
     "Boolean operations",
+    2,
   );
 
   // ------------------------------------------------------------------
@@ -531,12 +556,19 @@ export function mountToolbar(
   // ------------------------------------------------------------------
   // Handle
   // ------------------------------------------------------------------
+  function refresh() {
+    const m = opts.getModel();
+    const hasModel = m !== null;
+    const fc = m ? featureCount(m.json) : 0;
+    for (const b of modelButtons) b.disabled = !hasModel;
+    for (const b of multiFeatureButtons) b.disabled = fc < 2;
+  }
+  refresh();
   return {
-    refresh() {
-      const hasModel = opts.getModel() !== null;
-      for (const b of modelButtons) {
-        b.disabled = !hasModel;
-      }
+    refresh,
+    destroy() {
+      document.removeEventListener("click", onDocClick);
+      bar.remove();
     },
   };
 }

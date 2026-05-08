@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mountToolbar, type ToolbarOpts } from "./toolbar.js";
+
+const mounted: Array<{ destroy: () => void }> = [];
+function mount(host: HTMLElement, opts: ToolbarOpts) {
+  const tb = mountToolbar(host, opts);
+  mounted.push(tb);
+  return tb;
+}
 
 // Minimal model JSON with two features
 const modelWithFeatures = JSON.stringify({
@@ -36,9 +43,14 @@ describe("mountToolbar", () => {
     document.body.appendChild(host);
   });
 
+  afterEach(() => {
+    while (mounted.length) mounted.pop()!.destroy();
+    document.body.innerHTML = "";
+  });
+
   it("renders 9 toolbar buttons in the correct order", () => {
     const opts = makeOpts();
-    mountToolbar(host, opts);
+    mount(host, opts);
     const buttons = host.querySelectorAll("button[data-toolbar-action]");
     expect(buttons).toHaveLength(9);
     const actions = Array.from(buttons).map((b) => (b as HTMLElement).dataset.toolbarAction);
@@ -58,7 +70,7 @@ describe("mountToolbar", () => {
   it("clicking Sketch calls openSketcher", () => {
     const openSketcher = vi.fn();
     const opts = makeOpts({ openSketcher });
-    mountToolbar(host, opts);
+    mount(host, opts);
     const btn = host.querySelector<HTMLButtonElement>("button[data-toolbar-action='sketch']")!;
     btn.click();
     expect(openSketcher).toHaveBeenCalledOnce();
@@ -70,7 +82,7 @@ describe("mountToolbar", () => {
       getModel: () => ({ json: modelWithFeatures, targetId: "box_2" }),
       setModel,
     });
-    mountToolbar(host, opts);
+    mount(host, opts);
     const btn = host.querySelector<HTMLButtonElement>("button[data-toolbar-action='extrude']")!;
     btn.click();
     expect(setModel).toHaveBeenCalledOnce();
@@ -87,7 +99,7 @@ describe("mountToolbar", () => {
   it("clicking Extrude with no model has no effect (button disabled)", () => {
     const setModel = vi.fn();
     const opts = makeOpts({ getModel: () => null, setModel });
-    mountToolbar(host, opts);
+    mount(host, opts);
     const btn = host.querySelector<HTMLButtonElement>("button[data-toolbar-action='extrude']")!;
     expect(btn.disabled).toBe(true);
     btn.click();
@@ -109,7 +121,7 @@ describe("mountToolbar", () => {
       getModel: () => ({ json: currentJson, targetId: "extrude_1" }),
       setModel: (json: string) => { currentJson = json; setModel(json); },
     });
-    mountToolbar(host, opts);
+    mount(host, opts);
     const btn = host.querySelector<HTMLButtonElement>("button[data-toolbar-action='extrude']")!;
     btn.click();
     const parsed = JSON.parse(setModel.mock.calls[0]![0]);
@@ -121,7 +133,7 @@ describe("mountToolbar", () => {
     const opts = makeOpts({
       getModel: () => ({ json: modelWithFeatures, targetId: "box_2" }),
     });
-    mountToolbar(host, opts);
+    mount(host, opts);
     const boolBtn = host.querySelector<HTMLButtonElement>("button[data-toolbar-action='boolean']")!;
     boolBtn.click();
     const dropdown = host.querySelector("[data-toolbar-dropdown='boolean']") as HTMLElement;
@@ -140,7 +152,7 @@ describe("mountToolbar", () => {
       getModel: () => ({ json: modelWithFeatures, targetId: "box_2" }),
       setModel,
     });
-    mountToolbar(host, opts);
+    mount(host, opts);
     // Open boolean dropdown
     const boolBtn = host.querySelector<HTMLButtonElement>("button[data-toolbar-action='boolean']")!;
     boolBtn.click();
@@ -161,16 +173,36 @@ describe("mountToolbar", () => {
 
   it("Revolve button is disabled when no model loaded", () => {
     const opts = makeOpts({ getModel: () => null });
-    mountToolbar(host, opts);
+    mount(host, opts);
     const btn = host.querySelector<HTMLButtonElement>("button[data-toolbar-action='revolve']")!;
     expect(btn.disabled).toBe(true);
   });
 
   it("Shell button is disabled when no model loaded", () => {
     const opts = makeOpts({ getModel: () => null });
-    mountToolbar(host, opts);
+    mount(host, opts);
     const btn = host.querySelector<HTMLButtonElement>("button[data-toolbar-action='shell']")!;
     expect(btn.disabled).toBe(true);
+  });
+
+  it("Boolean button is disabled when fewer than 2 features in model", () => {
+    const opts = makeOpts({
+      getModel: () => ({ json: modelWithOneFeature, targetId: "box_1" }),
+    });
+    mount(host, opts);
+    const btn = host.querySelector<HTMLButtonElement>("button[data-toolbar-action='boolean']")!;
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("Boolean button enables when model has >= 2 features after refresh", () => {
+    let currentModel: { json: string; targetId: string } | null = null;
+    const opts = makeOpts({ getModel: () => currentModel });
+    const tb = mount(host, opts);
+    const btn = host.querySelector<HTMLButtonElement>("button[data-toolbar-action='boolean']")!;
+    expect(btn.disabled).toBe(true);
+    currentModel = { json: modelWithFeatures, targetId: "box_2" };
+    tb.refresh();
+    expect(btn.disabled).toBe(false);
   });
 
   it("clicking Revolve with model appends a Revolve feature", () => {
@@ -179,7 +211,7 @@ describe("mountToolbar", () => {
       getModel: () => ({ json: modelWithOneFeature, targetId: "box_1" }),
       setModel,
     });
-    mountToolbar(host, opts);
+    mount(host, opts);
     const btn = host.querySelector<HTMLButtonElement>("button[data-toolbar-action='revolve']")!;
     btn.click();
     expect(setModel).toHaveBeenCalledOnce();
@@ -195,7 +227,7 @@ describe("mountToolbar", () => {
       getModel: () => ({ json: modelWithOneFeature, targetId: "box_1" }),
       setModel,
     });
-    mountToolbar(host, opts);
+    mount(host, opts);
     const btn = host.querySelector<HTMLButtonElement>("button[data-toolbar-action='shell']")!;
     btn.click();
     expect(setModel).toHaveBeenCalledOnce();
@@ -210,7 +242,7 @@ describe("mountToolbar", () => {
   it("refresh() updates disabled state when model is loaded after mount", () => {
     let currentModel: { json: string; targetId: string } | null = null;
     const opts = makeOpts({ getModel: () => currentModel });
-    const toolbar = mountToolbar(host, opts);
+    const toolbar = mount(host, opts);
     const extrudeBtn = host.querySelector<HTMLButtonElement>("button[data-toolbar-action='extrude']")!;
     expect(extrudeBtn.disabled).toBe(true);
     currentModel = { json: modelWithOneFeature, targetId: "box_1" };
@@ -222,7 +254,7 @@ describe("mountToolbar", () => {
     const opts = makeOpts({
       getModel: () => ({ json: modelWithFeatures, targetId: "box_2" }),
     });
-    mountToolbar(host, opts);
+    mount(host, opts);
     const btn = host.querySelector<HTMLButtonElement>("button[data-toolbar-action='pattern']")!;
     btn.click();
     const dropdown = host.querySelector("[data-toolbar-dropdown='pattern']") as HTMLElement;
@@ -236,7 +268,7 @@ describe("mountToolbar", () => {
 
   it("Reference dropdown shows Plane, Axis, Point sub-buttons", () => {
     const opts = makeOpts();
-    mountToolbar(host, opts);
+    mount(host, opts);
     const btn = host.querySelector<HTMLButtonElement>("button[data-toolbar-action='reference']")!;
     btn.click();
     const dropdown = host.querySelector("[data-toolbar-dropdown='reference']") as HTMLElement;
