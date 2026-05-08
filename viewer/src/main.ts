@@ -1126,11 +1126,15 @@ function onRollbackDragMove(e: MouseEvent) {
   // (we always keep at least one feature active so the viewer has
   // something to render).
   const clamped = Math.max(1, Math.min(targetIndex, featureRows.length));
-  // Live preview by updating the placeholder bar's visual position.
   const bar = rows.find((r) => r.classList.contains("rollback-bar"));
-  if (bar) {
-    bar.dataset.previewIndex = String(clamped);
-  }
+  if (!bar) return;
+  bar.dataset.previewIndex = String(clamped);
+  // Live preview: physically reposition the bar between feature rows so
+  // the user sees where it will land. The bar sits *after* row[clamped-1]
+  // (or before all rows if clamped == 0, but the clamp above prevents
+  // that). insertBefore is a no-op when the node is already in place.
+  const anchor = featureRows[clamped] ?? null;
+  featureListEl.insertBefore(bar, anchor);
 }
 
 function onRollbackDragEnd(_e: MouseEvent) {

@@ -11089,12 +11089,10 @@ fn fold_boolean_ids(
     cache: &HashMap<String, Solid>,
     op: BoolKind,
 ) -> Result<Solid, EvalError> {
-    if inputs.is_empty() {
-        return Err(EvalError::Invalid {
-            id: id.into(),
-            reason: format!("boolean '{}' has no active inputs", op.name()),
-        });
-    }
+    debug_assert!(
+        !inputs.is_empty(),
+        "fold_boolean_ids invariant: effective_inputs already rejects empty active sets"
+    );
     if inputs.len() == 1 {
         return Ok(cache_get(cache, inputs[0])?.clone());
     }
