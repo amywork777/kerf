@@ -13,9 +13,13 @@ import init, {
 } from "./wasm/kerf_cad_wasm.js";
 import { exportThreeViewPng } from "./drawings.js";
 import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js";
-import { PickHistory } from "./pick-history.js";
-import { attachFeatureContextMenu } from "./feature-tree-context.js";
-import { mountViewPresetsUI } from "./view-presets.js";
+import {
+  suppressedFromJson,
+  rollbackFromJson,
+  setRollbackInJson,
+  toggleSuppressedInJson,
+  rollbackIdForBarIndex,
+} from "./suppression.js";
 
 await init();
 
@@ -920,23 +924,44 @@ function summarizeFeatures(json: string): FeatureSummary[] {
   }
 }
 
-// Drag-to-reorder state.
-let dragSrcId: string | null = null;
-
-function applyFeatureSearch() {
-  const query = featureSearchEl.value;
-  const features = summarizeFeatures(model?.json ?? "[]");
-  const visible = new Set(filterFeatures(features, query).map((f) => f.id));
-  for (const li of featureListEl.children as HTMLCollectionOf<HTMLLIElement>) {
-    li.classList.toggle("hidden", !visible.has(li.dataset.id ?? ""));
+function toggleSuppression(featureId: string, suppress: boolean) {
+  if (!model) return;
+  model.json = toggleSuppressedInJson(model.json, featureId, suppress);
+  // If we just suppressed the current target, fall back to a still-active id.
+  if (suppress && model.targetId === featureId) {
+    const cur = suppressedFromJson(model.json);
+    const remaining = summarizeFeatures(model.json).filter((f) => !cur.has(f.id));
+    if (remaining.length > 0) {
+      model.targetId = remaining[remaining.length - 1]!.id;
+      targetSelect.value = model.targetId;
+    }
   }
+  renderFeatureTree();
+  rebuild();
 }
 
-featureSearchEl.addEventListener("input", applyFeatureSearch);
-featureSearchClearEl.addEventListener("click", () => {
-  featureSearchEl.value = "";
-  applyFeatureSearch();
-});
+/// Apply a rollback marker by feature index. `barIndex = features.length`
+/// means the bar sits below the last feature (no rollback). The drag UI
+/// clamps barIndex to [1, features.length] — we don't permit a fully
+/// rolled-back model since the viewer needs at least one feature to render.
+function setRollbackByBarIndex(barIndex: number) {
+  if (!model) return;
+  const features = summarizeFeatures(model.json);
+  const ids = features.map((f) => f.id);
+  const newId = rollbackIdForBarIndex(ids, barIndex);
+  model.json = setRollbackInJson(model.json, newId);
+  // If the new rollback hides the current target, fall back to last active.
+  if (newId !== null) {
+    const idx = features.findIndex((f) => f.id === newId);
+    const activeIdx = features.findIndex((f) => f.id === model!.targetId);
+    if (activeIdx > idx) {
+      model.targetId = newId;
+      targetSelect.value = newId;
+    }
+  }
+  renderFeatureTree();
+  rebuild();
+}
 
 function renderFeatureTree() {
   if (!model) {
@@ -944,20 +969,36 @@ function renderFeatureTree() {
     return;
   }
   const features = summarizeFeatures(model.json);
+  const suppressed = suppressedFromJson(model.json);
+  const rollback = rollbackFromJson(model.json);
+  const rollbackIdx = rollback === null
+    ? features.length
+    : features.findIndex((f) => f.id === rollback);
+  // barIndex = position immediately AFTER the last active feature. When
+  // rollback is null, that's features.length (bar at bottom). When rollback
+  // is a valid id, bar sits just below that id.
+  const barIndex = rollbackIdx < 0 ? features.length : rollbackIdx + 1;
+
   featureTreeEl.hidden = features.length === 0;
   featureCountEl.textContent = features.length ? `(${features.length})` : "";
   featureListEl.innerHTML = "";
-  for (const f of features) {
+  for (let i = 0; i < features.length; i++) {
+    const f = features[i]!;
+    const isSuppressed = suppressed.has(f.id);
+    const isPastRollback = i >= barIndex;
     const li = document.createElement("li");
     li.dataset.id = f.id;
-    li.draggable = true;
+    li.dataset.index = String(i);
+    if (isSuppressed) li.classList.add("suppressed");
+    if (isPastRollback) li.classList.add("rolled-back");
     li.innerHTML =
-      `<span class="drag-handle" title="Drag to reorder">⠿</span>` +
-      `<span class="kind">${f.kind}</span><span class="id">${f.id}</span>` +
+      `<input type="checkbox" class="sup" ${isSuppressed ? "" : "checked"} ` +
+      `title="Active when checked; suppressed when unchecked" />` +
+      `<span class="kind">${f.kind}</span>` +
+      `<span class="id">${f.id}</span>` +
       `<span class="del" title="Delete this feature">✕</span>`;
-    (li.querySelector(".id") as HTMLElement).title = `Click to set as target — current: '${f.id}'`;
-
-    // Click to set target.
+    (li.querySelector(".id") as HTMLElement).title =
+      `Click to set as target — current: '${f.id}'`;
     li.querySelector(".id")!.addEventListener("click", () => {
       if (!model) return;
       model.targetId = f.id;
@@ -965,8 +1006,11 @@ function renderFeatureTree() {
       refreshFeatureTreeSelection();
       rebuild();
     });
-
-    // Delete button.
+    const cb = li.querySelector(".sup") as HTMLInputElement;
+    cb.addEventListener("click", (e) => e.stopPropagation());
+    cb.addEventListener("change", () => {
+      toggleSuppression(f.id, !cb.checked);
+    });
     li.querySelector(".del")!.addEventListener("click", (e) => {
       e.stopPropagation();
       deleteFeature(f.id);
@@ -1024,10 +1068,84 @@ function renderFeatureTree() {
     });
 
     featureListEl.appendChild(li);
+    // Insert the rollback bar after this feature when bar should sit here.
+    if (i + 1 === barIndex && barIndex < features.length) {
+      featureListEl.appendChild(makeRollbackBar(i + 1));
+    }
+  }
+  // If the bar sits at the very bottom (no rollback), show it there too.
+  if (barIndex >= features.length) {
+    featureListEl.appendChild(makeRollbackBar(features.length));
   }
   refreshFeatureTreeSelection();
   // Re-apply any active search filter after re-render.
   applyFeatureSearch();
+}
+
+/// Build the draggable rollback bar element. `currentIndex` is the bar's
+/// position (0..features.length).
+function makeRollbackBar(currentIndex: number): HTMLElement {
+  const bar = document.createElement("li");
+  bar.className = "rollback-bar";
+  bar.dataset.index = String(currentIndex);
+  bar.title = "Rollback bar — drag up to mark features as inactive";
+  bar.innerHTML = `<span class="bar-line"></span>`;
+  bar.addEventListener("mousedown", startRollbackDrag);
+  return bar;
+}
+
+let rollbackDragState: { startY: number; startIndex: number } | null = null;
+
+function startRollbackDrag(e: MouseEvent) {
+  e.preventDefault();
+  e.stopPropagation();
+  const target = e.currentTarget as HTMLElement;
+  const startIndex = Number(target.dataset.index ?? "0");
+  rollbackDragState = { startY: e.clientY, startIndex };
+  document.body.style.cursor = "ns-resize";
+  window.addEventListener("mousemove", onRollbackDragMove);
+  window.addEventListener("mouseup", onRollbackDragEnd, { once: true });
+}
+
+function onRollbackDragMove(e: MouseEvent) {
+  if (!rollbackDragState || !model) return;
+  // Find the row index closest to the cursor by walking the children.
+  const rows = Array.from(featureListEl.children) as HTMLElement[];
+  // Use the midpoint of each feature row to decide where the bar should sit.
+  const featureRows = rows.filter((r) => !r.classList.contains("rollback-bar"));
+  if (featureRows.length === 0) return;
+  let targetIndex = featureRows.length;
+  for (let i = 0; i < featureRows.length; i++) {
+    const rect = featureRows[i]!.getBoundingClientRect();
+    if (e.clientY < rect.top + rect.height / 2) {
+      targetIndex = i;
+      break;
+    }
+  }
+  // Clamp to [1, features.length] — refusing to roll back past feature 0
+  // (we always keep at least one feature active so the viewer has
+  // something to render).
+  const clamped = Math.max(1, Math.min(targetIndex, featureRows.length));
+  // Live preview by updating the placeholder bar's visual position.
+  const bar = rows.find((r) => r.classList.contains("rollback-bar"));
+  if (bar) {
+    bar.dataset.previewIndex = String(clamped);
+  }
+}
+
+function onRollbackDragEnd(_e: MouseEvent) {
+  document.body.style.cursor = "";
+  window.removeEventListener("mousemove", onRollbackDragMove);
+  if (!rollbackDragState || !model) {
+    rollbackDragState = null;
+    return;
+  }
+  const bar = featureListEl.querySelector(".rollback-bar") as HTMLElement | null;
+  const idxStr = bar?.dataset.previewIndex ?? bar?.dataset.index;
+  const idx = idxStr === undefined ? null : Number(idxStr);
+  rollbackDragState = null;
+  if (idx === null || Number.isNaN(idx)) return;
+  setRollbackByBarIndex(idx);
 }
 
 function deleteFeature(id: string) {

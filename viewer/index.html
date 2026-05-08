@@ -113,26 +113,26 @@
     border-radius: 3px; cursor: pointer; }
   #feature-list li:hover .del { visibility: visible; }
   #feature-list .del:hover { color: #ff7b72; background: rgba(255,123,114,0.1); }
-  #selected-feature { margin-top: 14px; padding: 10px; border: 1px solid var(--accent);
-    border-radius: 4px; background: rgba(88,166,255,0.04); }
-  #selected-feature .sf-head { display: flex; justify-content: space-between;
-    align-items: center; margin-bottom: 8px; }
-  #selected-feature-title { font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 12px; color: var(--accent); }
-  #selected-feature .sf-close { color: var(--muted); cursor: pointer; padding: 0 6px;
-    border-radius: 3px; font-size: 11px; }
-  #selected-feature .sf-close:hover { color: var(--fg); background: var(--bg); }
-  #selected-feature .sf-row { margin-bottom: 8px; }
-  #selected-feature .sf-row label { display: flex; justify-content: space-between;
-    color: var(--muted); margin-bottom: 2px; font-size: 11px;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-  #selected-feature .sf-row label .sf-val { color: var(--fg); }
-  #selected-feature .sf-row label .sf-muted { color: var(--muted); font-style: italic; }
-  #selected-feature .sf-row input[type=range] { width: 100%; }
-  #selected-feature .sf-row input[type=text] { width: 100%; padding: 4px 6px;
-    background: var(--bg); color: var(--fg); border: 1px solid var(--line);
-    border-radius: 3px; font: 11px ui-monospace, "SF Mono", Menlo, monospace; }
-  #selected-feature .sf-empty { color: var(--muted); font-style: italic; font-size: 11px; }
+  /* suppression checkbox */
+  #feature-list .sup { margin: 0; flex: 0 0 auto; cursor: pointer;
+    accent-color: var(--accent); }
+  /* suppressed features dim the row + strike through the kind+id text */
+  #feature-list li.suppressed { opacity: 0.4; }
+  #feature-list li.suppressed .kind,
+  #feature-list li.suppressed .id { text-decoration: line-through; }
+  /* rolled-back features (past the rollback bar) — greyed + italic */
+  #feature-list li.rolled-back { opacity: 0.3; font-style: italic; }
+  #feature-list li.rolled-back .kind,
+  #feature-list li.rolled-back .id { color: var(--muted); }
+  /* rollback bar — a draggable horizontal divider in the feature list */
+  #feature-list li.rollback-bar { list-style: none; padding: 4px 0;
+    cursor: ns-resize; display: flex; align-items: center; }
+  #feature-list li.rollback-bar:hover { background: transparent; }
+  #feature-list li.rollback-bar .bar-line { flex: 1; height: 2px;
+    background: var(--accent); border-radius: 1px;
+    box-shadow: 0 0 4px rgba(88, 166, 255, 0.5); }
+  #feature-list li.rollback-bar:hover .bar-line { background: #79b8ff;
+    box-shadow: 0 0 6px rgba(121, 184, 255, 0.7); }
   button { background: var(--bg); color: var(--fg); border: 1px solid var(--line);
     border-radius: 4px; padding: 6px 10px; font: inherit; cursor: pointer; flex: 1;
     transition: border-color .15s, color .15s; }
