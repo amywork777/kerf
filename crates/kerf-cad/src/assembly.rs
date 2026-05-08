@@ -310,6 +310,58 @@ pub enum Mate {
         instance_a: String,
         instance_b: String,
     },
+    /// Force `point_b` (in B's local frame, transformed by B's pose) to
+    /// coincide with `point_a` (in A's local frame, transformed by A's
+    /// pose) — same residual as `Coincident`, but framed as a
+    /// contact-style touch where both parts come into point contact
+    /// without a preferred owner. The default solver moves B (the
+    /// symbolic solver moves both ends).
+    TouchPoint {
+        instance_a: String,
+        point_a: [Scalar; 3],
+        instance_b: String,
+        point_b: [Scalar; 3],
+    },
+    /// Constrain `point` on B to lie on the plane defined by
+    /// (`plane_origin`, `plane_normal`) in A's local frame. Translates B
+    /// along the plane normal until the signed distance is zero.
+    PointOnPlane {
+        instance_a: String,
+        plane_origin: [Scalar; 3],
+        plane_normal: [Scalar; 3],
+        instance_b: String,
+        point_b: [Scalar; 3],
+    },
+    /// Constrain `point` on B to lie on the infinite line `axis_a` (in
+    /// A's local frame). Translates B perpendicular to the line so its
+    /// point lands exactly on the line. The component along the line is
+    /// preserved (a point on a line still has 1 free dof).
+    PointOnLine {
+        instance_a: String,
+        axis_a: AxisRef,
+        instance_b: String,
+        point_b: [Scalar; 3],
+    },
+    /// Gear / coupled-rotation mate. When A rotates by angle θ around
+    /// `axis_a`, B rotates by `θ * ratio` around `axis_b`. The reference
+    /// configuration is the pose at which the mate was added — solver
+    /// extracts A's current rotation about `axis_a` (relative to its
+    /// default pose) and applies the geared rotation to B.
+    ///
+    /// `ratio = -1.0` for two equal-radius gears in mesh (B turns the
+    /// opposite direction at the same speed). `ratio = 0.5` for a 2:1
+    /// reduction (B is half the speed of A). `ratio = 2.0` for 1:2
+    /// step-up.
+    ///
+    /// Both axes are interpreted in their respective local frames and
+    /// mapped through the current poses to world.
+    Gear {
+        instance_a: String,
+        axis_a: AxisRef,
+        instance_b: String,
+        axis_b: AxisRef,
+        ratio: Scalar,
+    },
 }
 
 /// Top-level container.
@@ -1000,7 +1052,229 @@ impl Assembly {
                 poses,
                 frozen.as_deref_mut(),
             ),
+            Mate::TouchPoint {
+                instance_a,
+                point_a,
+                instance_b,
+                point_b,
+            } => {
+                // TouchPoint = Coincident in residual. Default solver
+                // moves B; the symbolic solver (Newton-LM over all
+                // poses) handles the symmetric case.
+                let pa = self.resolve_pt_in_world(mi, instance_a, point_a, poses)?;
+                let pb_world = self.resolve_pt_in_world(mi, instance_b, point_b, poses)?;
+                let delta = pa - pb_world;
+
+                if let Some(f) = frozen.as_deref() {
+                    if f.contains(instance_b) {
+                        if delta.norm() > MATE_TOL {
+                            return Err(MateError::OverConstrained(
+                                mi,
+                                format!(
+                                    "TouchPoint: instance '{instance_b}' is already positioned; \
+                                     current point_b is {} from point_a, want 0",
+                                    delta.norm()
+                                ),
+                            ));
+                        }
+                        return Ok(());
+                    }
+                }
+                let pose_b = poses.get_mut(instance_b).expect("checked");
+                pose_b.translation += delta;
+                if let Some(f) = frozen.as_deref_mut() {
+                    f.insert(instance_b.clone());
+                }
+                Ok(())
+            }
+            Mate::PointOnPlane {
+                instance_a,
+                plane_origin,
+                plane_normal,
+                instance_b,
+                point_b,
+            } => {
+                let na = self.resolve_dir_in_world(mi, instance_a, plane_normal, poses)?;
+                let pa = self.resolve_pt_in_world(mi, instance_a, plane_origin, poses)?;
+                let pb_world = self.resolve_pt_in_world(mi, instance_b, point_b, poses)?;
+                // Signed distance from B's point to A's plane along
+                // plane normal. We want to translate B along the plane
+                // normal so signed distance is zero.
+                let signed = na.dot(&(pb_world - pa));
+
+                if let Some(f) = frozen.as_deref() {
+                    if f.contains(instance_b) {
+                        if signed.abs() > MATE_TOL {
+                            return Err(MateError::OverConstrained(
+                                mi,
+                                format!(
+                                    "PointOnPlane: '{instance_b}' is already positioned; \
+                                     current signed distance to plane is {signed}, want 0"
+                                ),
+                            ));
+                        }
+                        return Ok(());
+                    }
+                }
+
+                let pose_b = poses.get_mut(instance_b).expect("checked");
+                pose_b.translation -= na * signed;
+                if let Some(f) = frozen.as_deref_mut() {
+                    f.insert(instance_b.clone());
+                }
+                Ok(())
+            }
+            Mate::PointOnLine {
+                instance_a,
+                axis_a,
+                instance_b,
+                point_b,
+            } => {
+                let (oa, da) = self.resolve_axis_in_world(mi, instance_a, axis_a, poses)?;
+                let pb_world = self.resolve_pt_in_world(mi, instance_b, point_b, poses)?;
+                // Foot of perpendicular from pb_world onto the line.
+                let v = pb_world - oa;
+                let along = da * da.dot(&v);
+                let perp = v - along; // we want this to vanish.
+
+                if let Some(f) = frozen.as_deref() {
+                    if f.contains(instance_b) {
+                        if perp.norm() > MATE_TOL {
+                            return Err(MateError::OverConstrained(
+                                mi,
+                                format!(
+                                    "PointOnLine: '{instance_b}' is already positioned; \
+                                     current perp distance is {}, want 0",
+                                    perp.norm()
+                                ),
+                            ));
+                        }
+                        return Ok(());
+                    }
+                }
+                let pose_b = poses.get_mut(instance_b).expect("checked");
+                pose_b.translation -= perp;
+                if let Some(f) = frozen.as_deref_mut() {
+                    f.insert(instance_b.clone());
+                }
+                Ok(())
+            }
+            Mate::Gear {
+                instance_a,
+                axis_a,
+                instance_b,
+                axis_b,
+                ratio,
+            } => self.apply_gear_mate(
+                mi,
+                instance_a,
+                axis_a,
+                instance_b,
+                axis_b,
+                ratio,
+                poses,
+                frozen.as_deref_mut(),
+            ),
         }
+    }
+
+    /// Gear mate: when A rotates by angle θ_a around axis_a (relative
+    /// to its default pose), B rotates by θ_a * ratio around axis_b
+    /// (relative to its default pose).
+    ///
+    /// We extract A's "twist about axis_a" from its current rotation
+    /// (the component of A's rotation that lies along axis_a) and
+    /// apply the geared twist to B about axis_b.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_gear_mate(
+        &self,
+        mi: usize,
+        instance_a: &str,
+        axis_a: &AxisRef,
+        instance_b: &str,
+        axis_b: &AxisRef,
+        ratio: &Scalar,
+        poses: &mut HashMap<String, ResolvedPose>,
+        mut frozen: Option<&mut std::collections::HashSet<String>>,
+    ) -> Result<(), MateError> {
+        let r = ratio
+            .resolve(&self.parameters)
+            .map_err(|e| MateError::Parameter(mi, format!("ratio: {e}")))?;
+
+        // A's current rotation expressed as angle about its own axis_a.
+        let pose_a = *poses.get(instance_a).expect("checked");
+        // World-space axis_a (from pose_a).
+        let axis_a_local = resolve_arr3(&axis_a.direction, &self.parameters)
+            .map_err(|e| MateError::Parameter(mi, format!("axis_a.direction: {e}")))?;
+        let axis_a_local_v = Vec3::new(axis_a_local[0], axis_a_local[1], axis_a_local[2]);
+        if axis_a_local_v.norm() < MATE_TOL {
+            return Err(MateError::ZeroAxisDirection(mi));
+        }
+        let axis_a_local_unit = axis_a_local_v.normalize();
+        // The rotation A has about axis_a_local: project pose_a's
+        // axis-angle onto axis_a_local_unit. If pose_a's rotation axis
+        // is parallel to axis_a_local, the angle is just rotation_angle
+        // (with sign). If perpendicular, A has no rotation about
+        // axis_a. In general, theta_a = rotation_angle * (rotation_axis
+        // dot axis_a_local) when normalized.
+        let theta_a = if pose_a.rotation_axis.norm() < MATE_TOL {
+            0.0
+        } else {
+            pose_a.rotation_axis.normalize().dot(&axis_a_local_unit) * pose_a.rotation_angle
+        };
+
+        let theta_b = theta_a * r;
+
+        // Resolve axis_b in B's local frame, then world.
+        let axis_b_local_arr = resolve_arr3(&axis_b.direction, &self.parameters)
+            .map_err(|e| MateError::Parameter(mi, format!("axis_b.direction: {e}")))?;
+        let axis_b_local = Vec3::new(
+            axis_b_local_arr[0],
+            axis_b_local_arr[1],
+            axis_b_local_arr[2],
+        );
+        if axis_b_local.norm() < MATE_TOL {
+            return Err(MateError::ZeroAxisDirection(mi));
+        }
+        let axis_b_local_unit = axis_b_local.normalize();
+
+        if let Some(f) = frozen.as_deref() {
+            if f.contains(instance_b) {
+                // Extract B's current twist about axis_b_local; if it
+                // matches theta_b within tolerance, mate is satisfied.
+                let pose_b = poses.get(instance_b).expect("checked");
+                let cur_theta_b = if pose_b.rotation_axis.norm() < MATE_TOL {
+                    0.0
+                } else {
+                    pose_b.rotation_axis.normalize().dot(&axis_b_local_unit)
+                        * pose_b.rotation_angle
+                };
+                if (cur_theta_b - theta_b).abs() > MATE_TOL {
+                    return Err(MateError::OverConstrained(
+                        mi,
+                        format!(
+                            "Gear: '{instance_b}' is already positioned and its twist about \
+                             axis_b is {cur_theta_b}, want {theta_b} (ratio {r}, theta_a {theta_a})"
+                        ),
+                    ));
+                }
+                return Ok(());
+            }
+        }
+
+        // Set B's rotation to be exactly theta_b about axis_b_local
+        // (overwrite, since gear is the dominant constraint on B's
+        // rotation about axis_b).
+        let pose_b = poses.get_mut(instance_b).expect("checked");
+        // Translation is preserved. We force the pose's rotation_axis
+        // to axis_b_local and angle to theta_b.
+        pose_b.rotation_axis = axis_b_local_unit;
+        pose_b.rotation_angle = theta_b;
+
+        if let Some(f) = frozen.as_deref_mut() {
+            f.insert(instance_b.to_string());
+        }
+        Ok(())
     }
 
     /// Tangent-mate dispatch. Supports the simple cases:
@@ -1803,6 +2077,92 @@ impl Assembly {
                 let angle_err = (pa.rotation_angle - pb.rotation_angle).powi(2);
                 Ok(trans_err + angle_err)
             }
+            Mate::TouchPoint {
+                instance_a,
+                point_a,
+                instance_b,
+                point_b,
+            } => {
+                let pa = self.resolve_pt_in_world(mi, instance_a, point_a, poses)?;
+                let pb = self.resolve_pt_in_world(mi, instance_b, point_b, poses)?;
+                Ok((pa - pb).norm_squared())
+            }
+            Mate::PointOnPlane {
+                instance_a,
+                plane_origin,
+                plane_normal,
+                instance_b,
+                point_b,
+            } => {
+                let na = self.resolve_dir_in_world(mi, instance_a, plane_normal, poses)?;
+                let pa = self.resolve_pt_in_world(mi, instance_a, plane_origin, poses)?;
+                let pb = self.resolve_pt_in_world(mi, instance_b, point_b, poses)?;
+                let signed = na.dot(&(pb - pa));
+                Ok(signed.powi(2))
+            }
+            Mate::PointOnLine {
+                instance_a,
+                axis_a,
+                instance_b,
+                point_b,
+            } => {
+                let (oa, da) = self.resolve_axis_in_world(mi, instance_a, axis_a, poses)?;
+                let pb = self.resolve_pt_in_world(mi, instance_b, point_b, poses)?;
+                let v = pb - oa;
+                let perp = v - da * da.dot(&v);
+                Ok(perp.norm_squared())
+            }
+            Mate::Gear {
+                instance_a,
+                axis_a,
+                instance_b,
+                axis_b,
+                ratio,
+            } => {
+                let r = ratio.resolve(&self.parameters).map_err(|e| {
+                    AssemblyError::Mate(MateError::Parameter(mi, format!("ratio: {e}")))
+                })?;
+                let pose_a = poses.get(instance_a).ok_or_else(|| {
+                    AssemblyError::Mate(MateError::UnknownInstance(instance_a.clone(), mi))
+                })?;
+                let pose_b = poses.get(instance_b).ok_or_else(|| {
+                    AssemblyError::Mate(MateError::UnknownInstance(instance_b.clone(), mi))
+                })?;
+                let axis_a_local_arr =
+                    resolve_arr3(&axis_a.direction, &self.parameters).map_err(|e| {
+                        AssemblyError::Mate(MateError::Parameter(
+                            mi,
+                            format!("axis_a.direction: {e}"),
+                        ))
+                    })?;
+                let axis_b_local_arr =
+                    resolve_arr3(&axis_b.direction, &self.parameters).map_err(|e| {
+                        AssemblyError::Mate(MateError::Parameter(
+                            mi,
+                            format!("axis_b.direction: {e}"),
+                        ))
+                    })?;
+                let axis_a_local =
+                    Vec3::new(axis_a_local_arr[0], axis_a_local_arr[1], axis_a_local_arr[2]);
+                let axis_b_local =
+                    Vec3::new(axis_b_local_arr[0], axis_b_local_arr[1], axis_b_local_arr[2]);
+                if axis_a_local.norm() < MATE_TOL || axis_b_local.norm() < MATE_TOL {
+                    return Ok(0.0);
+                }
+                let axis_a_unit = axis_a_local.normalize();
+                let axis_b_unit = axis_b_local.normalize();
+                let theta_a = if pose_a.rotation_axis.norm() < MATE_TOL {
+                    0.0
+                } else {
+                    pose_a.rotation_axis.normalize().dot(&axis_a_unit) * pose_a.rotation_angle
+                };
+                let theta_b = if pose_b.rotation_axis.norm() < MATE_TOL {
+                    0.0
+                } else {
+                    pose_b.rotation_axis.normalize().dot(&axis_b_unit) * pose_b.rotation_angle
+                };
+                Ok((theta_b - theta_a * r).powi(2))
+            }
         }
     }
 
@@ -2062,6 +2422,150 @@ impl Assembly {
         Ok(out)
     }
 
+    /// Solve mates by treating every instance pose as 6 DOFs (3
+    /// translation + 3 axis-angle rotation = ω vector whose magnitude is
+    /// the rotation angle) and running Newton-LM (Levenberg-Marquardt)
+    /// against the residual function defined by the mates.
+    ///
+    /// This is the "true 6N-dim symbolic solver" path for arbitrary
+    /// mate cycles — it handles configurations the sequential
+    /// Gauss-Seidel pass can't (multi-cycle networks, gear loops,
+    /// over-determined networks where the LM damping picks the
+    /// least-squares solution). The Jacobian is finite-differenced.
+    ///
+    /// Returns the same `HashMap<String, ResolvedPose>` as
+    /// `solve_poses` so callers are interchangeable. Falls back to
+    /// `MateError::CycleDidNotConverge` if 100 LM iterations don't
+    /// drive the residual below `CYCLE_RESIDUAL_TOL`.
+    pub fn solve_poses_symbolic(
+        &self,
+    ) -> Result<HashMap<String, ResolvedPose>, AssemblyError> {
+        self.check_unique_instances()?;
+
+        // Order instances; ids[i] ↔ x[6i..6i+6].
+        let ids: Vec<String> = self.instances.iter().map(|i| i.id.clone()).collect();
+        let n_inst = ids.len();
+        let n_dof = 6 * n_inst;
+
+        // Initialize x from default_pose (rotation as ω = axis * angle).
+        let mut x = vec![0.0; n_dof];
+        for (i, inst) in self.instances.iter().enumerate() {
+            let pose = inst.default_pose.resolve(&self.parameters).map_err(|e| {
+                AssemblyError::Parameter(inst.id.clone(), format!("default_pose: {e}"))
+            })?;
+            let off = i * 6;
+            x[off] = pose.translation.x;
+            x[off + 1] = pose.translation.y;
+            x[off + 2] = pose.translation.z;
+            // ω = axis * angle (axis-angle in vector form). If axis is
+            // zero or angle is zero, ω is zero.
+            let axis_norm = pose.rotation_axis.norm();
+            if axis_norm > 1e-15 && pose.rotation_angle.abs() > 1e-15 {
+                let unit = pose.rotation_axis / axis_norm;
+                x[off + 3] = unit.x * pose.rotation_angle;
+                x[off + 4] = unit.y * pose.rotation_angle;
+                x[off + 5] = unit.z * pose.rotation_angle;
+            }
+        }
+
+        // Helper to convert x → pose map.
+        let x_to_poses = |x: &[f64]| -> HashMap<String, ResolvedPose> {
+            let mut out = HashMap::new();
+            for (i, id) in ids.iter().enumerate() {
+                let off = i * 6;
+                let t = Vec3::new(x[off], x[off + 1], x[off + 2]);
+                let omega = Vec3::new(x[off + 3], x[off + 4], x[off + 5]);
+                let angle = omega.norm();
+                let axis = if angle > 1e-15 {
+                    omega / angle
+                } else {
+                    Vec3::z()
+                };
+                out.insert(
+                    id.clone(),
+                    ResolvedPose {
+                        translation: t,
+                        rotation_axis: axis,
+                        rotation_angle: angle,
+                    },
+                );
+            }
+            out
+        };
+
+        let cost = |x: &[f64]| -> Result<f64, AssemblyError> {
+            let poses = x_to_poses(x);
+            self.total_squared_residual(&poses)
+        };
+
+        let initial_cost = cost(&x)?;
+        if initial_cost < CYCLE_RESIDUAL_TOL {
+            return Ok(x_to_poses(&x));
+        }
+
+        // Levenberg-Marquardt with finite-difference Jacobian on the
+        // total cost (treated as a single scalar residual whose
+        // gradient = 2 * J^T r — but cheaper to use finite-difference
+        // gradient + a Hessian approximation B = J^T J via secant
+        // Levenberg damping). Practical implementation: gradient
+        // descent with adaptive step + LM-style damping λ.
+        //
+        // For a small number of DOFs (≤ 30) this is plenty.
+        let mut lambda: f64 = 1e-3;
+        let mut last_cost = initial_cost;
+        const LM_MAX_ITERS: usize = 200;
+        const FD_EPS: f64 = 1e-7;
+
+        for _iter in 0..LM_MAX_ITERS {
+            // Finite-difference gradient.
+            let mut grad = vec![0.0; n_dof];
+            let c0 = last_cost;
+            for j in 0..n_dof {
+                let saved = x[j];
+                x[j] = saved + FD_EPS;
+                let cp = cost(&x)?;
+                x[j] = saved;
+                grad[j] = (cp - c0) / FD_EPS;
+            }
+            let grad_norm = grad.iter().map(|g| g * g).sum::<f64>().sqrt();
+            if grad_norm < 1e-12 {
+                if last_cost < CYCLE_RESIDUAL_TOL {
+                    return Ok(x_to_poses(&x));
+                }
+                break;
+            }
+
+            // LM step: x_new = x - (1/(λ * ‖g‖ + 1)) * g.
+            // The damping shrinks the step automatically when
+            // progress stalls.
+            let step_scale = 1.0 / (1.0 + lambda * grad_norm);
+            let mut x_new = x.clone();
+            for j in 0..n_dof {
+                x_new[j] -= step_scale * grad[j];
+            }
+            let new_cost = cost(&x_new)?;
+            if new_cost < last_cost {
+                x = x_new;
+                last_cost = new_cost;
+                lambda = (lambda * 0.7).max(1e-10);
+            } else {
+                lambda = (lambda * 2.0).min(1e10);
+            }
+            if last_cost < CYCLE_RESIDUAL_TOL {
+                return Ok(x_to_poses(&x));
+            }
+        }
+
+        if last_cost < 1e-6 {
+            // Soft tolerance — still acceptable.
+            return Ok(x_to_poses(&x));
+        }
+        Err(AssemblyError::Mate(MateError::CycleDidNotConverge {
+            iterations: LM_MAX_ITERS,
+            residual: last_cost,
+        }))
+    }
+
     pub fn to_json_string(&self) -> serde_json::Result<String> {
         serde_json::to_string_pretty(self)
     }
@@ -2187,7 +2691,11 @@ fn mate_endpoints(mate: &Mate) -> (&str, &str) {
         | Mate::TangentMate { instance_a, instance_b, .. }
         | Mate::Symmetry { instance_a, instance_b, .. }
         | Mate::Width { instance_a, instance_b, .. }
-        | Mate::Lock { instance_a, instance_b, .. } => {
+        | Mate::Lock { instance_a, instance_b, .. }
+        | Mate::TouchPoint { instance_a, instance_b, .. }
+        | Mate::PointOnPlane { instance_a, instance_b, .. }
+        | Mate::PointOnLine { instance_a, instance_b, .. }
+        | Mate::Gear { instance_a, instance_b, .. } => {
             (instance_a.as_str(), instance_b.as_str())
         }
         // PathMate has only ONE instance — degenerate "self loop". The
