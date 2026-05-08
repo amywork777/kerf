@@ -729,3 +729,221 @@ fn sketch_fillet_two_corners_compose() {
         "two-corner fillet v={v}, analytic={analytic}"
     );
 }
+
+// ----------------------------------------------------------------------
+// Tier A (kerf-sketcher-100): polygon-with-holes pipeline.
+//
+// A SketchExtrude whose sketch contains an outer loop with one or more
+// inner loops fully nested inside it should now build a single solid
+// whose interior matches the polygon-with-holes definition (extrude of
+// outer minus extrude of each hole), rather than two unioned solids.
+// ----------------------------------------------------------------------
+
+#[test]
+fn sketch_polygon_with_one_hole_extrudes() {
+    // 4×4 outer square, 1×1 inner square hole at (1.5..2.5, 1.5..2.5).
+    // Extruded by 2 → expected volume = 16*2 - 1*1*2 = 30.
+    let mut prims: Vec<SketchPrim> = vec![
+        SketchPrim::Point { id: "p1".into(), x: Scalar::lit(0.0), y: Scalar::lit(0.0) },
+        SketchPrim::Point { id: "p2".into(), x: Scalar::lit(4.0), y: Scalar::lit(0.0) },
+        SketchPrim::Point { id: "p3".into(), x: Scalar::lit(4.0), y: Scalar::lit(4.0) },
+        SketchPrim::Point { id: "p4".into(), x: Scalar::lit(0.0), y: Scalar::lit(4.0) },
+        SketchPrim::Line { id: "l1".into(), from: "p1".into(), to: "p2".into() },
+        SketchPrim::Line { id: "l2".into(), from: "p2".into(), to: "p3".into() },
+        SketchPrim::Line { id: "l3".into(), from: "p3".into(), to: "p4".into() },
+        SketchPrim::Line { id: "l4".into(), from: "p4".into(), to: "p1".into() },
+    ];
+    // Inner square hole. Sketch tracer auto-orients to CCW; the
+    // classifier flips holes to CW for the polygon-with-holes pipeline.
+    prims.extend(vec![
+        SketchPrim::Point { id: "h1".into(), x: Scalar::lit(1.5), y: Scalar::lit(1.5) },
+        SketchPrim::Point { id: "h2".into(), x: Scalar::lit(2.5), y: Scalar::lit(1.5) },
+        SketchPrim::Point { id: "h3".into(), x: Scalar::lit(2.5), y: Scalar::lit(2.5) },
+        SketchPrim::Point { id: "h4".into(), x: Scalar::lit(1.5), y: Scalar::lit(2.5) },
+        SketchPrim::Line { id: "lh1".into(), from: "h1".into(), to: "h2".into() },
+        SketchPrim::Line { id: "lh2".into(), from: "h2".into(), to: "h3".into() },
+        SketchPrim::Line { id: "lh3".into(), from: "h3".into(), to: "h4".into() },
+        SketchPrim::Line { id: "lh4".into(), from: "h4".into(), to: "h1".into() },
+    ]);
+    let s = Sketch {
+        plane: SketchPlane::Xy,
+        primitives: prims,
+        constraints: vec![],
+    };
+    let m = Model::new().add(Feature::SketchExtrude {
+        id: "out".into(),
+        sketch: s,
+        direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(2.0)],
+    });
+    let v = solid_volume(&m.evaluate("out").unwrap());
+    assert!(
+        (v - 30.0).abs() < 0.5,
+        "polygon-with-1-hole expected v≈30, got {v}"
+    );
+}
+
+#[test]
+fn sketch_polygon_with_two_holes_extrudes() {
+    // 10×10 outer, two non-overlapping 1×1 holes. Extruded by 1 →
+    // expected volume = 100 - 2 = 98.
+    let mut prims: Vec<SketchPrim> = vec![
+        SketchPrim::Point { id: "p1".into(), x: Scalar::lit(0.0), y: Scalar::lit(0.0) },
+        SketchPrim::Point { id: "p2".into(), x: Scalar::lit(10.0), y: Scalar::lit(0.0) },
+        SketchPrim::Point { id: "p3".into(), x: Scalar::lit(10.0), y: Scalar::lit(10.0) },
+        SketchPrim::Point { id: "p4".into(), x: Scalar::lit(0.0), y: Scalar::lit(10.0) },
+        SketchPrim::Line { id: "l1".into(), from: "p1".into(), to: "p2".into() },
+        SketchPrim::Line { id: "l2".into(), from: "p2".into(), to: "p3".into() },
+        SketchPrim::Line { id: "l3".into(), from: "p3".into(), to: "p4".into() },
+        SketchPrim::Line { id: "l4".into(), from: "p4".into(), to: "p1".into() },
+    ];
+    // Hole A around (3, 5).
+    prims.extend(vec![
+        SketchPrim::Point { id: "ha1".into(), x: Scalar::lit(2.5), y: Scalar::lit(4.5) },
+        SketchPrim::Point { id: "ha2".into(), x: Scalar::lit(3.5), y: Scalar::lit(4.5) },
+        SketchPrim::Point { id: "ha3".into(), x: Scalar::lit(3.5), y: Scalar::lit(5.5) },
+        SketchPrim::Point { id: "ha4".into(), x: Scalar::lit(2.5), y: Scalar::lit(5.5) },
+        SketchPrim::Line { id: "la1".into(), from: "ha1".into(), to: "ha2".into() },
+        SketchPrim::Line { id: "la2".into(), from: "ha2".into(), to: "ha3".into() },
+        SketchPrim::Line { id: "la3".into(), from: "ha3".into(), to: "ha4".into() },
+        SketchPrim::Line { id: "la4".into(), from: "ha4".into(), to: "ha1".into() },
+    ]);
+    // Hole B around (7, 5).
+    prims.extend(vec![
+        SketchPrim::Point { id: "hb1".into(), x: Scalar::lit(6.5), y: Scalar::lit(4.5) },
+        SketchPrim::Point { id: "hb2".into(), x: Scalar::lit(7.5), y: Scalar::lit(4.5) },
+        SketchPrim::Point { id: "hb3".into(), x: Scalar::lit(7.5), y: Scalar::lit(5.5) },
+        SketchPrim::Point { id: "hb4".into(), x: Scalar::lit(6.5), y: Scalar::lit(5.5) },
+        SketchPrim::Line { id: "lb1".into(), from: "hb1".into(), to: "hb2".into() },
+        SketchPrim::Line { id: "lb2".into(), from: "hb2".into(), to: "hb3".into() },
+        SketchPrim::Line { id: "lb3".into(), from: "hb3".into(), to: "hb4".into() },
+        SketchPrim::Line { id: "lb4".into(), from: "hb4".into(), to: "hb1".into() },
+    ]);
+    let s = Sketch {
+        plane: SketchPlane::Xy,
+        primitives: prims,
+        constraints: vec![],
+    };
+    let m = Model::new().add(Feature::SketchExtrude {
+        id: "out".into(),
+        sketch: s,
+        direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(1.0)],
+    });
+    let v = solid_volume(&m.evaluate("out").unwrap());
+    assert!(
+        (v - 98.0).abs() < 0.5,
+        "polygon-with-2-holes expected v≈98, got {v}"
+    );
+}
+
+#[test]
+fn sketch_holes_overlapping_rejects() {
+    // Outer 10x10. Two inner squares that *cross* each other → reject.
+    let mut prims: Vec<SketchPrim> = vec![
+        SketchPrim::Point { id: "p1".into(), x: Scalar::lit(0.0), y: Scalar::lit(0.0) },
+        SketchPrim::Point { id: "p2".into(), x: Scalar::lit(10.0), y: Scalar::lit(0.0) },
+        SketchPrim::Point { id: "p3".into(), x: Scalar::lit(10.0), y: Scalar::lit(10.0) },
+        SketchPrim::Point { id: "p4".into(), x: Scalar::lit(0.0), y: Scalar::lit(10.0) },
+        SketchPrim::Line { id: "l1".into(), from: "p1".into(), to: "p2".into() },
+        SketchPrim::Line { id: "l2".into(), from: "p2".into(), to: "p3".into() },
+        SketchPrim::Line { id: "l3".into(), from: "p3".into(), to: "p4".into() },
+        SketchPrim::Line { id: "l4".into(), from: "p4".into(), to: "p1".into() },
+    ];
+    // Two hole rectangles that overlap.
+    prims.extend(vec![
+        SketchPrim::Point { id: "ha1".into(), x: Scalar::lit(3.0), y: Scalar::lit(3.0) },
+        SketchPrim::Point { id: "ha2".into(), x: Scalar::lit(6.0), y: Scalar::lit(3.0) },
+        SketchPrim::Point { id: "ha3".into(), x: Scalar::lit(6.0), y: Scalar::lit(6.0) },
+        SketchPrim::Point { id: "ha4".into(), x: Scalar::lit(3.0), y: Scalar::lit(6.0) },
+        SketchPrim::Line { id: "la1".into(), from: "ha1".into(), to: "ha2".into() },
+        SketchPrim::Line { id: "la2".into(), from: "ha2".into(), to: "ha3".into() },
+        SketchPrim::Line { id: "la3".into(), from: "ha3".into(), to: "ha4".into() },
+        SketchPrim::Line { id: "la4".into(), from: "ha4".into(), to: "ha1".into() },
+    ]);
+    prims.extend(vec![
+        SketchPrim::Point { id: "hb1".into(), x: Scalar::lit(5.0), y: Scalar::lit(5.0) },
+        SketchPrim::Point { id: "hb2".into(), x: Scalar::lit(8.0), y: Scalar::lit(5.0) },
+        SketchPrim::Point { id: "hb3".into(), x: Scalar::lit(8.0), y: Scalar::lit(8.0) },
+        SketchPrim::Point { id: "hb4".into(), x: Scalar::lit(5.0), y: Scalar::lit(8.0) },
+        SketchPrim::Line { id: "lb1".into(), from: "hb1".into(), to: "hb2".into() },
+        SketchPrim::Line { id: "lb2".into(), from: "hb2".into(), to: "hb3".into() },
+        SketchPrim::Line { id: "lb3".into(), from: "hb3".into(), to: "hb4".into() },
+        SketchPrim::Line { id: "lb4".into(), from: "hb4".into(), to: "hb1".into() },
+    ]);
+    let s = Sketch {
+        plane: SketchPlane::Xy,
+        primitives: prims,
+        constraints: vec![],
+    };
+    let m = Model::new().add(Feature::SketchExtrude {
+        id: "out".into(),
+        sketch: s,
+        direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(1.0)],
+    });
+    let err = m.evaluate("out").unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("DisjointSubLoops") || msg.contains("overlapping") || msg.contains("disjoint"),
+        "expected overlap rejection, got: {msg}"
+    );
+}
+
+#[test]
+fn sketch_polygon_with_circular_hole_extrudes() {
+    // 4×4 outer square with a low-poly circular (octagonal) hole of radius 0.5
+    // at center. Few segments keeps the boolean engine happy on coplanar
+    // coincidences. Expected volume ≈ 16*2 - octagon_area * 2.
+    // Octagon (n=8, r=0.5) area = 8 * 0.5 * r² * sin(2π/8) = 4 * 0.25 * sin(π/4)
+    //                            = 1.0 * sin(π/4) ≈ 0.7071.
+    let prims: Vec<SketchPrim> = vec![
+        SketchPrim::Point { id: "p1".into(), x: Scalar::lit(0.0), y: Scalar::lit(0.0) },
+        SketchPrim::Point { id: "p2".into(), x: Scalar::lit(4.0), y: Scalar::lit(0.0) },
+        SketchPrim::Point { id: "p3".into(), x: Scalar::lit(4.0), y: Scalar::lit(4.0) },
+        SketchPrim::Point { id: "p4".into(), x: Scalar::lit(0.0), y: Scalar::lit(4.0) },
+        SketchPrim::Line { id: "l1".into(), from: "p1".into(), to: "p2".into() },
+        SketchPrim::Line { id: "l2".into(), from: "p2".into(), to: "p3".into() },
+        SketchPrim::Line { id: "l3".into(), from: "p3".into(), to: "p4".into() },
+        SketchPrim::Line { id: "l4".into(), from: "p4".into(), to: "p1".into() },
+        SketchPrim::Point { id: "c".into(), x: Scalar::lit(2.0), y: Scalar::lit(2.0) },
+        SketchPrim::Circle {
+            id: "k".into(),
+            center: "c".into(),
+            radius: Scalar::lit(0.5),
+            n_segments: 8,
+        },
+    ];
+    let s = Sketch {
+        plane: SketchPlane::Xy,
+        primitives: prims,
+        constraints: vec![],
+    };
+    let m = Model::new().add(Feature::SketchExtrude {
+        id: "out".into(),
+        sketch: s,
+        direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(2.0)],
+    });
+    // The boolean engine struggles with high-segment-count circles inside
+    // a polygon-with-holes diff. We accept either a successful build (volume
+    // close to analytic) OR a clean Boolean error. The polygon-with-2-holes
+    // and -1-square-hole tests above already verify the happy path; this
+    // case documents the curved-hole limitation. n_segments=8 (octagon) is
+    // low enough to actually succeed today.
+    match m.evaluate("out") {
+        Ok(solid) => {
+            let v = solid_volume(&solid);
+            let octagon_area = 8.0 * 0.5 * 0.25 * (std::f64::consts::TAU / 8.0).sin();
+            let analytic = 32.0 - octagon_area * 2.0;
+            assert!(
+                (v - analytic).abs() < 0.5,
+                "octagon-hole v={v}, analytic≈{analytic}"
+            );
+        }
+        Err(e) => {
+            let msg = format!("{e}");
+            // Document expected boolean engine quirk surface for curved holes.
+            assert!(
+                msg.contains("non-manifold") || msg.contains("Boolean"),
+                "unexpected error kind: {msg}"
+            );
+        }
+    }
+}

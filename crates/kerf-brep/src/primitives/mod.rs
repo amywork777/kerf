@@ -20,7 +20,9 @@ pub use cone::cone;
 pub use cone_faceted::cone_faceted;
 pub use cylinder::cylinder;
 pub use cylinder_faceted::cylinder_faceted;
-pub use extrude::{extrude_lofted, extrude_polygon};
+pub use extrude::{
+    extrude_lofted, extrude_polygon, extrude_polygon_with_holes, PolygonWithHolesError,
+};
 pub use frustum::frustum;
 pub use frustum_faceted::frustum_faceted;
 pub use revolve::revolve_polyline;

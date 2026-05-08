@@ -57,12 +57,70 @@ kernel + authoring + viewer + production output).
 | Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
-| 2D sketcher UI                            | 8%        | 88%      | 7.04   |
+| 2D sketcher UI                            | 8%        | 96%      | 7.68   |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~72.0%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~72.7%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08, part 3)
+## Latest session (2026-05-08, part 4)
+
+**Sketcher 88% → 96%: polygon-with-holes pipeline + click-driven
+trim/extend/fillet UX.** Sketcher scorecard line 88% → 96%
+(+0.64 SW pts). 751 tests → 761 tests rust-side (+10 new), 0 failed, 9
+ignored unchanged. Viewer 8 tests → 14 tests (+6 new pure-helper tests
+for the multi-click flow).
+
+- **Polygon-with-holes pipeline (Tier A).** Sketches with an outer loop
+  that fully encloses one or more inner loops now build a single
+  topologically-intentional solid via the new `extrude_polygon_with_holes`
+  in `kerf-brep`, not two unioned solids. Pipeline:
+  - `Sketch::loops_classified(params) -> Vec<OuterAndHoles>` does
+    point-in-polygon nesting on the loop graph: outers (depth 0,
+    CCW-oriented) and holes (depth 1, CW-oriented). Crossing loops
+    reject with `SketchError::DisjointSubLoops`; depth ≥ 2 (nested
+    nested) likewise rejects.
+  - `extrude_polygon_with_holes(outer, holes, direction) ->
+    Result<Solid, PolygonWithHolesError>` extrudes the outer prism, then
+    pads and subtracts each hole prism via the boolean engine. The
+    pad (1% of |direction|, ≥ 1e-3) shifts the hole's caps past the
+    outer's caps to avoid coplanar slivers in the difference.
+  - `build_sketch_extrude` now routes through `loops_classified`,
+    builds each polygon-with-holes group as one solid, then unions
+    multiple disjoint groups for the multi-bodied case.
+
+- **Multi-click canvas UX (Tier B).** The viewer's Trim / Extend /
+  Fillet buttons no longer go through `window.prompt`-for-ids. Instead
+  they activate first-class tools with hover-highlight + click-capture:
+  - **Trim**: click 1 selects a Line (red highlight); click 2 picks a
+    point on the line — the click is projected onto the line, a Point
+    is placed at the projection (or an existing nearby Point is reused),
+    and a `TrimLine` primitive is appended.
+  - **Extend**: click 1 selects a Line; click 2 picks any target Point
+    (existing or new) and emits an `ExtendLine`.
+  - **Fillet**: click selects a corner Point (with a green preview
+    circle hovering on candidates), one numeric prompt for the radius,
+    and a `FilletCorner` is emitted.
+  - Visual feedback: selected lines render in a distinct color
+    (#f97583), Trim shows the projected snap circle on the line,
+    Extend shows a dashed segment from the closer endpoint to the
+    cursor, Fillet shows a preview radius circle at the hovered Point.
+  - Keyboard shortcuts: T (Trim), E (Extend), F (Fillet). Esc cancels
+    in-progress flows.
+  - The click-flow logic is factored into three pure exported helpers
+    `applyTrimClick` / `applyExtendClick` / `applyFilletClick` so the
+    viewer test suite can exercise them without a DOM.
+
+What's still deferred from the sketcher line (the remaining 4%): a
+constraint solver that actually enforces stored `SketchConstraint`s
+(distinct line in the scorecard at 30%), and a true B-rep
+polygon-with-holes face topology (today the polygon-with-holes pipeline
+is implemented as outer-extrude-minus-each-hole-extrude through the
+boolean engine, which gives the correct interior but does not
+construct a single hole-bearing face directly in the sketcher's
+extrude pass — the boolean engine produces the correct topology after
+the fact).
+
+## Earlier session (2026-05-08, part 3)
 
 **2D sketcher polish: multi-loop, named ref-planes, trim/extend/fillet.**
 Sketcher scorecard line 65% → 88% (+1.84 SW pts). 739 tests → 751 tests

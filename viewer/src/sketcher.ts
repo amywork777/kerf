@@ -62,7 +62,17 @@ export type Sketch = {
   constraints: SketchConstraint[];
 };
 
-export type Tool = "point" | "line" | "circle" | "arc" | "pan" | "select" | "delete";
+export type Tool =
+  | "point"
+  | "line"
+  | "circle"
+  | "arc"
+  | "pan"
+  | "select"
+  | "delete"
+  | "trim"
+  | "extend"
+  | "fillet";
 
 type View = {
   // World origin in canvas pixels (after pan/zoom).
@@ -106,9 +116,9 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
       <button data-tool="delete" title="Delete (D)">✕</button>
     </div>
     <div class="sk-toolbar sk-edit-toolbar">
-      <button class="sk-trim" title="Trim a Line at a Point (prompts for ids)">Trim</button>
-      <button class="sk-extend" title="Extend a Line to a Point (prompts for ids)">Extend</button>
-      <button class="sk-fillet" title="Fillet a corner Point with a tangent arc (prompts for id and radius)">Fillet</button>
+      <button data-tool="trim" title="Trim: click a Line, then click the trim point on it">Trim</button>
+      <button data-tool="extend" title="Extend: click a Line, then click the target point">Extend</button>
+      <button data-tool="fillet" title="Fillet: click a corner Point, then enter a radius">Fillet</button>
     </div>
     <canvas class="sk-canvas" width="400" height="400"></canvas>
     <div class="sk-row">
@@ -137,7 +147,7 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
   const snapInput = host.querySelector(".sk-snap") as HTMLInputElement;
   const zoomLbl = host.querySelector(".sk-zoom") as HTMLSpanElement;
   const toolbarBtns = Array.from(
-    host.querySelectorAll<HTMLButtonElement>(".sk-toolbar button"),
+    host.querySelectorAll<HTMLButtonElement>(".sk-toolbar button[data-tool]"),
   );
 
   // ---- state ----
@@ -150,6 +160,12 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
   let circleCenterId: string | null = null;
   let arcCenterId: string | null = null;
   let arcStartAngle: number | null = null;
+  // Trim / Extend tools: first click selects a Line; second click picks
+  // the trim-at / extend-to point. We snap the second click to either an
+  // existing Point (preferred) or place a new Point at the click location
+  // (which lands on the line since the user is asked to click on it).
+  let trimSelectedLineId: string | null = null;
+  let extendSelectedLineId: string | null = null;
 
   // Selection / drag state.
   let selectedId: string | null = null;
@@ -158,6 +174,10 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
 
   // Hover (for visual feedback + endpoint snapping).
   let hoverPointId: string | null = null;
+  // For Trim / Extend / Fillet, we hover-highlight the prim under the
+  // cursor. Tracked separately so primitive picking shows feedback even
+  // when no Point is nearby (e.g. hovering over a line's interior).
+  let hoverPrimId: string | null = null;
   let mouseWorld: Pt | null = null;
 
   // View transform.
@@ -200,6 +220,43 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
       }
     }
     return best;
+  }
+
+  // Pick the nearest Line primitive only. Used by Trim / Extend tools.
+  function pickNearestLineId(p: Pt, pixelRadius = 10): string | null {
+    const r = pixelRadius / view.scale;
+    let best: string | null = null;
+    let bestD = Infinity;
+    for (const prim of primitives.values()) {
+      if (prim.kind !== "Line") continue;
+      const a = primitives.get(prim.from);
+      const b = primitives.get(prim.to);
+      if (!a || a.kind !== "Point" || !b || b.kind !== "Point") continue;
+      const d = pointSegmentDistance(p, a, b);
+      if (d < r && d < bestD) {
+        bestD = d;
+        best = prim.id;
+      }
+    }
+    return best;
+  }
+
+  // Project a world point onto a Line primitive (clamped to segment).
+  // Returns null if the line is degenerate or the line/endpoints don't
+  // exist.
+  function projectPointOntoLine(p: Pt, lineId: string): Pt | null {
+    const prim = primitives.get(lineId);
+    if (!prim || prim.kind !== "Line") return null;
+    const a = primitives.get(prim.from);
+    const b = primitives.get(prim.to);
+    if (!a || a.kind !== "Point" || !b || b.kind !== "Point") return null;
+    const ax = b.x - a.x;
+    const ay = b.y - a.y;
+    const len2 = ax * ax + ay * ay;
+    if (len2 < 1e-12) return null;
+    let t = ((p.x - a.x) * ax + (p.y - a.y) * ay) / len2;
+    t = Math.max(0, Math.min(1, t));
+    return { x: a.x + t * ax, y: a.y + t * ay };
   }
 
   function pickNearestPrimId(p: Pt, pixelRadius = 10): string | null {
@@ -314,6 +371,8 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
     circleCenterId = null;
     arcCenterId = null;
     arcStartAngle = null;
+    trimSelectedLineId = null;
+    extendSelectedLineId = null;
     for (const btn of toolbarBtns) {
       btn.classList.toggle("active", btn.dataset.tool === t);
     }
@@ -330,6 +389,9 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
       case "pan": return "Pan: drag to move; wheel to zoom";
       case "select": return "Select: click a primitive; drag a Point to move";
       case "delete": return "Delete: click a primitive to remove";
+      case "trim": return "Trim: click a Line, then click a Point on it (creates trim);";
+      case "extend": return "Extend: click a Line, then click the target Point";
+      case "fillet": return "Fillet: click a corner Point (shared by two Lines), enter a radius";
     }
   }
 
@@ -439,6 +501,91 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
         }
         break;
       }
+      case "trim": {
+        // 1st click: pick a Line. 2nd click: emit a TrimLine via the
+        // testable applyTrimClick helper.
+        if (trimSelectedLineId == null) {
+          const id = pickNearestLineId(world, 12);
+          if (id) {
+            trimSelectedLineId = id;
+            setStatus(`Trim: click a Point on ${id} to trim at`);
+          } else {
+            setStatus("Trim: click a Line first");
+          }
+        } else {
+          const lineId = trimSelectedLineId;
+          const existing = pickNearestPointId(world, 10);
+          // Pre-project for snap (purely cosmetic — applyTrimClick does
+          // the canonical projection/clamp itself when no existing point
+          // is given).
+          const proj = projectPointOntoLine(world, lineId) ?? world;
+          const clickPt = snapInput.checked && !existing ? snapWorld(proj) : proj;
+          const result = applyTrimClick(toSketch(), lineId, clickPt, {
+            existingPointId: existing,
+            nextPointId: () => freshId("p"),
+            nextTrimId: () => freshId("tr"),
+          });
+          if (result) {
+            for (const p of result.primitives) addPrim(p);
+            setStatus(`trimmed ${lineId}`);
+          } else {
+            setStatus("Trim failed: line not found", true);
+          }
+          trimSelectedLineId = null;
+        }
+        break;
+      }
+      case "extend": {
+        if (extendSelectedLineId == null) {
+          const id = pickNearestLineId(world, 12);
+          if (id) {
+            extendSelectedLineId = id;
+            setStatus(`Extend: click target Point for ${id}`);
+          } else {
+            setStatus("Extend: click a Line first");
+          }
+        } else {
+          const lineId = extendSelectedLineId;
+          const existing = pickNearestPointId(world, 10);
+          const clickPt = snapInput.checked && !existing ? snapWorld(world) : world;
+          const result = applyExtendClick(toSketch(), lineId, clickPt, {
+            existingPointId: existing,
+            nextPointId: () => freshId("p"),
+            nextExtendId: () => freshId("ex"),
+          });
+          if (result) {
+            for (const p of result.primitives) addPrim(p);
+            setStatus(`extended ${lineId}`);
+          } else {
+            setStatus("Extend failed: line not found", true);
+          }
+          extendSelectedLineId = null;
+        }
+        break;
+      }
+      case "fillet": {
+        const cornerId = pickNearestPointId(world, 12);
+        if (!cornerId) {
+          setStatus("Fillet: click a corner Point (must be shared by two Lines)");
+          break;
+        }
+        const rStr = window.prompt(`Fillet radius for corner ${cornerId}?`, "0.5");
+        if (!rStr) {
+          setStatus("Fillet: cancelled");
+          break;
+        }
+        const r = Number.parseFloat(rStr);
+        const result = applyFilletClick(toSketch(), cornerId, r, {
+          nextFilletId: () => freshId("f"),
+        });
+        if (result) {
+          for (const p of result.primitives) addPrim(p);
+          setStatus(`filleted @${cornerId} r=${r}`);
+        } else {
+          setStatus("Fillet: invalid radius (must be > 0)", true);
+        }
+        break;
+      }
       case "pan":
         // Handled in mousedown (drag).
         break;
@@ -499,6 +646,14 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
     const hovered = pickNearestPointId(mouseWorld, 10);
     if (hovered !== hoverPointId) {
       hoverPointId = hovered;
+    }
+    // For trim / extend, hover on Lines too. For fillet, hover on Points.
+    if (currentTool === "trim" || currentTool === "extend") {
+      hoverPrimId = pickNearestLineId(mouseWorld, 12);
+    } else if (currentTool === "fillet") {
+      hoverPrimId = hovered;
+    } else {
+      hoverPrimId = null;
     }
     redraw();
   });
@@ -606,8 +761,24 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
       if (!a || a.kind !== "Point" || !b || b.kind !== "Point") continue;
       const [ax, ay] = worldToCanvas(a.x, a.y);
       const [bx, by] = worldToCanvas(b.x, b.y);
-      ctx.strokeStyle = prim.id === selectedId ? "#ffb84d" : "#6ea8ff";
-      ctx.lineWidth = prim.id === selectedId ? 2 : 1.5;
+      const isSelected = prim.id === selectedId;
+      const isTrimSel = prim.id === trimSelectedLineId;
+      const isExtendSel = prim.id === extendSelectedLineId;
+      const isHover = prim.id === hoverPrimId &&
+        (currentTool === "trim" || currentTool === "extend");
+      if (isTrimSel || isExtendSel) {
+        ctx.strokeStyle = "#f97583"; // editor-selected line: red-orange
+        ctx.lineWidth = 3;
+      } else if (isHover) {
+        ctx.strokeStyle = "#a8c7ff";
+        ctx.lineWidth = 2;
+      } else if (isSelected) {
+        ctx.strokeStyle = "#ffb84d";
+        ctx.lineWidth = 2;
+      } else {
+        ctx.strokeStyle = "#6ea8ff";
+        ctx.lineWidth = 1.5;
+      }
       ctx.beginPath();
       ctx.moveTo(ax, ay);
       ctx.lineTo(bx, by);
@@ -726,6 +897,55 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
         ctx.arc(ccx, ccy, r * view.scale, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    } else if (currentTool === "trim" && trimSelectedLineId) {
+      // Show the projection of the cursor onto the selected line as a
+      // small preview marker — that's where the trim point will land.
+      const proj = projectPointOntoLine(mouseWorld, trimSelectedLineId);
+      if (proj) {
+        const [px, py] = worldToCanvas(proj.x, proj.y);
+        ctx.strokeStyle = "#f97583";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(px, py, 6, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+    } else if (currentTool === "extend" && extendSelectedLineId) {
+      // Dashed segment from the closer endpoint to the cursor.
+      const prim = primitives.get(extendSelectedLineId);
+      if (prim && prim.kind === "Line") {
+        const a = primitives.get(prim.from);
+        const b = primitives.get(prim.to);
+        if (a?.kind === "Point" && b?.kind === "Point") {
+          const da = Math.hypot(a.x - snapped.x, a.y - snapped.y);
+          const db = Math.hypot(b.x - snapped.x, b.y - snapped.y);
+          const closer = da < db ? a : b;
+          const [sx, sy] = worldToCanvas(closer.x, closer.y);
+          ctx.strokeStyle = "rgba(249, 117, 131, 0.6)";
+          ctx.setLineDash([4, 4]);
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(cx, cy);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+    } else if (currentTool === "fillet" && hoverPointId) {
+      // Show a small radius preview circle on the hovered corner Point so
+      // the user sees what kind of fillet they'll get. This is just a
+      // visual hint — the actual radius is asked for in a prompt.
+      const cp = primitives.get(hoverPointId);
+      if (cp && cp.kind === "Point") {
+        const [ccx, ccy] = worldToCanvas(cp.x, cp.y);
+        const previewR = 0.5 * view.scale; // fixed visual hint
+        ctx.strokeStyle = "rgba(127, 231, 135, 0.55)";
+        ctx.setLineDash([3, 3]);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(ccx, ccy, previewR, 0, 2 * Math.PI);
         ctx.stroke();
         ctx.setLineDash([]);
       }
@@ -863,39 +1083,11 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
   });
   (host.querySelector(".sk-clear") as HTMLButtonElement).addEventListener("click", () => clearSketch());
 
-  // 2D editing operations: Trim / Extend / Fillet. The current canvas
-  // doesn't have dedicated multi-click tools for these — instead we
-  // prompt the user for the relevant primitive ids. The operations are
-  // applied by the rust sketcher at extrude time.
-  (host.querySelector(".sk-trim") as HTMLButtonElement).addEventListener("click", () => {
-    const lineId = window.prompt("Trim: Line id?");
-    if (!lineId) return;
-    const atPoint = window.prompt("Trim: at_point id (Point already in the sketch)?");
-    if (!atPoint) return;
-    addPrim({ kind: "TrimLine", id: freshId("tr"), line: lineId, at_point: atPoint });
-    setStatus(`trim ${lineId} @ ${atPoint}`);
-  });
-  (host.querySelector(".sk-extend") as HTMLButtonElement).addEventListener("click", () => {
-    const lineId = window.prompt("Extend: Line id?");
-    if (!lineId) return;
-    const toPoint = window.prompt("Extend: to_point id?");
-    if (!toPoint) return;
-    addPrim({ kind: "ExtendLine", id: freshId("ex"), line: lineId, to_point: toPoint });
-    setStatus(`extend ${lineId} → ${toPoint}`);
-  });
-  (host.querySelector(".sk-fillet") as HTMLButtonElement).addEventListener("click", () => {
-    const cornerPoint = window.prompt("Fillet: corner Point id?");
-    if (!cornerPoint) return;
-    const rStr = window.prompt("Fillet: radius?", "0.5");
-    if (!rStr) return;
-    const r = Number.parseFloat(rStr);
-    if (!Number.isFinite(r) || r <= 0) {
-      setStatus("fillet: invalid radius");
-      return;
-    }
-    addPrim({ kind: "FilletCorner", id: freshId("f"), corner_point: cornerPoint, radius: r });
-    setStatus(`fillet @${cornerPoint} r=${r}`);
-  });
+  // 2D editing operations Trim / Extend / Fillet are click-driven. The
+  // tool buttons use the same `data-tool` attribute as the main toolbar,
+  // so the generic `for (const btn of toolbarBtns)` wiring picks them up
+  // and routes to setTool(). See the trim/extend/fillet cases in
+  // handleClick for the actual flow.
 
   gridInput.addEventListener("change", () => redraw());
   snapInput.addEventListener("change", () => redraw());
@@ -952,11 +1144,16 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
     else if (e.key === "a" || e.key === "A") setTool("arc");
     else if (e.key === "x" || e.key === "X") setTool("delete");
     else if (e.key === "v" || e.key === "V") setTool("select");
+    else if (e.key === "t" || e.key === "T") setTool("trim");
+    else if (e.key === "e" || e.key === "E") setTool("extend");
+    else if (e.key === "f" || e.key === "F") setTool("fillet");
     else if (e.key === "Escape") {
       pendingStartId = null;
       circleCenterId = null;
       arcCenterId = null;
       arcStartAngle = null;
+      trimSelectedLineId = null;
+      extendSelectedLineId = null;
       selectedId = null;
       redraw();
     } else if (e.key === "Delete" || e.key === "Backspace") {
@@ -1050,6 +1247,130 @@ function isAngleBetween(theta: number, a0: number, a1: number): boolean {
   const span = norm(a1);
   const t = norm(theta);
   return t <= span;
+}
+
+/**
+ * Pure functional version of the canvas Trim flow. Given a sketch and a
+ * world-space click point, returns the new primitives that the click
+ * should add: a Point at the projected location on `lineId` (or reuses
+ * `existingPointId` if provided), plus a TrimLine primitive. Mirrors the
+ * UX from the canvas — the canvas actually calls this internally for
+ * easier testing without a DOM.
+ *
+ * `lineId` must reference a Line primitive in `sketch`. Returns null if
+ * the line is missing or degenerate.
+ */
+export function applyTrimClick(
+  sketch: Sketch,
+  lineId: string,
+  clickWorld: { x: number; y: number },
+  options: {
+    existingPointId?: string | null;
+    /** Provide a deterministic id allocator for tests. Default: prefix+next. */
+    nextPointId?: () => string;
+    nextTrimId?: () => string;
+  } = {},
+): { primitives: SketchPrim[] } | null {
+  const linePrim = sketch.primitives.find(
+    (p) => p.kind === "Line" && p.id === lineId,
+  );
+  if (!linePrim || linePrim.kind !== "Line") return null;
+  const a = sketch.primitives.find(
+    (p) => p.kind === "Point" && p.id === linePrim.from,
+  );
+  const b = sketch.primitives.find(
+    (p) => p.kind === "Point" && p.id === linePrim.to,
+  );
+  if (!a || a.kind !== "Point" || !b || b.kind !== "Point") return null;
+
+  let pointId: string;
+  const out: SketchPrim[] = [];
+  if (options.existingPointId) {
+    pointId = options.existingPointId;
+  } else {
+    // Project click onto the line, clamped to the segment.
+    const ax = b.x - a.x;
+    const ay = b.y - a.y;
+    const len2 = ax * ax + ay * ay;
+    if (len2 < 1e-12) return null;
+    let t = ((clickWorld.x - a.x) * ax + (clickWorld.y - a.y) * ay) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const px = a.x + t * ax;
+    const py = a.y + t * ay;
+    pointId = options.nextPointId ? options.nextPointId() : "p_trim";
+    out.push({ kind: "Point", id: pointId, x: px, y: py });
+  }
+  const trimId = options.nextTrimId ? options.nextTrimId() : "tr_1";
+  out.push({ kind: "TrimLine", id: trimId, line: lineId, at_point: pointId });
+  return { primitives: out };
+}
+
+/**
+ * Pure functional version of the canvas Extend flow. Returns the new
+ * primitives to add: a Point at the click location (or reuse) plus an
+ * ExtendLine primitive that points the closer endpoint of `lineId` at
+ * `clickWorld`.
+ */
+export function applyExtendClick(
+  sketch: Sketch,
+  lineId: string,
+  clickWorld: { x: number; y: number },
+  options: {
+    existingPointId?: string | null;
+    nextPointId?: () => string;
+    nextExtendId?: () => string;
+  } = {},
+): { primitives: SketchPrim[] } | null {
+  const linePrim = sketch.primitives.find(
+    (p) => p.kind === "Line" && p.id === lineId,
+  );
+  if (!linePrim || linePrim.kind !== "Line") return null;
+  let pointId: string;
+  const out: SketchPrim[] = [];
+  if (options.existingPointId) {
+    pointId = options.existingPointId;
+  } else {
+    pointId = options.nextPointId ? options.nextPointId() : "p_ext";
+    out.push({ kind: "Point", id: pointId, x: clickWorld.x, y: clickWorld.y });
+  }
+  const extId = options.nextExtendId ? options.nextExtendId() : "ex_1";
+  out.push({
+    kind: "ExtendLine",
+    id: extId,
+    line: lineId,
+    to_point: pointId,
+  });
+  return { primitives: out };
+}
+
+/**
+ * Pure functional version of the canvas Fillet flow. Given a corner Point
+ * id and a numeric radius, returns the FilletCorner primitive to append.
+ * Returns null if `cornerId` doesn't reference a Point in `sketch` or
+ * `radius` is non-positive / non-finite.
+ */
+export function applyFilletClick(
+  sketch: Sketch,
+  cornerId: string,
+  radius: number,
+  options: { nextFilletId?: () => string } = {},
+): { primitives: SketchPrim[] } | null {
+  const cornerPrim = sketch.primitives.find(
+    (p) => p.kind === "Point" && p.id === cornerId,
+  );
+  if (!cornerPrim || cornerPrim.kind !== "Point") return null;
+  if (!Number.isFinite(radius) || radius <= 0) return null;
+  const fid = options.nextFilletId ? options.nextFilletId() : "f_1";
+  return {
+    primitives: [
+      {
+        kind: "FilletCorner",
+        id: fid,
+        corner_point: cornerId,
+        radius,
+      },
+    ],
+  };
 }
 
 /**
