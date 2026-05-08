@@ -1,0 +1,14 @@
+{
+  "parameters": {
+    "outer_r":   8.0,
+    "inner_r":   5.0,
+    "tube_h":   30.0
+  },
+  "features": [
+    {"kind": "Tube", "id": "out",
+      "outer_radius": "$outer_r",
+      "inner_radius": "$inner_r",
+      "height":       "$tube_h",
+      "segments": 32}
+  ]
+}

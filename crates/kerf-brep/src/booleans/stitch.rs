@@ -20,6 +20,10 @@ use crate::geometry::{CurveSegment, SurfaceKind};
 pub struct KeptFace {
     pub polygon: Vec<Point3>,
     pub surface: SurfaceKind,
+    /// Picking provenance carried over from the source solid's face_owner_tag.
+    /// Threaded into the resulting Solid's face_owner_tag by `stitch`.
+    /// `None` for faces whose source had no owner.
+    pub owner: Option<String>,
 }
 
 /// Build a connected `Solid` from a set of kept faces. Faces that share an edge
@@ -179,6 +183,9 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
             .build_insert_face(loop_id, placeholder_shell);
         new_solid.topo.build_set_loop_face(loop_id, face_id);
         new_solid.face_geom.insert(face_id, kf.surface.clone());
+        if let Some(tag) = &kf.owner {
+            new_solid.face_owner_tag.insert(face_id, tag.clone());
+        }
         face_ids.push(face_id);
 
         // Allocate half-edges for each polygon edge.
@@ -526,7 +533,7 @@ mod tests {
         for face_id in s.topo.face_ids() {
             let polygon = face_polygon(&s, face_id).unwrap();
             let surface = s.face_geom.get(face_id).cloned().unwrap();
-            kept.push(KeptFace { polygon, surface });
+            kept.push(KeptFace { polygon, surface, owner: None });
         }
         let new_s = stitch(&kept, &Tolerance::default());
         assert_eq!(new_s.vertex_count(), 8);
