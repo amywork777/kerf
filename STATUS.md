@@ -54,12 +54,12 @@ kernel + authoring + viewer + production output).
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
-| Manufacturing features (180+ — see catalog) | 12% | 96% | 11.52 |
+| Manufacturing features (240+ — see catalog) | 12% | 95% | 11.4 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
-| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob + TulipBulb + PaperLantern + AcornCap + Ankh compose for simple cases) | 8% | 46% | 3.68 |
+| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.2%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~65.0%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
 ## Latest session (2026-05-06)
@@ -151,38 +151,9 @@ real kernel additions:
 - **Decorative composites**: Arrow, Funnel, TruncatedPyramid.
 - **Transforms**: ScaleXYZ.
 
-748 tests pass, 9 ignored. 280+ Features in catalog.
-
-## Latest session (2026-05-08, round 7)
-
-Added 10 new Features in mixed buckets:
-
-- **Curved-surface compositions (4)**: `TulipBulb` (small bulb sphere +
-  slim cylindrical neck — pole-overlap pattern), `PaperLantern` (cylinder
-  body with hemispherical caps top + bottom), `AcornCap` (hemisphere +
-  thin cylindrical rim — just the cap of an acorn), `Ankh` (vertical
-  cylinder shaft + horizontal cross-arm + faceted torus loop, rotated to
-  open vertically).
-- **Mechanical (3)**: `CamLobe2` (eccentric circle profile cam — distinct
-  from the elliptical `CamLobe`), `PistonHead` (cylinder body + wider
-  crown disk + N ring grooves around the body), `PulleyGroove` (true
-  V-groove using two opposing frustums — distinct from `Pulley`'s
-  rectangular groove).
-- **Decorative (2)**: `Pinwheel` (star polygon plate with center bore —
-  axle-mountable spinner), `GearTooth` (single trapezoidal tooth profile
-  for arrayed compositions).
-- **Composition (1)**: `HourglassFigure` (frustum + frustum + cap disks —
-  classic hourglass silhouette without the shared-waist boolean limit
-  of the existing `Hourglass`).
-
-21 new tests (10 volume + 10 round-trip + 1 combined batch round-trip).
-
-All sphere/cylinder unions use the AcornShape pole-overlap pattern
-(`br - 1e-3`) to keep the kernel stitch happy. The PaperLantern double
-hemisphere build uses the Lens-style box-clip → translate pattern.
-
-727 tests → 748 tests (+21), 0 failed, 9 ignored unchanged. Catalog
-~270 → 280+ Features.
+742 tests pass, 9 ignored. 241 Features in catalog (round 8 added
+TableTop, Bench, WindowLouver, Hammer, ScrewDriver, Wrench, Heart3D,
+Star3D, Cross3D, Chair — furniture, tools, and decorative composites).
 
 The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
 are real manufacturing features even if multi-edge fillet is still
@@ -290,84 +261,3 @@ proprietary product): years.
 If you want to keep grinding toward Solidworks parity, the right shape is
 probably a recurring background agent (`/schedule`) that picks one of
 these per week and opens a PR — not a single long session.
-
-## Performance polish (M-perf, feat/wasm-perf)
-
-A round of WASM bundle and evaluation-time optimization, done in one
-session. None of these touch the public API; the viewer's existing JS
-keeps working unchanged.
-
-**WASM bundle size — measured**
-
-| Stage                                             | Bytes      | Δ from prev | Δ from start |
-| ------------------------------------------------- | ---------- | ----------- | ------------ |
-| Before (opt-level=3, no LTO)                      | 2,871,924  | —           | —            |
-| After size profile (opt-level=z, lto=fat, strip)  | 2,643,421  | -8.0%       | -8.0%        |
-| After wasm-bindgen --remove-{name,producers}      | 2,128,132  | -19.5%      | -25.9%       |
-| After wasm-opt -Oz --strip-debug --strip-producers | **1,844,770** | -13.3%   | **-35.8%**   |
-
-The viewer's production bundle (verified with `pnpm build`):
-`dist/assets/kerf_cad_wasm_bg-*.wasm = 1,844.77 kB`. Just shy of the
-1.5 MB stretch target — getting under that probably requires either
-`#[inline(never)]` annotations on the boolean engine (LTO is currently
-inlining a lot of the per-feature evaluators across crate boundaries)
-or splitting the WASM into a kernel + tessellator chunk loaded lazily.
-
-The release profile in the workspace `Cargo.toml` is now tuned for size:
-
-```toml
-[profile.release]
-opt-level     = "z"     # size > speed
-lto           = "fat"   # cross-crate dead-code elimination
-codegen-units = 1       # one unit lets LTO see everything
-panic         = "abort" # no unwind tables
-strip         = true    # strip symbols from .wasm
-debug         = false
-```
-
-`viewer/build-wasm.sh` additionally passes `--remove-name-section
---remove-producers-section` to wasm-bindgen, and runs `wasm-opt -Oz
---strip-debug --strip-producers` if binaryen is installed (`brew install
-binaryen` on macOS, or `cargo install wasm-opt`).
-
-**Eval cache** (kerf-cad)
-
-`Model::evaluate_cached(target, &mut EvalCache)` reuses Solids across
-calls when the recipe — `(feature_id, feature_serde, params,
-input_fingerprints)` — is unchanged. Parameter sliders that touch one
-feature (e.g. a hole radius) keep the body's expensive boolean cached;
-only the changed branch and its dependents recompute.
-
-The fingerprint is a `u64` hash. Spurious misses (over-conservative
-invalidation) are harmless — they just mean a recompute. Spurious hits
-would be silently wrong, but a 64-bit hash collision in a
-~hundred-features session is astronomically unlikely.
-
-See `crates/kerf-cad/src/cache.rs` for the design.
-
-**Tessellation cache** (kerf-cad-wasm)
-
-The WASM crate keeps a thread-local `(eval_fingerprint, segments) →
-Vec<f32>` mesh cache. When the user spins the camera, neither input
-changes, so the previous Float32Array is returned in O(1). Tessellation
-of a 100k-triangle solid costs ~5ms cold; the warm path is sub-millisecond.
-
-**New WASM exports** (existing exports kept unchanged):
-
-- `clear_cache()` — drops both caches. Call on model swap or to bound
-  memory growth.
-- `cache_stats() → [eval_entries, mesh_entries]` — for debug overlays.
-
-**Testing**
-
-Twelve new tests cover the cache layer:
-- `crates/kerf-cad/tests/eval_cache.rs` (7 tests): cold/warm paths,
-  parameter invalidation, input invalidation, owner-tag persistence
-  through hits, parity with the uncached evaluator.
-- `crates/kerf-cad-wasm/src/lib.rs` (5 host tests): mesh cache
-  hit/miss on segments, parameter invalidation, clear_cache, parity
-  with the uncached path.
-
-The full workspace stays green at the prior 727 + 12 new = 739 passing
-tests with the prior 9 ignored.
-

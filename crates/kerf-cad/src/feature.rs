@@ -3137,6 +3137,162 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// TableTop: a rectangular slab top supported by four cylindrical legs at
+    /// the corners. The slab spans x ∈ [0, top_width], y ∈ [0, top_depth] and
+    /// sits at z ∈ [leg_height, leg_height + top_thickness]. Each leg is a
+    /// cylinder of `leg_radius` running from z=0 to z=leg_height, inset from
+    /// each corner by `leg_inset`. Legs poke 1e-3 into the slab to seal the
+    /// boolean union.
+    TableTop {
+        id: String,
+        top_width: Scalar,
+        top_depth: Scalar,
+        top_thickness: Scalar,
+        leg_radius: Scalar,
+        leg_height: Scalar,
+        leg_inset: Scalar,
+        segments: usize,
+    },
+
+    /// Bench: a long rectangular seat slab on two box-shaped supports. The
+    /// seat spans x ∈ [0, length], y ∈ [0, depth], z ∈ [leg_height,
+    /// leg_height + seat_thickness]. Two supports of `support_thickness` x
+    /// `depth` x `leg_height` sit at each end, inset from the seat ends by
+    /// `support_inset`.
+    Bench {
+        id: String,
+        length: Scalar,
+        depth: Scalar,
+        seat_thickness: Scalar,
+        leg_height: Scalar,
+        support_thickness: Scalar,
+        support_inset: Scalar,
+    },
+
+    /// WindowLouver: an outer rectangular frame (window-frame style) with N
+    /// horizontal angled slats inside. The frame outer is `outer_width` x
+    /// `outer_height` with frame walls of `frame_thickness`, extruded by
+    /// `depth`. `slats` rectangular slats of dimensions (inner_width,
+    /// slat_thickness, depth) are stacked inside the inner cavity, evenly
+    /// spaced. (Slats currently axis-aligned; the angle parameter is recorded
+    /// for future tilt support.)
+    WindowLouver {
+        id: String,
+        outer_width: Scalar,
+        outer_height: Scalar,
+        frame_thickness: Scalar,
+        depth: Scalar,
+        slats: usize,
+        slat_thickness: Scalar,
+    },
+
+    /// Hammer: a rectangular hammer head with a cylindrical handle below it.
+    /// Head is `head_length` x `head_width` x `head_height`, centered on the
+    /// xy origin, sitting at z ∈ [handle_length, handle_length + head_height].
+    /// Handle is a cylinder of `handle_radius` running from z=0 to
+    /// z=handle_length + 1e-3 (pokes 1e-3 into head).
+    Hammer {
+        id: String,
+        head_length: Scalar,
+        head_width: Scalar,
+        head_height: Scalar,
+        handle_radius: Scalar,
+        handle_length: Scalar,
+        segments: usize,
+    },
+
+    /// ScrewDriver: a fat cylindrical handle, a thinner cylindrical shaft,
+    /// and a flat-blade tip. Handle of `handle_radius` and `handle_length`
+    /// at z ∈ [0, handle_length]. Shaft of `shaft_radius` (< handle_radius)
+    /// at z ∈ [handle_length - 1e-3, handle_length + shaft_length]. Tip is
+    /// a thin flat box of `tip_width` x `tip_thickness` x `tip_length` at
+    /// the shaft's end.
+    ScrewDriver {
+        id: String,
+        handle_radius: Scalar,
+        handle_length: Scalar,
+        shaft_radius: Scalar,
+        shaft_length: Scalar,
+        tip_width: Scalar,
+        tip_thickness: Scalar,
+        tip_length: Scalar,
+        segments: usize,
+    },
+
+    /// Wrench: a rectangular head with a centered jaw cutout, joined to a
+    /// tapered handle. The head is `head_width` x `head_length` x
+    /// `thickness`, sitting at one end. The handle is a tapered prism
+    /// (frustum-as-extrude) running from `head_length` along +y for
+    /// `handle_length`, narrowing from `handle_root_width` to
+    /// `handle_tip_width`. (No actual jaw cutout in this MVP — implemented
+    /// as a solid rectangular head; jaw cutout is future work.)
+    Wrench {
+        id: String,
+        head_width: Scalar,
+        head_length: Scalar,
+        thickness: Scalar,
+        handle_root_width: Scalar,
+        handle_tip_width: Scalar,
+        handle_length: Scalar,
+    },
+
+    /// Heart3D: a 3D heart shape — two faceted spheres for the lobes joined
+    /// to a downward-pointing cone for the bottom point. Lobe spheres of
+    /// `lobe_radius` are placed at (±lobe_offset, 0, lobe_z). The cone
+    /// has its apex at (0, 0, 0) and its base of `lobe_radius` at z=lobe_z.
+    /// Uses the AcornShape pole-overlap pattern for sphere unions.
+    Heart3D {
+        id: String,
+        lobe_radius: Scalar,
+        lobe_offset: Scalar,
+        lobe_z: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// Star3D: a 3D 6-pointed star shape — three orthogonal elongated boxes
+    /// crossing at the origin, forming a 3D plus / asterisk. Each arm is a
+    /// box of `arm_length` x `arm_thickness` x `arm_thickness`, centered on
+    /// origin, oriented along x, y, and z respectively.
+    Star3D {
+        id: String,
+        arm_length: Scalar,
+        arm_thickness: Scalar,
+    },
+
+    /// Cross3D: a 3D Christian cross — a vertical box of (width x depth x
+    /// height) and a horizontal crossbar of (arm_span x depth x arm_height)
+    /// at z = arm_z. The crossbar is centered on x. The vertical post sits
+    /// at x ∈ [0, width] (with arm_span > width, the crossbar overhangs
+    /// symmetrically).
+    Cross3D {
+        id: String,
+        width: Scalar,
+        depth: Scalar,
+        height: Scalar,
+        arm_span: Scalar,
+        arm_height: Scalar,
+        arm_z: Scalar,
+    },
+
+    /// Chair: a square seat box on four legs, with a vertical back rest
+    /// extending up from the rear edge. Seat sits at z ∈ [leg_height,
+    /// leg_height + seat_thickness], spanning x ∈ [0, seat_size] and
+    /// y ∈ [0, seat_size]. Four box legs of (leg_thickness)² x leg_height,
+    /// inset from corners by `leg_inset`. Back rest is a vertical box at
+    /// y ∈ [0, back_thickness], x ∈ [0, seat_size], z ∈ [leg_height +
+    /// seat_thickness, leg_height + seat_thickness + back_height].
+    Chair {
+        id: String,
+        seat_size: Scalar,
+        seat_thickness: Scalar,
+        leg_height: Scalar,
+        leg_thickness: Scalar,
+        leg_inset: Scalar,
+        back_thickness: Scalar,
+        back_height: Scalar,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -3977,6 +4133,18 @@ impl Feature {
             | Feature::WrenchFlats { id, .. }
             | Feature::Knurl { id, .. }
 => id,
+
+            Feature::TableTop { id, .. }
+            | Feature::Bench { id, .. }
+            | Feature::WindowLouver { id, .. }
+            | Feature::Hammer { id, .. }
+            | Feature::ScrewDriver { id, .. }
+            | Feature::Wrench { id, .. }
+            | Feature::Heart3D { id, .. }
+            | Feature::Star3D { id, .. }
+            | Feature::Cross3D { id, .. }
+            | Feature::Chair { id, .. }
+=> id,
 }
     }
 
@@ -4289,6 +4457,18 @@ impl Feature {
             | Feature::ReliefCut { .. }
             | Feature::WrenchFlats { .. }
             | Feature::Knurl { .. } => Vec::new(),
+
+            Feature::TableTop { .. }
+            | Feature::Bench { .. }
+            | Feature::WindowLouver { .. }
+            | Feature::Hammer { .. }
+            | Feature::ScrewDriver { .. }
+            | Feature::Wrench { .. }
+            | Feature::Heart3D { .. }
+            | Feature::Star3D { .. }
+            | Feature::Cross3D { .. }
+            | Feature::Chair { .. }
+=> Vec::new(),
 }
     }
 }
