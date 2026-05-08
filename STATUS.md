@@ -57,12 +57,36 @@ kernel + authoring + viewer + production output).
 | Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
-| 2D sketcher UI                            | 8%        | 30%      | 2.4    |
+| 2D sketcher UI                            | 8%        | 65%      | 5.2    |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~67.4%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~70.2%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08)
+## Latest session (2026-05-08, part 2)
+
+**2D sketcher viewer UI shipped.** Sketcher scorecard line 30% → 65%
+(+2.8 SW pts on top of the data-model). New `viewer/src/sketcher.ts`
+module: tool state machine (Point / Line / Circle / Arc / Pan / Select
+/ Delete), 400×400 canvas with grid + snap + pan + zoom, click-to-place
++ drag-to-edit + right-click constraint menu, JSON load/save, Extrude
+button that wraps the sketch in a SketchExtrude Model and pushes it
+through the existing `evaluate_with_face_ids` pipeline into the 3D
+viewer. 8 viewer-side tests added (`pnpm test`). Cargo workspace
+unchanged at 727 + 12 = 739 / 0 / 9.
+
+The viewer no longer requires hand-typed JSON to drive
+`Feature::SketchExtrude` — drop a sketch in the canvas, hit Extrude, see
+a positive-volume solid in the main scene. Round-trip with
+`Save Sketch JSON` / `Load Sketch JSON` is bit-identical to the rust
+serde shape.
+
+What's deferred (forms the remaining 35% of the sketcher line):
+constraint solver (constraints are stored + drawn but not enforced),
+trim / extend / offset operations, multi-loop sketches in one canvas,
+and named ref-plane positioning beyond the Xy/Xz/Yz axis-aligned
+fallback.
+
+## Earlier session (2026-05-08)
 
 **2D sketcher data model + JSON DSL shipped.** Sketcher scorecard line
 0% → 30% (+2.4 SW pts). 727 tests → 739 tests (12 new — 10 integration
