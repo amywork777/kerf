@@ -5,9 +5,13 @@
 //! - Sketch::diagnose_constraints picks specific conflicting indices.
 //! - Sketch::auto_fix_constraints removes redundant constraints.
 
+// NOTE: PR #8 (feat/sketch-data-model) replaced the old Sketch / Constraint /
+// Point2 API with SketchPrim / SketchConstraint / coords-on-Point. The three
+// solver tests below were written against the old schema; equivalent coverage
+// exists in PR #22 (constraint-solver-complete) tests/constraint_solver_complete.rs.
+// Tests using the old API are #[ignore]'d below.
 use kerf_cad::{
-    lits, Assembly, AssemblyRef, AxisRef, Constraint, Feature, Instance, Mate, Model, Point2, Pose,
-    Scalar, Sketch,
+    lits, Assembly, AssemblyRef, AxisRef, Feature, Instance, Mate, Model, Pose, Scalar,
 };
 use kerf_geom::Vec3;
 
@@ -267,6 +271,7 @@ fn gear_mate_2_to_1() {
 // Sketch diagnostics
 // ---------------------------------------------------------------------------
 
+#[cfg(any())] // old Sketch API replaced by PR #8 — see constraint_solver_complete.rs
 #[test]
 fn solver_diagnose_specific_indices() {
     // Two points fixed at distance 1, then a Distance(=5) constraint
@@ -293,6 +298,7 @@ fn solver_diagnose_specific_indices() {
     assert!(diag[0].residual > 0.5, "top residual should be substantial");
 }
 
+#[cfg(any())] // old Sketch API replaced by PR #8 — see constraint_solver_complete.rs
 #[test]
 fn solver_auto_fix_redundant() {
     // Same triple as above. auto_fix should remove exactly ONE
@@ -429,6 +435,7 @@ fn gear_mate_negative_ratio_reverses_rotation() {
     assert!((signed - (-0.5)).abs() < 1e-9, "signed twist {}, want -0.5", signed);
 }
 
+#[cfg(any())] // old Sketch API replaced by PR #8 — see constraint_solver_complete.rs
 #[test]
 fn auto_fix_keeps_consistent_constraints() {
     // Build a well-posed sketch (no over-constraint). auto_fix
