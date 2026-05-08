@@ -14,8 +14,10 @@ pub mod stl;
 pub mod tessellate;
 
 pub use dimension::{
-    angle_at_vertex, angle_between_vectors, distance, project_to_plane, projected_silhouette,
-    render_dimensioned_view, to_2d_view, Dimension, DimensionKind, ViewKind, ViewportSpec,
+    angle_at_vertex, angle_between_vectors, collect_snap_candidates, distance, project_to_plane,
+    projected_silhouette, render_dimensioned_view, silhouette_loops, snap_pick, to_2d_view,
+    view_direction, Dimension, DimensionKind, SilhouetteLoops, SnapCandidate, SnapKind, ViewKind,
+    ViewportSpec,
 };
 pub use geometry::{CurveKind, CurveSegment, Sense, SurfaceKind};
 pub use measure::{shell_volume, solid_volume};
