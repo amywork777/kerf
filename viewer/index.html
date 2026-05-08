@@ -89,6 +89,17 @@
     background: var(--bg); color: var(--fg); border: 1px solid var(--line);
     border-radius: 3px; font: 11px ui-monospace, "SF Mono", Menlo, monospace; }
   #selected-feature .sf-empty { color: var(--muted); font-style: italic; font-size: 11px; }
+  #selected-feature .sf-edge-header { color: var(--muted); margin: 8px 0 6px;
+    font-size: 11px; padding-top: 8px; border-top: 1px dashed var(--line);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  #selected-feature .sf-edge-btn { display: block; width: 100%; text-align: left;
+    margin-bottom: 4px; padding: 5px 8px; font: 11px ui-monospace, "SF Mono",
+    Menlo, monospace; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 3px; cursor: pointer;
+    transition: border-color .15s, color .15s; }
+  #selected-feature .sf-edge-btn:hover:not(:disabled) { border-color: var(--accent);
+    color: var(--accent); }
+  #selected-feature .sf-edge-btn:disabled { color: var(--muted); cursor: not-allowed; opacity: 0.6; }
   button { background: var(--bg); color: var(--fg); border: 1px solid var(--line);
     border-radius: 4px; padding: 6px 10px; font: inherit; cursor: pointer; flex: 1;
     transition: border-color .15s, color .15s; }
