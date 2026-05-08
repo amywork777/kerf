@@ -1,0 +1,14 @@
+{
+  "parameters": {
+    "outer": 10.0,
+    "inner": 4.0,
+    "depth": 3.0
+  },
+  "features": [
+    {"kind": "Star", "id": "out",
+      "points": 5,
+      "outer_radius": "$outer",
+      "inner_radius": "$inner",
+      "height": "$depth"}
+  ]
+}
