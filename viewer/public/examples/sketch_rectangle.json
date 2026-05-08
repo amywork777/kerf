@@ -1,0 +1,17 @@
+{
+  "plane": "Xy",
+  "primitives": [
+    {"kind": "Point", "id": "p1", "x": 0, "y": 0},
+    {"kind": "Point", "id": "p2", "x": 4, "y": 0},
+    {"kind": "Point", "id": "p3", "x": 4, "y": 3},
+    {"kind": "Point", "id": "p4", "x": 0, "y": 3},
+    {"kind": "Line", "id": "l1", "from": "p1", "to": "p2"},
+    {"kind": "Line", "id": "l2", "from": "p2", "to": "p3"},
+    {"kind": "Line", "id": "l3", "from": "p3", "to": "p4"},
+    {"kind": "Line", "id": "l4", "from": "p4", "to": "p1"}
+  ],
+  "constraints": [
+    {"kind": "Horizontal", "line": "l1"},
+    {"kind": "Vertical", "line": "l2"}
+  ]
+}

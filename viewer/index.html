@@ -73,38 +73,39 @@
     border-radius: 4px; padding: 6px 10px; font: inherit; cursor: pointer; flex: 1;
     transition: border-color .15s, color .15s; }
   button:hover { border-color: var(--accent); color: var(--accent); }
-  button.active { border-color: var(--accent); color: var(--accent);
-    background: rgba(88,166,255,0.08); }
   canvas { display: block; }
   #stage { position: relative; }
   .examples { margin-top: 12px; font-size: 12px; color: var(--muted); }
   .examples a { color: var(--accent); text-decoration: none; cursor: pointer; }
   .examples a:hover { text-decoration: underline; }
-  #dimensions-panel { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
-  #dimensions-panel label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 12px; }
-  #dimensions-panel select { width: 100%; padding: 6px 8px; background: var(--bg);
-    color: var(--fg); border: 1px solid var(--line); border-radius: 4px; }
-  #dimensions-panel .dim-row { display: flex; gap: 6px; margin-bottom: 8px; }
-  #dimensions-panel .dim-row > * { flex: 1; }
-  #dimensions-panel .dim-actions { display: flex; gap: 6px; margin-top: 6px; }
-  #dim-pick-btn.active { border-color: #ffb84d; color: #ffb84d; }
-  #dim-hint { color: var(--muted); font-size: 11px; margin: 6px 0 8px;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-  #dim-list { margin: 6px 0 0; padding: 0; list-style: none;
-    max-height: 160px; overflow-y: auto;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10.5px; }
-  #dim-list li { display: flex; align-items: center; gap: 6px;
-    padding: 3px 4px; border-radius: 3px; line-height: 1.4; }
-  #dim-list li:hover { background: var(--bg); }
-  #dim-list .dim-label { flex: 1; color: var(--fg); }
-  #dim-list .dim-del { color: var(--muted); padding: 0 4px; cursor: pointer;
-    border-radius: 3px; visibility: hidden; }
-  #dim-list li:hover .dim-del { visibility: visible; }
-  #dim-list .dim-del:hover { color: #ff7b72; background: rgba(255,123,114,0.1); }
-  #dim-list:empty::before { content: "No dimensions yet."; color: var(--muted);
-    font-style: italic; font-size: 11px; }
-  #dim-download-btn:disabled { opacity: 0.45; cursor: default; }
-  #dim-download-btn:disabled:hover { border-color: var(--line); color: var(--fg); }
+
+  /* --- sketcher panel --- */
+  #sketcher-toggle { margin-top: 14px; }
+  #sketcher-panel { display: none; position: fixed; right: 16px; top: 16px;
+    width: 440px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; padding: 12px; z-index: 50; box-shadow: 0 4px 24px rgba(0,0,0,0.4); }
+  #sketcher-panel.visible { display: block; }
+  #sketcher-panel h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600;
+    display: flex; justify-content: space-between; align-items: center; }
+  #sketcher-panel h2 .close { color: var(--muted); cursor: pointer; padding: 0 6px;
+    border-radius: 3px; }
+  #sketcher-panel h2 .close:hover { color: #ff7b72; background: rgba(255,123,114,0.1); }
+  #sketcher-host .sk-toolbar { display: flex; gap: 4px; margin-bottom: 8px; }
+  #sketcher-host .sk-toolbar button { flex: 1; padding: 4px 6px; font-size: 14px; }
+  #sketcher-host .sk-toolbar button.active { border-color: var(--accent); color: var(--accent); }
+  #sketcher-host .sk-canvas { display: block; width: 400px; height: 400px;
+    border: 1px solid var(--line); border-radius: 4px; background: var(--bg);
+    margin: 0 auto; cursor: crosshair; }
+  #sketcher-host .sk-row { display: flex; gap: 8px; margin-top: 6px; align-items: center;
+    color: var(--muted); font-size: 11px; }
+  #sketcher-host .sk-row label { display: flex; gap: 4px; align-items: center; }
+  #sketcher-host .sk-row button { flex: 1; }
+  #sketcher-host .sk-status { margin-top: 6px; font-family: ui-monospace,Menlo,monospace;
+    font-size: 11px; color: var(--muted); padding: 4px 8px; border: 1px solid var(--line);
+    border-radius: 4px; background: var(--bg); min-height: 20px; }
+  .sk-examples { margin-top: 8px; font-size: 11px; color: var(--muted); }
+  .sk-examples a { color: var(--accent); cursor: pointer; }
+  .sk-examples a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -141,31 +142,6 @@
     <div id="actions2" hidden>
       <button id="drawing-btn">Export 3-view PNG</button>
     </div>
-    <div id="dimensions-panel" hidden>
-      <label>Dimensions</label>
-      <div class="dim-row">
-        <select id="dim-kind" title="Dimension type">
-          <option value="linear">Linear</option>
-          <option value="radial">Radial</option>
-          <option value="angular">Angular</option>
-        </select>
-        <select id="dim-view" title="Projection view">
-          <option value="top">Top</option>
-          <option value="front">Front</option>
-          <option value="side">Side</option>
-          <option value="iso">Iso</option>
-        </select>
-      </div>
-      <div class="dim-actions">
-        <button id="dim-pick-btn">Pick points</button>
-        <button id="dim-clear-btn">Clear</button>
-      </div>
-      <div id="dim-hint">Pick 2 linear points.</div>
-      <ol id="dim-list"></ol>
-      <div class="dim-actions">
-        <button id="dim-download-btn" disabled>Download SVG</button>
-      </div>
-    </div>
     <div id="views" hidden>
       <label>View</label>
       <div class="view-row">
@@ -178,21 +154,27 @@
         <input type="checkbox" id="wireframe-toggle" />
         wireframe overlay
       </label>
-      <label style="display:block; color: var(--muted); margin-top:10px; margin-bottom:4px; font-size:12px;">Pick mode</label>
-      <div class="view-row" id="pick-mode">
-        <button data-pick="face" class="active">face</button>
-        <button data-pick="edge">edge</button>
-        <button data-pick="vertex">vertex</button>
-      </div>
       <div class="hotkeys">
         <code>1</code>iso <code>2</code>front <code>3</code>top <code>4</code>side<br>
-        <code>W</code>wireframe <code>R</code>reset <code>D</code>drawing <code>S</code>save<br>
-        <code>F</code>pick face <code>E</code>pick edge <code>V</code>pick vertex
+        <code>W</code>wireframe <code>R</code>reset <code>D</code>drawing <code>S</code>save
       </div>
     </div>
     <div id="status">no model loaded</div>
+    <button id="sketcher-toggle">Open 2D sketcher</button>
   </aside>
   <div id="stage"></div>
+</div>
+
+<div id="sketcher-panel">
+  <h2>
+    2D Sketcher
+    <span class="close" id="sketcher-close" title="Close">✕</span>
+  </h2>
+  <div id="sketcher-host"></div>
+  <div class="sk-examples">
+    Try a sketch:
+    <a data-sk-example="sketch_rectangle">rectangle</a>
+  </div>
 </div>
 <script type="module" src="/src/main.ts"></script>
 </body>
