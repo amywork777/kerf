@@ -133,7 +133,7 @@ impl Model {
             return Ok(());
         }
 
-        let mut result = build(feature, &self.parameters, local)?;
+        let mut result = build(feature, &self.parameters, local, self)?;
         // Picking provenance: tag any face in this feature's result that
         // doesn't already carry an owner tag with this feature's id.
         let owner = id.to_string();
