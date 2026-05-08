@@ -1,0 +1,18 @@
+{
+  "parameters": {
+    "x": 40.0,
+    "y": 40.0,
+    "z": 6.0
+  },
+  "features": [
+    {"kind": "Box", "id": "body", "extents": ["$x", "$y", "$z"]},
+    {"kind": "Countersink", "id": "out", "input": "body",
+      "axis": "z",
+      "top_center": [20.0, 20.0, "$z"],
+      "drill_radius": 1.5,
+      "csink_radius": 3.0,
+      "csink_depth": 2.0,
+      "total_depth": 6.0,
+      "segments": 32}
+  ]
+}

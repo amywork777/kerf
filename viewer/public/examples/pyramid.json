@@ -1,0 +1,10 @@
+{
+  "parameters": {
+    "r": 5.0,
+    "h": 8.0,
+    "n": 6
+  },
+  "features": [
+    {"kind": "Pyramid", "id": "out", "radius": "$r", "height": "$h", "segments": 6}
+  ]
+}

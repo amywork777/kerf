@@ -1,0 +1,30 @@
+{
+  "parameters": {
+    "plate_r":     20.0,
+    "plate_z":      4.0,
+    "bolt_r":       1.5,
+    "bolt_count":   6,
+    "bolt_pitch_r": 14.0
+  },
+  "features": [
+    {"kind": "Cylinder", "id": "plate",
+      "radius": "$plate_r", "height": "$plate_z", "segments": 32},
+
+    {"kind": "Cylinder", "id": "bolt",
+      "radius": "$bolt_r", "height": 8.0, "segments": 12},
+
+    {"kind": "Translate", "id": "bolt_at_pitch",
+      "input": "bolt",
+      "offset": ["$bolt_pitch_r", 0.0, -2.0]},
+
+    {"kind": "PolarPattern", "id": "bolt_holes",
+      "input": "bolt_at_pitch",
+      "count": 6,
+      "axis":   [0.0, 0.0, 1.0],
+      "center": [0.0, 0.0, 0.0],
+      "total_angle_deg": 360.0},
+
+    {"kind": "Difference", "id": "out",
+      "inputs": ["plate", "bolt_holes"]}
+  ]
+}
