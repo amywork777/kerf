@@ -62,7 +62,58 @@ kernel + authoring + viewer + production output).
 | **Solidworks-tier total**                 | **100%**  |          | **~65.0%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-06)
+## Latest session (2026-05-08): Viewer polish
+
+Three usability gaps closed in the viewer — undo/redo, error overlays,
+and a feature-catalog browser. Pure UI work, zero kernel/cad changes.
++0.5 SW pts on the Feature-tree-UI / Authoring axes (the panel reads
+much less "alpha"). 0 cargo regressions.
+
+- **Undo/redo (`viewer/src/state.ts`)**: pure-data history container
+  with `pushSnapshot` / `undo` / `redo` and a hard `MAX_UNDO_DEPTH = 50`
+  cap. Every model edit (param scrub, feature add, feature delete,
+  field edit, target swap, reset) calls `recordHistory()` *before*
+  mutating, so the undo stack always holds the previous state. Slider
+  drags snapshot once at the start of the drag, not on every `input`
+  event — otherwise a single scrub would steamroll the cap. Wired to
+  Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z and to two new toolbar buttons that
+  disable themselves when their stack is empty. Loading a fresh model
+  clears both stacks (an undo across model loads would be incoherent).
+  8 vitest cases lock in cap behaviour, dedup, redo-clears-on-edit, and
+  deep-copy semantics.
+- **Error overlay banner (`viewer/src/overlay.ts`)**: replaces the
+  easy-to-miss red status-bar text with a red-tinted strip across the
+  top of the 3D stage when evaluation fails. Body shows the message
+  plus the offending feature id (parsed out of the kerf-cad evaluator's
+  `evaluate '<id>': ...` error format via `extractFeatureIdFromError`).
+  Click anywhere on the banner to dismiss. Re-shows on the next failed
+  rebuild; auto-hides on the next successful rebuild via the existing
+  `ok()` path. 6 jsdom-backed vitest cases cover mount, show, dismiss,
+  feature-pin, idempotent re-show, and the regex parser.
+- **Feature catalog browser (`viewer/src/catalog.ts`)**: new collapsible
+  "Browse Features (231)" panel below the action buttons. Loads the
+  full kind list via the new `feature_kinds()` WASM export, partitions
+  into 8 categories by name pattern (Primitives, Manufacturing,
+  Sweep & Loft, Structural, Fasteners, Joinery, Reference, Transforms,
+  Patterns & Booleans), and lets the user click any kind to splice a
+  default-parameter instance into the model. Auto-suffixes the new id
+  to avoid collisions, auto-wires `input` / `inputs` placeholders to
+  the current target so transforms/booleans work on insert, and makes
+  the new feature the target so the user immediately sees what landed.
+  Search box filters by case-insensitive substring. 13 vitest cases
+  lock in category buckets, search, and the default-instance generator.
+- **WASM export `feature_kinds()` (`crates/kerf-cad-wasm/src/feature_kinds.rs`)**:
+  a hand-mirrored `&'static [&'static str]` list of all 231 `Feature`
+  variant names, exposed as `feature_kinds() -> Vec<String>`. The list
+  lives in the WASM crate (not the cad crate) so the kernel/cad logic
+  stays untouched. 3 cargo tests round-trip every name through serde
+  to catch drift if the enum gains or loses a variant.
+- **Tests**: 27 new vitest cases (3 files: state, catalog, overlay) +
+  3 new cargo tests in `kerf-cad-wasm`. `pnpm build` succeeds; `cargo
+  test --workspace` stays green; `vite build` produces a 520 KB JS
+  bundle (unchanged) plus the 2.9 MB WASM blob.
+
+## Earlier session (2026-05-06)
 
 GAP 1 (Picking → edit) shipped. GAP 2 Plan B (SweepPath) shipped. Bonus
 faceted torus + Donut feature shipped. ~52.7% → ~54.7% (+2 SW pts), 518
