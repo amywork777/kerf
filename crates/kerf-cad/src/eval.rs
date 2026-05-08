@@ -5364,6 +5364,71 @@ fn build(
             let mast = cylinder_along_axis(mr, mh + 1e-3, *slices, 2, fr - 1e-3, 0.0, 0.0);
             float.try_union(&mast).map_err(|e| EvalError::Boolean { id: id.into(), op: "buoy_join", message: e.message })
         }
+        Feature::Trophy { base_radius, base_height, stem_radius, stem_height, bowl_bottom_radius, bowl_top_radius, bowl_height, slices, .. } => {
+            let bar = resolve_one(id, base_radius, params)?;
+            let bah = resolve_one(id, base_height, params)?;
+            let sr = resolve_one(id, stem_radius, params)?;
+            let sh = resolve_one(id, stem_height, params)?;
+            let bbr = resolve_one(id, bowl_bottom_radius, params)?;
+            let btr = resolve_one(id, bowl_top_radius, params)?;
+            let bh = resolve_one(id, bowl_height, params)?;
+            if bar <= 0.0 || bah <= 0.0 || sr <= 0.0 || sh <= 0.0 || bbr <= 0.0
+                || btr <= 0.0 || bh <= 0.0 || sr >= bar || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Trophy requires stem<base, all-positive (got bar={bar}, sr={sr})") });
+            }
+            let base = cylinder_faceted(bar, bah, *slices);
+            let stem = cylinder_along_axis(sr, sh, *slices, 2, bah - 1e-3, 0.0, 0.0);
+            let bowl_raw = frustum_faceted(bbr, btr, bh, *slices);
+            let bowl = translate_solid(&bowl_raw, Vec3::new(0.0, 0.0, bah + sh - 1e-3));
+            let lower = base.try_union(&stem).map_err(|e| EvalError::Boolean { id: id.into(), op: "trophy_stem", message: e.message })?;
+            lower.try_union(&bowl).map_err(|e| EvalError::Boolean { id: id.into(), op: "trophy_bowl", message: e.message })
+        }
+        Feature::Goblet { stem_radius, stem_height, bowl_bottom_radius, bowl_top_radius, bowl_height, slices, .. } => {
+            let sr = resolve_one(id, stem_radius, params)?;
+            let sh = resolve_one(id, stem_height, params)?;
+            let bbr = resolve_one(id, bowl_bottom_radius, params)?;
+            let btr = resolve_one(id, bowl_top_radius, params)?;
+            let bh = resolve_one(id, bowl_height, params)?;
+            if sr <= 0.0 || sh <= 0.0 || bbr <= 0.0 || btr <= 0.0 || bh <= 0.0 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Goblet requires positive dims (got sr={sr})") });
+            }
+            let stem = cylinder_faceted(sr, sh, *slices);
+            let bowl_raw = frustum_faceted(bbr, btr, bh, *slices);
+            let bowl = translate_solid(&bowl_raw, Vec3::new(0.0, 0.0, sh - 1e-3));
+            stem.try_union(&bowl).map_err(|e| EvalError::Boolean { id: id.into(), op: "goblet_join", message: e.message })
+        }
+        Feature::TableLamp { base_radius, base_height, stem_radius, stem_height, shade_bottom_radius, shade_top_radius, shade_height, slices, .. } => {
+            let bar = resolve_one(id, base_radius, params)?;
+            let bah = resolve_one(id, base_height, params)?;
+            let sr = resolve_one(id, stem_radius, params)?;
+            let sh = resolve_one(id, stem_height, params)?;
+            let sbr = resolve_one(id, shade_bottom_radius, params)?;
+            let str_ = resolve_one(id, shade_top_radius, params)?;
+            let shh = resolve_one(id, shade_height, params)?;
+            if bar <= 0.0 || bah <= 0.0 || sr <= 0.0 || sh <= 0.0 || sbr <= 0.0
+                || str_ <= 0.0 || shh <= 0.0 || sr >= bar || sbr <= sr || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("TableLamp requires stem<base, shade_bottom>stem (got bar={bar}, sr={sr}, sbr={sbr})") });
+            }
+            let base = cylinder_faceted(bar, bah, *slices);
+            let stem = cylinder_along_axis(sr, sh, *slices, 2, bah - 1e-3, 0.0, 0.0);
+            let shade_raw = frustum_faceted(sbr, str_, shh, *slices);
+            let shade = translate_solid(&shade_raw, Vec3::new(0.0, 0.0, bah + sh - 1e-3));
+            let lower = base.try_union(&stem).map_err(|e| EvalError::Boolean { id: id.into(), op: "table_lamp_stem", message: e.message })?;
+            lower.try_union(&shade).map_err(|e| EvalError::Boolean { id: id.into(), op: "table_lamp_shade", message: e.message })
+        }
+        Feature::MushroomCloud { stem_bottom_radius, stem_top_radius, stem_height, cloud_radius, stacks, slices, .. } => {
+            let sbr = resolve_one(id, stem_bottom_radius, params)?;
+            let str_ = resolve_one(id, stem_top_radius, params)?;
+            let sh = resolve_one(id, stem_height, params)?;
+            let cr = resolve_one(id, cloud_radius, params)?;
+            if sbr <= 0.0 || str_ <= 0.0 || sh <= 0.0 || cr <= 0.0 || str_ <= sbr || cr <= str_ || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("MushroomCloud requires stem_top>stem_bottom and cloud_radius>stem_top (got sbr={sbr}, str={str_}, cr={cr})") });
+            }
+            let stem = frustum_faceted(sbr, str_, sh, *slices);
+            let cloud_raw = sphere_faceted(cr, *stacks, *slices);
+            let cloud = translate_solid(&cloud_raw, Vec3::new(0.0, 0.0, sh + cr * 0.5));
+            stem.try_union(&cloud).map_err(|e| EvalError::Boolean { id: id.into(), op: "mushroom_cloud_join", message: e.message })
+        }
         Feature::Beehive { base_radius, layer_height, layers, slices, .. } => {
             let r0 = resolve_one(id, base_radius, params)?;
             let lh = resolve_one(id, layer_height, params)?;

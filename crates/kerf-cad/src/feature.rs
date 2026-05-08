@@ -2655,6 +2655,58 @@ pub enum Feature {
         slices: usize,
     },
 
+    /// Trophy: cylindrical base + slimmer cylindrical stem + bowl cup
+    /// at the top (frustum bowl shape, wider opening above).
+    Trophy {
+        id: String,
+        base_radius: Scalar,
+        base_height: Scalar,
+        stem_radius: Scalar,
+        stem_height: Scalar,
+        bowl_bottom_radius: Scalar,
+        bowl_top_radius: Scalar,
+        bowl_height: Scalar,
+        slices: usize,
+    },
+
+    /// Goblet: a stem with a frustum bowl on top (no base disk).
+    /// Wine glass / chalice silhouette.
+    Goblet {
+        id: String,
+        stem_radius: Scalar,
+        stem_height: Scalar,
+        bowl_bottom_radius: Scalar,
+        bowl_top_radius: Scalar,
+        bowl_height: Scalar,
+        slices: usize,
+    },
+
+    /// TableLamp: cylindrical base + cylindrical stem + frustum shade
+    /// (wider at the bottom of the shade, narrower at top).
+    TableLamp {
+        id: String,
+        base_radius: Scalar,
+        base_height: Scalar,
+        stem_radius: Scalar,
+        stem_height: Scalar,
+        shade_bottom_radius: Scalar,
+        shade_top_radius: Scalar,
+        shade_height: Scalar,
+        slices: usize,
+    },
+
+    /// MushroomCloud: a frustum stem widening upward + a spherical
+    /// cap on top — silhouette of a mushroom cloud.
+    MushroomCloud {
+        id: String,
+        stem_bottom_radius: Scalar,
+        stem_top_radius: Scalar,
+        stem_height: Scalar,
+        cloud_radius: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
     /// Volute: a decorative scroll/spiral disk — Archimedean spiral
     /// rod plus a central disk. Used as classical column-capital
     /// ornament.
@@ -3020,6 +3072,10 @@ impl Feature {
             | Feature::WaterTower { id, .. }
             | Feature::PlantPot { id, .. }
             | Feature::Buoy { id, .. }
+            | Feature::Trophy { id, .. }
+            | Feature::Goblet { id, .. }
+            | Feature::TableLamp { id, .. }
+            | Feature::MushroomCloud { id, .. }
             | Feature::Volute { id, .. }
             | Feature::ScrollPlate { id, .. }
             | Feature::DovetailSlot { id, .. }
@@ -3261,6 +3317,10 @@ impl Feature {
             | Feature::WaterTower { .. }
             | Feature::PlantPot { .. }
             | Feature::Buoy { .. }
+            | Feature::Trophy { .. }
+            | Feature::Goblet { .. }
+            | Feature::TableLamp { .. }
+            | Feature::MushroomCloud { .. }
             | Feature::Volute { .. }
             | Feature::ScrollPlate { .. }
             | Feature::DovetailSlot { .. }
