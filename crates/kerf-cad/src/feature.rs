@@ -120,6 +120,27 @@ pub enum Feature {
         profile: Profile2D,
     },
 
+    /// Extrude a `Sketch` along a direction vector. The sketch is traced
+    /// into a single closed profile via `Sketch::to_profile_2d` and routed
+    /// through the same `extrude_polygon` kernel as `ExtrudePolygon`.
+    /// Constraints on the sketch are stored but not enforced — coordinate
+    /// values come from the primitive's Scalar fields directly.
+    SketchExtrude {
+        id: String,
+        sketch: crate::sketch::Sketch,
+        direction: [Scalar; 3],
+    },
+
+    /// Revolve a `Sketch` around the z-axis. The sketch's primitives are
+    /// traced and the resulting profile is treated as an open polyline in
+    /// the xz-plane (same constraints as `Revolve`: first + last on the
+    /// z-axis, interior x > 0). The sketch must produce exactly one
+    /// profile.
+    SketchRevolve {
+        id: String,
+        sketch: crate::sketch::Sketch,
+    },
+
     /// Subtract an axis-aligned box (a "corner cutter") from `input`. The
     /// cutter has its `min` corner at `corner` and the given `extents`. Useful
     /// as quick-and-dirty chamfer-by-cut or "flatten this corner of a
@@ -2681,6 +2702,8 @@ impl Feature {
             | Feature::Loft { id, .. }
             | Feature::TaperedExtrude { id, .. }
             | Feature::Revolve { id, .. }
+            | Feature::SketchExtrude { id, .. }
+            | Feature::SketchRevolve { id, .. }
             | Feature::Tube { id, .. }
             | Feature::HollowBox { id, .. }
             | Feature::CornerCut { id, .. }
@@ -2918,6 +2941,8 @@ impl Feature {
             | Feature::Loft { .. }
             | Feature::TaperedExtrude { .. }
             | Feature::Revolve { .. }
+            | Feature::SketchExtrude { .. }
+            | Feature::SketchRevolve { .. }
             | Feature::Tube { .. }
             | Feature::HollowBox { .. }
             | Feature::Slot { .. }
