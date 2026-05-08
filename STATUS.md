@@ -29,7 +29,7 @@ A typical model is ~10 lines of JSON declaring a tree of:
   `LinearPattern`, `PolarPattern`.
 - **Manufacturing operations**: `CornerCut`, `Fillet`, `Fillets`
   (multi-edge), `Chamfer`, `Counterbore`, `Countersink`, `HoleArray`,
-  `BoltCircle`, `HexHole`, `SquareHole`, `Shell` (planar inward-offset).
+  `BoltCircle`, `HexHole`, `SquareHole`.
 - **Booleans**: `Union`, `Intersection`, `Difference`.
 
 Every numeric field accepts literals, `$param` references, or arbitrary
@@ -51,49 +51,44 @@ kernel + authoring + viewer + production output).
 | Picking / selection (face → owner Feature)| 5%        | 70%      | 3.5    |
 | Feature tree UI                           | 5%        | 60%      | 3.0    |
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
-| Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
+| Drawings (3-view + dimensions)            | 4%        | 75%      | 3.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
-| Manufacturing features (170+ — see catalog, +planar Shell) | 12% | 96% | 11.52 |
+| Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.1%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~66.0%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
 ## Latest session (2026-05-08)
 
-Planar Shell shipped. New `kerf_brep::primitives::shell_planar(input,
-thickness) -> Result<Solid, ShellError>` does per-vertex inward-plane
-intersection on planar polyhedra and returns `outer - inner` via the
-non-panicking boolean engine. Wired up to cad as `Feature::Shell { id,
-input, thickness }`. **Manufacturing bumps 95% → 96%** (+0.12 SW pts).
-727 tests → 738 tests, 0 failed.
+Drawings back-end shipped. ~65.0% → ~66.0% (+1.0 SW pt), 727 → 738 tests,
+0 failed.
 
-- **Algorithm**: every input vertex's new position is the intersection
-  of its incident faces' planes offset inward by `thickness`. Solved
-  closed-form via Cramer's rule using cross/dot products (no nalgebra
-  matrix dep added to kerf-brep). For >3 incident planes (e.g. pyramid
-  apex), picks the most numerically stable triple by `|n_a · (n_b ×
-  n_c)|`. Topology is preserved between outer and inner — only vertex
-  positions, edge curve segments, and face plane frames are recomputed.
-- **Validation**: `Feature::Shell` rejects `thickness <= 0`, rejects
-  `2*thickness >= min_dim` of the input AABB, and rejects any non-
-  planar face (Sphere/Cylinder/Cone/Frustum/Torus) with a clear
-  `EvalError::Invalid`. The kernel-level `ShellError` covers the same
-  cases plus `BooleanFailed` for stitch failures.
-- **Tested**: parity with `HollowBox` for a 40×30×20 box (volume within
-  1%), hexagonal `RegularPrism` (volume vs analytic apothem-shrink
-  formula within 2%), zero-thickness rejection, too-thick rejection,
-  curved-surface rejection (Sphere), and JSON round-trip.
-- **Limitations** (documented inline): convex inputs only in practice.
-  Concave vertices (e.g. an L-bracket's interior corner) produce a
-  self-intersecting inner solid that the boolean engine rejects via
-  `BooleanFailed`. Curved-surface Shell still needs offset-surface
-  math and is multi-week work — those inputs return `Invalid`.
+- **Drawing dimensions back-end**: new `kerf_brep::dimension` module with
+  pure math helpers (`distance`, `angle_between_vectors`,
+  `angle_at_vertex`, `project_to_plane`, `to_2d_view` for { Top, Front,
+  Side, Iso }) plus `Dimension { from, to, kind }` with
+  `DimensionKind = Linear | RadialFromCenter { center } | Angular {
+  vertex }`. `render_dimensioned_view(solid, view, dimensions, viewport)`
+  returns a self-contained SVG string with a silhouette polygon (convex
+  hull of the projected tessellation — see limitation below), dimension
+  lines, arrowheads, and `<text>` measurement values. Exposed in the
+  WASM API as `measure_distance`, `project_to_view`, `angle_at_vertex`,
+  `project_point_to_plane`, and `render_drawing_svg(model_json,
+  target_id, params_json, view, dimensions_json, viewport_json)`. UI
+  wiring (a Drawings panel in the viewer that lets the user click two
+  vertices and download the resulting SVG) is still TODO — it's why the
+  Drawings line is 75% rather than 90%. **Drawings category bumps 50% →
+  75%.** Convex-hull silhouette is the documented fallback; concave
+  parts (L-bracket viewed from above) currently render as their bounding
+  shape. True silhouette (walk the edge graph, emit edges where adjacent
+  face normals have opposite signs in the view direction) is the next
+  improvement.
 
-## Latest session (2026-05-06)
+## Previous session (2026-05-06)
 
 GAP 1 (Picking → edit) shipped. GAP 2 Plan B (SweepPath) shipped. Bonus
 faceted torus + Donut feature shipped. ~52.7% → ~54.7% (+2 SW pts), 518
@@ -203,17 +198,11 @@ multi-week engineering projects in their own right:
   primary input mode. Sketcher needs an interactive 2D drawing surface;
   bidirectional constraint solver is its own discipline.
 - **Manufacturing features — full Fillet/Chamfer (multi-edge stacking),
-  curved-surface Shell, Draft** (~8 SW pts after planar Shell shipped).
-  Single-edge axis-aligned Fillet/Chamfer ship today; stacking multiple
-  Fillets on the same body trips the boolean engine where the second
-  fillet's wedge cutter meets the first fillet's curved face. **Planar
-  Shell ships as `Feature::Shell` / `kerf_brep::shell_planar`** — Box,
-  RegularPrism, ExtrudePolygon (convex), Pyramid, Wedge, and the
-  structural shapes are supported via per-vertex inward-plane
-  intersection. Curved-surface Shell (Sphere, Cylinder, Frustum,
-  Cone, Torus) still needs offset-surface math the kernel doesn't have
-  and is multi-week work; those inputs return `EvalError::Invalid`.
-  Draft is similarly blocked.
+  Shell, Draft** (~10 SW pts). Single-edge axis-aligned Fillet/Chamfer
+  ship today; stacking multiple Fillets on the same body trips the
+  boolean engine where the second fillet's wedge cutter meets the first
+  fillet's curved face. Shell + Draft both need true offset-surface math
+  the kernel doesn't have. Each is multi-week work.
 - **Curved-surface analytic booleans** (8 SW pts). kerf currently handles
   planar + faceted curves; analytic cylinder/sphere/torus booleans are a
   major kernel addition.

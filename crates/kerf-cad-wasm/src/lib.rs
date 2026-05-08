@@ -8,16 +8,15 @@
 use wasm_bindgen::prelude::*;
 
 use kerf_brep::{
-    axis_aligned_line_edge, edge_info, face_boundary_edges, quadrant_hint_for_axis_edge,
+    dimension::{
+        self, render_dimensioned_view, Dimension, DimensionKind, ViewKind, ViewportSpec,
+    },
     measure::solid_volume,
     tessellate::{tessellate, tessellate_with_face_index},
     Solid,
 };
 use kerf_cad::Model;
-use std::collections::HashMap;
-
-mod feature_kinds;
-pub use feature_kinds::ALL_KINDS;
+use kerf_geom::{Point3, Vec3};
 
 // Default panic hook is fine; viewer can install console_error_panic_hook
 // if it wants nicer traces in DevTools. Keeping the wasm crate dep-light.
@@ -55,15 +54,6 @@ pub fn parameters_of(json: &str) -> Result<JsValue, JsError> {
 pub fn target_ids_of(json: &str) -> Result<Vec<String>, JsError> {
     let model = Model::from_json_str(json).map_err(|e| JsError::new(&format!("parse: {e}")))?;
     Ok(model.ids().map(|s| s.to_string()).collect())
-}
-
-/// Return every `Feature` variant name (the JSON `kind` discriminator),
-/// in source order. Powers the viewer's "Browse Features" catalog: each
-/// returned string is what the user would type as `kind` in a feature
-/// block. Stable across model loads — pure metadata, no parsing.
-#[wasm_bindgen]
-pub fn feature_kinds() -> Vec<String> {
-    ALL_KINDS.iter().map(|s| s.to_string()).collect()
 }
 
 /// Re-evaluate the model with overridden parameters and return the mesh.
@@ -138,60 +128,6 @@ pub fn evaluate_with_face_ids(
                 .unwrap_or_default()
         })
         .collect();
-
-    // Edge enumeration. Walk solid.topo.edge_ids() in iteration order; build
-    // a stable (EdgeId -> index) map so face_to_edges can refer to edges by
-    // their integer index. The edge index is sequential 0..edge_count and
-    // matches the order edges appear in the `edges` vector below.
-    let mut edge_index_map: HashMap<kerf_topo::EdgeId, u32> = HashMap::new();
-    let mut edges_out: Vec<EdgeOut> = Vec::new();
-    for (idx, eid) in solid.topo.edge_ids().enumerate() {
-        edge_index_map.insert(eid, idx as u32);
-        let info = edge_info(&solid, eid);
-        let (axis_hint, edge_min_hint, edge_length_hint, quadrant_hint) =
-            match axis_aligned_line_edge(&solid, eid) {
-                Some((axis, edge_min, len)) => {
-                    let q = quadrant_hint_for_axis_edge(&solid, eid, axis).unwrap_or_default();
-                    (axis.to_string(), edge_min, len, q)
-                }
-                None => (String::new(), [0.0; 3], 0.0, String::new()),
-            };
-        // Edge owner tag: pick the owner tag of one of the two adjacent
-        // faces (preferring a non-empty owner). Useful diagnostic for the
-        // viewer.
-        let owner_tag = adjacent_face_owner(&solid, eid).unwrap_or_default();
-        let (p_start, p_end, length, curve_kind) = match info {
-            Some(i) => (i.p_start, i.p_end, i.length, i.curve_kind.to_string()),
-            None => ([0.0; 3], [0.0; 3], 0.0, "unknown".to_string()),
-        };
-        edges_out.push(EdgeOut {
-            id: idx as u32,
-            owner_tag,
-            p_start,
-            p_end,
-            length,
-            curve_kind,
-            axis_hint,
-            edge_min_hint,
-            edge_length_hint,
-            quadrant_hint,
-        });
-    }
-
-    // face_to_edges: indexed by face render index (0..face_count). Walk the
-    // same face_ids() iterator the tessellator uses to keep indices in
-    // lockstep.
-    let face_to_edges: Vec<Vec<u32>> = solid
-        .topo
-        .face_ids()
-        .map(|fid| {
-            face_boundary_edges(&solid, fid)
-                .into_iter()
-                .filter_map(|eid| edge_index_map.get(&eid).copied())
-                .collect()
-        })
-        .collect();
-
     let vol = solid_volume(&solid);
     #[derive(serde::Serialize)]
     struct OutFull {
@@ -199,8 +135,6 @@ pub fn evaluate_with_face_ids(
         face_ids: Vec<u32>,
         face_count: u32,
         face_owner_tags: Vec<String>,
-        face_to_edges: Vec<Vec<u32>>,
-        edges: Vec<EdgeOut>,
         volume: f64,
         shell_count: usize,
         vertex_count: usize,
@@ -212,8 +146,6 @@ pub fn evaluate_with_face_ids(
         face_ids,
         face_count,
         face_owner_tags: owner_tags,
-        face_to_edges,
-        edges: edges_out,
         volume: vol,
         shell_count: solid.shell_count(),
         vertex_count: solid.vertex_count(),
@@ -221,54 +153,6 @@ pub fn evaluate_with_face_ids(
         face_count_topo: solid.face_count(),
     })
     .map_err(|e| JsError::new(&e.to_string()))
-}
-
-#[derive(serde::Serialize)]
-struct EdgeOut {
-    id: u32,
-    owner_tag: String,
-    p_start: [f64; 3],
-    p_end: [f64; 3],
-    length: f64,
-    curve_kind: String,
-    /// "x" | "y" | "z" if the edge is an axis-aligned line, else "".
-    axis_hint: String,
-    /// For axis-aligned line edges: the lower-coord endpoint (Fillet
-    /// `edge_min`). All zeros if not axis-aligned.
-    edge_min_hint: [f64; 3],
-    /// Length along the axis. 0.0 if not axis-aligned.
-    edge_length_hint: f64,
-    /// "pp"|"pn"|"np"|"nn" describing the body's quadrant relative to the
-    /// edge in canonical perpendicular order. Empty if not axis-aligned.
-    quadrant_hint: String,
-}
-
-/// Pick an "owner tag" to attach to an edge by inspecting the two adjacent
-/// faces (the half-edges' loops' faces). Prefers a non-empty owner, falling
-/// back to the first face's owner if both are empty.
-fn adjacent_face_owner(solid: &Solid, edge_id: kerf_topo::EdgeId) -> Option<String> {
-    let edge = solid.topo.edge(edge_id)?;
-    let [he_a, he_b] = edge.half_edges();
-    let face_of = |heid: kerf_topo::HalfEdgeId| -> Option<kerf_topo::FaceId> {
-        let he = solid.topo.half_edge(heid)?;
-        let lp = solid.topo.loop_(he.loop_())?;
-        Some(lp.face())
-    };
-    let fa = face_of(he_a);
-    let fb = face_of(he_b);
-    let tag_of = |fid: Option<kerf_topo::FaceId>| -> String {
-        fid.and_then(|f| solid.face_owner_tag.get(f).cloned())
-            .unwrap_or_default()
-    };
-    let ta = tag_of(fa);
-    let tb = tag_of(fb);
-    if !ta.is_empty() {
-        Some(ta)
-    } else if !tb.is_empty() {
-        Some(tb)
-    } else {
-        Some(String::new())
-    }
 }
 
 fn solid_to_triangles(solid: &Solid, segments: usize) -> Vec<f32> {
@@ -284,88 +168,140 @@ fn solid_to_triangles(solid: &Solid, segments: usize) -> Vec<f32> {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// ----------------------------------------------------------------------
+// Drawing-dimension helpers (back-end half of the "Drawings" capability).
+//
+// The viewer can drive these without re-implementing the math. All inputs
+// are flat `[f64; N]` arrays so the JS side doesn't need to know about
+// nalgebra Point3/Vec3.
+// ----------------------------------------------------------------------
 
-    /// `ALL_KINDS` is hand-mirrored from `kerf_cad::Feature`. If anyone
-    /// ever adds or removes a variant, drift will silently break the
-    /// catalog browser. We don't have a way to introspect the enum at
-    /// runtime, but we *can* parse a tiny model that names each kind
-    /// — if the variant exists and accepts a JSON object with just
-    /// `{kind, id}`, serde will reject the unknown ones loudly. (The
-    /// kernel may still complain about missing fields when *evaluating*
-    /// — that's fine; we only check serde-level recognition here.)
-    #[test]
-    fn all_kinds_are_known_to_serde() {
-        // Every kind should at least be a recognized serde tag. We use
-        // serde_json's value-level deserialization to a raw Feature; if
-        // the kind is unknown, serde returns an "unknown variant" error.
-        // Missing-fields errors are fine — they prove the variant was
-        // recognized.
-        for kind in ALL_KINDS {
-            let stub = format!(r#"{{"kind":"{kind}","id":"x"}}"#);
-            let res: Result<kerf_cad::feature::Feature, _> = serde_json::from_str(&stub);
-            if let Err(e) = &res {
-                let msg = e.to_string();
-                // serde produces "unknown variant" when the tag isn't a
-                // real variant. Any other error (missing field, type
-                // mismatch on a required parameter) means the kind was
-                // recognized — that's what we want.
-                assert!(
-                    !msg.contains("unknown variant"),
-                    "feature kind {kind:?} not recognized by serde: {msg}",
-                );
+fn pt(a: &[f64]) -> Result<Point3, JsError> {
+    if a.len() < 3 {
+        return Err(JsError::new("expected [x, y, z]"));
+    }
+    Ok(Point3::new(a[0], a[1], a[2]))
+}
+
+fn vc(a: &[f64]) -> Result<Vec3, JsError> {
+    if a.len() < 3 {
+        return Err(JsError::new("expected [x, y, z]"));
+    }
+    Ok(Vec3::new(a[0], a[1], a[2]))
+}
+
+/// Euclidean distance between two world-space points.
+#[wasm_bindgen]
+pub fn measure_distance(p1: Vec<f64>, p2: Vec<f64>) -> Result<f64, JsError> {
+    Ok(dimension::distance(pt(&p1)?, pt(&p2)?))
+}
+
+/// Project a 3D point into 2D paper coordinates for the named view.
+/// `view` is one of `"top"`, `"front"`, `"side"`, `"iso"`. Returned
+/// `[u, v]` is in world units.
+#[wasm_bindgen]
+pub fn project_to_view(p: Vec<f64>, view: &str) -> Result<Vec<f64>, JsError> {
+    let v = ViewKind::from_str(view)
+        .ok_or_else(|| JsError::new(&format!("unknown view '{view}' (top|front|side|iso)")))?;
+    let (u, vv) = dimension::to_2d_view(pt(&p)?, v);
+    Ok(vec![u, vv])
+}
+
+/// Angle (radians) at `vertex` formed by rays to `a` and `b`. Range [0, pi].
+#[wasm_bindgen]
+pub fn angle_at_vertex(a: Vec<f64>, vertex: Vec<f64>, b: Vec<f64>) -> Result<f64, JsError> {
+    Ok(dimension::angle_at_vertex(pt(&a)?, pt(&vertex)?, pt(&b)?))
+}
+
+/// Project a point onto a plane defined by `(plane_origin, plane_normal)`.
+#[wasm_bindgen]
+pub fn project_point_to_plane(
+    p: Vec<f64>,
+    plane_normal: Vec<f64>,
+    plane_origin: Vec<f64>,
+) -> Result<Vec<f64>, JsError> {
+    let q = dimension::project_to_plane(pt(&p)?, vc(&plane_normal)?, pt(&plane_origin)?);
+    Ok(vec![q.x, q.y, q.z])
+}
+
+/// Render a model + named view + dimension list to an SVG string.
+///
+/// `dimensions_json` is an array of objects:
+///   `{ "kind": "linear",   "from": [x,y,z], "to": [x,y,z] }`
+///   `{ "kind": "radial",   "from": [x,y,z], "to": [x,y,z], "center": [x,y,z] }`
+///   `{ "kind": "angular",  "from": [x,y,z], "to": [x,y,z], "vertex": [x,y,z] }`
+///
+/// `viewport_json` is `{ "width": f64, "height": f64, "padding": f64 }` —
+/// pass an empty object `{}` to use the default A4-ish viewport.
+#[wasm_bindgen]
+pub fn render_drawing_svg(
+    json: &str,
+    target_id: &str,
+    params_json: &str,
+    view: &str,
+    dimensions_json: &str,
+    viewport_json: &str,
+) -> Result<String, JsError> {
+    let mut model =
+        Model::from_json_str(json).map_err(|e| JsError::new(&format!("parse model: {e}")))?;
+    let overrides: std::collections::HashMap<String, f64> = serde_json::from_str(params_json)
+        .map_err(|e| JsError::new(&format!("parse params: {e}")))?;
+    for (k, v) in overrides {
+        model.parameters.insert(k, v);
+    }
+    let solid = model
+        .evaluate(target_id)
+        .map_err(|e| JsError::new(&format!("evaluate '{target_id}': {e}")))?;
+    let view_kind = ViewKind::from_str(view)
+        .ok_or_else(|| JsError::new(&format!("unknown view '{view}' (top|front|side|iso)")))?;
+
+    #[derive(serde::Deserialize)]
+    struct DimRaw {
+        kind: String,
+        from: [f64; 3],
+        to: [f64; 3],
+        center: Option<[f64; 3]>,
+        vertex: Option<[f64; 3]>,
+    }
+    let raws: Vec<DimRaw> = serde_json::from_str(dimensions_json)
+        .map_err(|e| JsError::new(&format!("parse dimensions: {e}")))?;
+    let mut dims: Vec<Dimension> = Vec::with_capacity(raws.len());
+    for r in raws {
+        let from = Point3::new(r.from[0], r.from[1], r.from[2]);
+        let to = Point3::new(r.to[0], r.to[1], r.to[2]);
+        let kind = match r.kind.to_ascii_lowercase().as_str() {
+            "linear" => DimensionKind::Linear,
+            "radial" | "radius" | "radialfromcenter" => {
+                let c = r.center.ok_or_else(|| JsError::new("radial dim missing 'center'"))?;
+                DimensionKind::RadialFromCenter {
+                    center: Point3::new(c[0], c[1], c[2]),
+                }
             }
-        }
-    }
-
-    /// Round-trip: feature_kinds() should return exactly ALL_KINDS, in
-    /// the same order, no duplicates.
-    #[test]
-    fn feature_kinds_round_trip() {
-        let exported = feature_kinds();
-        assert_eq!(exported.len(), ALL_KINDS.len());
-        for (a, b) in exported.iter().zip(ALL_KINDS.iter()) {
-            assert_eq!(a, b);
-        }
-        // No duplicates.
-        let mut sorted = exported.clone();
-        sorted.sort();
-        sorted.dedup();
-        assert_eq!(
-            sorted.len(),
-            exported.len(),
-            "feature_kinds() returned duplicates",
-        );
-        // Generous lower bound — sanity that we shipped a real catalog.
-        assert!(
-            exported.len() > 200,
-            "feature_kinds() returned only {} entries — expected 200+",
-            exported.len(),
-        );
-    }
-
-    /// Every kind from `feature_kinds()` should make it into a parseable
-    /// model wrapper (i.e. `target_ids_of` doesn't choke on a tiny model
-    /// that names the kind). This guarantees the catalog browser's
-    /// "insert default-parameter instance" path can at least *attempt*
-    /// to insert any kind.
-    #[test]
-    fn each_kind_can_be_named_in_a_model_skeleton() {
-        // Use Box (which we know works) as a baseline so the model at
-        // least has one valid feature; we only assert the kind string
-        // is accepted as a tag.
-        for kind in feature_kinds() {
-            let stub = format!(r#"{{"kind":"{kind}","id":"probe"}}"#);
-            let res: Result<kerf_cad::feature::Feature, _> = serde_json::from_str(&stub);
-            if let Err(e) = res {
-                let msg = e.to_string();
-                assert!(
-                    !msg.contains("unknown variant"),
-                    "kind {kind:?} rejected at serde tag layer: {msg}",
-                );
+            "angular" | "angle" => {
+                let v = r.vertex.ok_or_else(|| JsError::new("angular dim missing 'vertex'"))?;
+                DimensionKind::Angular {
+                    vertex: Point3::new(v[0], v[1], v[2]),
+                }
             }
-        }
+            other => return Err(JsError::new(&format!("unknown dimension kind '{other}'"))),
+        };
+        dims.push(Dimension { from, to, kind });
     }
+
+    #[derive(serde::Deserialize, Default)]
+    struct VpRaw {
+        width: Option<f64>,
+        height: Option<f64>,
+        padding: Option<f64>,
+    }
+    let vp_raw: VpRaw = serde_json::from_str(viewport_json)
+        .map_err(|e| JsError::new(&format!("parse viewport: {e}")))?;
+    let default_vp = ViewportSpec::default_a4_ish();
+    let viewport = ViewportSpec::new(
+        vp_raw.width.unwrap_or(default_vp.width),
+        vp_raw.height.unwrap_or(default_vp.height),
+        vp_raw.padding.unwrap_or(default_vp.padding),
+    );
+
+    Ok(render_dimensioned_view(&solid, view_kind, &dims, viewport))
 }
