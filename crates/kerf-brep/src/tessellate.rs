@@ -22,13 +22,41 @@ use kerf_topo::{EdgeId, FaceId};
 ///
 /// Triangle winding is outward-normal CCW as seen from outside the solid.
 pub fn tessellate(solid: &Solid, lateral_segments: usize) -> FaceSoup {
+    let (soup, _) = tessellate_with_face_index(solid, lateral_segments);
+    soup
+}
+
+/// Same as [`tessellate`], plus a parallel `Vec<u32>` recording which face
+/// index each triangle belongs to. Face indices are sequential starting at 0
+/// in the order `solid.topo.face_ids()` yields face IDs. Used by the
+/// browser viewer for face-level picking.
+pub fn tessellate_with_face_index(solid: &Solid, lateral_segments: usize) -> (FaceSoup, Vec<u32>) {
     debug_assert!(lateral_segments >= 3);
     let mut soup = FaceSoup::default();
+    let mut face_index: Vec<u32> = Vec::new();
+    let mut next_face: u32 = 0;
 
     for face_id in solid.topo.face_ids() {
+        let before = soup.triangles.len();
+        tessellate_one_face_into(&mut soup, solid, face_id, lateral_segments);
+        let added = soup.triangles.len() - before;
+        for _ in 0..added {
+            face_index.push(next_face);
+        }
+        next_face = next_face.saturating_add(1);
+    }
+    (soup, face_index)
+}
+
+fn tessellate_one_face_into(
+    soup: &mut FaceSoup,
+    solid: &Solid,
+    face_id: kerf_topo::FaceId,
+    lateral_segments: usize,
+) {
         let surface = match solid.face_geom.get(face_id) {
             Some(s) => s,
-            None => continue,
+            None => return,
         };
         match surface {
             SurfaceKind::Plane(plane) => {
@@ -55,7 +83,7 @@ pub fn tessellate(solid: &Solid, lateral_segments: usize) -> FaceSoup {
                                         soup.triangles.push([center, p1, p0]);
                                     }
                                 }
-                                continue;
+                                return;
                             }
                         }
                     }
@@ -197,8 +225,6 @@ pub fn tessellate(solid: &Solid, lateral_segments: usize) -> FaceSoup {
                 }
             }
         }
-    }
-    soup
 }
 
 /// Walk a cone face's outer loop to find the apex vertex position.
