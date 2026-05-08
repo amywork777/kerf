@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use kerf_brep::{
     primitives::{
         box_, box_at, cone, cone_faceted, cylinder_faceted, extrude_lofted, extrude_polygon,
-        frustum, frustum_faceted, revolve_polyline, sphere, sphere_faceted, torus, torus_faceted,
+        frustum, frustum_faceted, revolve_polyline, shell_planar, sphere, sphere_faceted, torus,
+        torus_faceted, ShellError,
     },
     Solid,
 };
@@ -5560,6 +5561,93 @@ fn build(
                 id: id.into(),
                 op: "hollow_box_difference",
                 message: e.message,
+            })
+        }
+        Feature::Shell {
+            input, thickness, ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let t = resolve_one(id, thickness, params)?;
+            if t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Shell thickness must be > 0 (got {t})"),
+                });
+            }
+            // Reject curved-surface inputs up-front so the user gets a clear
+            // diagnostic before we try to compute a bounding box (analytic
+            // Sphere has only 1 vertex; bbox would be degenerate).
+            for (_, surf) in base.face_geom.iter() {
+                if !matches!(surf, kerf_brep::SurfaceKind::Plane(_)) {
+                    return Err(EvalError::Invalid {
+                        id: id.into(),
+                        reason:
+                            "Shell only supports planar primitives; input has a curved-surface face. \
+                             (Sphere, Cylinder, Cone, Frustum, Torus, and any composite containing them \
+                             are not supported — see STATUS.md.)"
+                                .into(),
+                    });
+                }
+            }
+            // Compute AABB min-dimension to validate thickness < min_dim/2.
+            let mut min_p = [f64::INFINITY; 3];
+            let mut max_p = [f64::NEG_INFINITY; 3];
+            for (_, p) in base.vertex_geom.iter() {
+                let coords = [p.x, p.y, p.z];
+                for k in 0..3 {
+                    if coords[k] < min_p[k] {
+                        min_p[k] = coords[k];
+                    }
+                    if coords[k] > max_p[k] {
+                        max_p[k] = coords[k];
+                    }
+                }
+            }
+            let dims = [
+                max_p[0] - min_p[0],
+                max_p[1] - min_p[1],
+                max_p[2] - min_p[2],
+            ];
+            let min_dim = dims.iter().cloned().fold(f64::INFINITY, f64::min);
+            if !min_dim.is_finite() || min_dim <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "Shell input has degenerate bounding box".into(),
+                });
+            }
+            if 2.0 * t >= min_dim {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Shell thickness {t} too large for input min dimension {min_dim} (need 2*thickness < min_dim)"
+                    ),
+                });
+            }
+            shell_planar(base, t).map_err(|e| match e {
+                ShellError::CurvedSurface => EvalError::Invalid {
+                    id: id.into(),
+                    reason:
+                        "Shell only supports planar primitives; input has a curved-surface face. \
+                         (Sphere, Cylinder, Cone, Frustum, Torus, and any composite containing them \
+                         are not supported — see STATUS.md.)"
+                            .into(),
+                },
+                ShellError::NonPositiveThickness(t) => EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Shell thickness must be > 0 (got {t})"),
+                },
+                ShellError::DegenerateVertex => EvalError::Invalid {
+                    id: id.into(),
+                    reason:
+                        "Shell could not compute inward offset (degenerate vertex normals). \
+                         Concave inputs and very thin offsets are common causes."
+                            .into(),
+                },
+                ShellError::BooleanFailed(m) => EvalError::Boolean {
+                    id: id.into(),
+                    op: "shell_difference",
+                    message: m,
+                },
             })
         }
 
