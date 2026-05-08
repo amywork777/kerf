@@ -939,6 +939,102 @@ pub enum Feature {
         wire_segments: usize,
     },
 
+    /// True sweep of an arbitrary 2D `profile` along an arbitrary 3D
+    /// polyline `path`. Each pair of consecutive path points (p0, p1)
+    /// defines a segment; the profile is placed in a frame perpendicular
+    /// to the segment direction at each end and lofted between the two
+    /// frames via `extrude_lofted`. Successive segments are unioned.
+    ///
+    /// Frames are computed without parallel transport — each segment uses
+    /// a local frame from its tangent only, so consecutive segments may
+    /// have a discrete rotation about the tangent at the join. For smooth
+    /// curves at small step sizes this is visually negligible.
+    ///
+    /// The first path point is the profile origin; the profile is the XY
+    /// plane in the local frame, with +z being the segment tangent.
+    /// `slices` is reserved for future per-segment subdivision (currently
+    /// each polyline edge produces exactly one loft segment); pass `1`.
+    SweepProfile {
+        id: String,
+        profile: Profile2D,
+        path: Vec<[Scalar; 3]>,
+        slices: usize,
+    },
+
+    /// Loft through N profiles at N positions, in order. Each consecutive
+    /// pair (profiles[i], profiles[i+1]) at (positions[i], positions[i+1])
+    /// becomes a single `extrude_lofted` segment; all segments are unioned.
+    ///
+    /// All profiles must have the same vertex count ≥ 3. The profile XY
+    /// is placed at `positions[i]` with no rotation — the profile plane
+    /// is always parallel to the world XY plane. For smooth-curve lofts
+    /// where the profile follows the path tangent, see `SweepProfile`.
+    LoftMulti {
+        id: String,
+        profiles: Vec<Profile2D>,
+        positions: Vec<[Scalar; 3]>,
+        slices: usize,
+    },
+
+    /// Sweep `profile` along `path` while progressively rotating the
+    /// profile about the path tangent by a total of `twist_angle` degrees.
+    /// At path point i (of N), the profile is rotated by
+    /// `twist_angle * i / (N-1)` degrees around the centroid in the local
+    /// XY plane before being lifted into the segment frame. Joins between
+    /// segments stay continuous because both endpoints of a segment share
+    /// the same rotation as their neighbors' shared endpoint.
+    SweepWithTwist {
+        id: String,
+        profile: Profile2D,
+        path: Vec<[Scalar; 3]>,
+        twist_angle: Scalar,
+    },
+
+    /// Sweep `profile` along `path` while linearly interpolating the
+    /// profile scale from `start_scale` (at the first path point) to
+    /// `end_scale` (at the last). Scale is applied around the profile
+    /// centroid in the local XY plane. Both scales must be > 0.
+    SweepWithScale {
+        id: String,
+        profile: Profile2D,
+        path: Vec<[Scalar; 3]>,
+        start_scale: Scalar,
+        end_scale: Scalar,
+    },
+
+    /// Proper screw-thread approximation: sweep a triangular V-thread
+    /// `profile` (built internally from `thread_height`) along a helical
+    /// path of `coil_radius`, `pitch`, `turns`. Unlike `ScrewThread` —
+    /// which chains short triangular cylinders along the helix — this
+    /// uses a true profile sweep, so the thread cross-section orientation
+    /// rotates with the helix tangent. The thread profile is an
+    /// equilateral triangle with apex pointing radially outward from the
+    /// helix axis.
+    HelicalThread {
+        id: String,
+        coil_radius: Scalar,
+        thread_height: Scalar,
+        pitch: Scalar,
+        turns: Scalar,
+        segments_per_turn: usize,
+    },
+
+    /// Hollow cylinder of `outer_radius`/`inner_radius` and total `height`
+    /// with progressive twist of `twist_turns` complete revolutions from
+    /// bottom to top. Built as a difference of two `TwistedExtrude`-style
+    /// solids: a regular `slices`-gon outer profile and a smaller inner
+    /// profile, each twisted by `twist_turns * 360°` about its centroid.
+    /// Inner is extended slightly past the caps for a clean through-bore.
+    /// `slices` ≥ 3 is the polygonal facet count of both profiles.
+    TwistedTube {
+        id: String,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        height: Scalar,
+        twist_turns: Scalar,
+        slices: usize,
+    },
+
     /// Mortise: rectangular pocket cut into the +z face of a workpiece.
     /// Centered on (cx, cy), spanning (width, length, depth) where depth
     /// is along -z. Produces a freestanding pocket solid; subtract it
@@ -2823,6 +2919,12 @@ impl Feature {
             | Feature::SpiralWedge { id, .. }
             | Feature::DoubleHelix { id, .. }
             | Feature::TaperedCoil { id, .. }
+            | Feature::SweepProfile { id, .. }
+            | Feature::LoftMulti { id, .. }
+            | Feature::SweepWithTwist { id, .. }
+            | Feature::SweepWithScale { id, .. }
+            | Feature::HelicalThread { id, .. }
+            | Feature::TwistedTube { id, .. }
             | Feature::Mortise { id, .. }
             | Feature::Tenon { id, .. }
             | Feature::FingerJoint { id, .. }
@@ -3058,6 +3160,12 @@ impl Feature {
             | Feature::SpiralWedge { .. }
             | Feature::DoubleHelix { .. }
             | Feature::TaperedCoil { .. }
+            | Feature::SweepProfile { .. }
+            | Feature::LoftMulti { .. }
+            | Feature::SweepWithTwist { .. }
+            | Feature::SweepWithScale { .. }
+            | Feature::HelicalThread { .. }
+            | Feature::TwistedTube { .. }
             | Feature::Mortise { .. }
             | Feature::Tenon { .. }
             | Feature::FingerJoint { .. }

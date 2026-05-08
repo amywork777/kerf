@@ -2563,6 +2563,200 @@ fn build(
             }
             Ok(acc.unwrap())
         }
+        Feature::SweepProfile { profile, path, slices, .. } => {
+            build_sweep_profile(id, profile, path, *slices, None, None, params)
+        }
+        Feature::LoftMulti { profiles, positions, slices, .. } => {
+            if profiles.len() < 2 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("LoftMulti needs at least 2 profiles (got {})", profiles.len()),
+                });
+            }
+            if profiles.len() != positions.len() {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "LoftMulti profiles ({}) and positions ({}) must have the same length",
+                        profiles.len(),
+                        positions.len()
+                    ),
+                });
+            }
+            if *slices < 1 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "LoftMulti slices must be >= 1".into(),
+                });
+            }
+            let n_pts = profiles[0].points.len();
+            if n_pts < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("LoftMulti profiles need at least 3 points each (got {n_pts})"),
+                });
+            }
+            for (i, p) in profiles.iter().enumerate() {
+                if p.points.len() != n_pts {
+                    return Err(EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!(
+                            "LoftMulti profile {i} has {} points; profile 0 has {n_pts}",
+                            p.points.len()
+                        ),
+                    });
+                }
+            }
+            // Resolve all profiles + positions.
+            let mut resolved: Vec<Vec<Point3>> = Vec::with_capacity(profiles.len());
+            for (i, prof) in profiles.iter().enumerate() {
+                let pos = resolve_arr(&positions[i], params).map_err(|m| EvalError::Parameter {
+                    id: id.into(),
+                    message: format!("position {i}: {m}"),
+                })?;
+                let mut pts = Vec::with_capacity(n_pts);
+                for p in &prof.points {
+                    let xy = resolve_arr(p, params).map_err(|m| EvalError::Parameter {
+                        id: id.into(),
+                        message: format!("profile {i}: {m}"),
+                    })?;
+                    pts.push(Point3::new(pos[0] + xy[0], pos[1] + xy[1], pos[2]));
+                }
+                resolved.push(pts);
+            }
+            let mut acc: Option<Solid> = None;
+            for i in 0..resolved.len() - 1 {
+                let seg = extrude_lofted(&resolved[i], &resolved[i + 1]);
+                acc = Some(match acc.take() {
+                    None => seg,
+                    Some(prev) => prev.try_union(&seg).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "loft_multi_segment_union",
+                        message: format!("segment {i}→{}: {}", i + 1, e.message),
+                    })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+        Feature::SweepWithTwist { profile, path, twist_angle, .. } => {
+            let twist = resolve_one(id, twist_angle, params)?;
+            build_sweep_profile(id, profile, path, 1, Some(twist.to_radians()), None, params)
+        }
+        Feature::SweepWithScale { profile, path, start_scale, end_scale, .. } => {
+            let s0 = resolve_one(id, start_scale, params)?;
+            let s1 = resolve_one(id, end_scale, params)?;
+            if s0 <= 0.0 || s1 <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "SweepWithScale requires positive start_scale and end_scale (got {s0}, {s1})"
+                    ),
+                });
+            }
+            build_sweep_profile(id, profile, path, 1, None, Some((s0, s1)), params)
+        }
+        Feature::HelicalThread { coil_radius, thread_height, pitch, turns, segments_per_turn, .. } => {
+            let r_coil = resolve_one(id, coil_radius, params)?;
+            let r_thread = resolve_one(id, thread_height, params)?;
+            let p = resolve_one(id, pitch, params)?;
+            let t = resolve_one(id, turns, params)?;
+            if r_coil <= 0.0 || r_thread <= 0.0 || p <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "HelicalThread requires positive radii, pitch, turns (got coil={r_coil}, thread={r_thread}, pitch={p}, turns={t})"
+                    ),
+                });
+            }
+            if r_thread >= r_coil {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "HelicalThread thread_height ({r_thread}) must be less than coil_radius ({r_coil})"
+                    ),
+                });
+            }
+            if *segments_per_turn < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "HelicalThread requires segments_per_turn >= 6".into(),
+                });
+            }
+            // Build a triangular V-thread profile in local XY: apex pointing
+            // along +x (radially outward), base on the y-axis. Equilateral
+            // triangle with circumscribed radius `r_thread`.
+            let half = r_thread * 0.5;
+            let prof = Profile2D {
+                points: vec![
+                    [Scalar::lit(-half), Scalar::lit(-half)],
+                    [Scalar::lit(r_thread), Scalar::lit(0.0)],
+                    [Scalar::lit(-half), Scalar::lit(half)],
+                ],
+            };
+            // Sample the helix.
+            let total_samples = (*segments_per_turn as f64 * t).ceil() as usize + 1;
+            let total_angle = 2.0 * std::f64::consts::PI * t;
+            let mut path_scalars: Vec<[Scalar; 3]> = Vec::with_capacity(total_samples);
+            for i in 0..total_samples {
+                let theta = total_angle * i as f64 / (total_samples - 1) as f64;
+                let z = p * theta / (2.0 * std::f64::consts::PI);
+                path_scalars.push([
+                    Scalar::lit(r_coil * theta.cos()),
+                    Scalar::lit(r_coil * theta.sin()),
+                    Scalar::lit(z),
+                ]);
+            }
+            build_sweep_profile(id, &prof, &path_scalars, 1, None, None, params)
+        }
+        Feature::TwistedTube { outer_radius, inner_radius, height, twist_turns, slices, .. } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            let turns = resolve_one(id, twist_turns, params)?;
+            if r_out <= 0.0 || r_in <= 0.0 || h <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TwistedTube requires positive outer_radius, inner_radius, height (got {r_out}, {r_in}, {h})"
+                    ),
+                });
+            }
+            if r_in >= r_out {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TwistedTube inner_radius ({r_in}) must be < outer_radius ({r_out})"
+                    ),
+                });
+            }
+            if *slices < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("TwistedTube slices must be >= 3 (got {slices})"),
+                });
+            }
+            let n = *slices;
+            let twist_rad = 2.0 * std::f64::consts::PI * turns;
+            let make_twisted = |radius: f64, h_lo: f64, h_hi: f64| -> Solid {
+                let mut bot = Vec::with_capacity(n);
+                let mut top = Vec::with_capacity(n);
+                for k in 0..n {
+                    let a = 2.0 * std::f64::consts::PI * k as f64 / n as f64;
+                    bot.push(Point3::new(radius * a.cos(), radius * a.sin(), h_lo));
+                    let b = a + twist_rad;
+                    top.push(Point3::new(radius * b.cos(), radius * b.sin(), h_hi));
+                }
+                extrude_lofted(&bot, &top)
+            };
+            let outer = make_twisted(r_out, 0.0, h);
+            // Inner cutter extends slightly past caps for clean through-bore.
+            let inner = make_twisted(r_in, -1.0, h + 1.0);
+            outer.try_difference(&inner).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "twisted_tube_difference",
+                message: e.message,
+            })
+        }
         Feature::Mortise { center, width, length, depth, .. } => {
             let cx = resolve_one(id, &center[0], params)?;
             let cy = resolve_one(id, &center[1], params)?;
@@ -6426,6 +6620,180 @@ fn cylinder_along_axis(
     offset[a_idx] = perp_a_center;
     offset[b_idx] = perp_b_center;
     translate_solid(&oriented, Vec3::new(offset[0], offset[1], offset[2]))
+}
+
+/// True profile sweep along a 3D polyline path. Used by `SweepProfile`,
+/// `SweepWithTwist`, `SweepWithScale`, and `HelicalThread`.
+///
+/// At each path point, computes a local right-handed orthonormal frame
+/// (x, y, z) where +z is the segment tangent. The profile (specified in
+/// the local XY plane) is lifted into world space by treating its (u, v)
+/// coordinates as offsets along (x, y) from the path point. Each
+/// consecutive pair of frames produces one `extrude_lofted` segment;
+/// segments are unioned.
+///
+/// Optional modifiers:
+/// - `twist_rad`: total rotation about the local +z (tangent), distributed
+///   linearly across the path (point i gets `twist_rad * i / (N-1)`).
+/// - `scale_range = (s0, s1)`: linear interpolation of profile scale from
+///   `s0` (at the first path point) to `s1` (at the last). Scale is
+///   applied around the profile centroid in the local XY plane.
+///
+/// Frame discontinuity: consecutive segments build their tangent from
+/// `p[i+1] - p[i]`, but for the joint frame at `p[i]` we use the segment
+/// going TO that point (i.e. tangent of segment i-1) for the "top" of
+/// segment i-1 and the segment going FROM (tangent of segment i) for the
+/// "bottom" of segment i. This means the join geometry between two
+/// segments doesn't share vertices at the seam — it relies on `try_union`
+/// to weld them. For straight-line paths this is fine; for curved paths
+/// the seams are watertight via boolean stitch.
+fn build_sweep_profile(
+    id: &str,
+    profile: &Profile2D,
+    path: &[[Scalar; 3]],
+    slices: usize,
+    twist_rad: Option<f64>,
+    scale_range: Option<(f64, f64)>,
+    params: &HashMap<String, f64>,
+) -> Result<Solid, EvalError> {
+    if path.len() < 2 {
+        return Err(EvalError::Invalid {
+            id: id.into(),
+            reason: format!("sweep needs at least 2 path points (got {})", path.len()),
+        });
+    }
+    if profile.points.len() < 3 {
+        return Err(EvalError::Invalid {
+            id: id.into(),
+            reason: format!(
+                "sweep profile needs at least 3 points (got {})",
+                profile.points.len()
+            ),
+        });
+    }
+    if slices < 1 {
+        return Err(EvalError::Invalid {
+            id: id.into(),
+            reason: "sweep slices must be >= 1".into(),
+        });
+    }
+    // Resolve profile XY.
+    let mut prof_xy: Vec<(f64, f64)> = Vec::with_capacity(profile.points.len());
+    for p in &profile.points {
+        let xy = resolve_arr(p, params).map_err(|m| EvalError::Parameter {
+            id: id.into(),
+            message: m,
+        })?;
+        prof_xy.push((xy[0], xy[1]));
+    }
+    // Centroid of profile (used by twist + scale).
+    let n = prof_xy.len() as f64;
+    let cx = prof_xy.iter().map(|p| p.0).sum::<f64>() / n;
+    let cy = prof_xy.iter().map(|p| p.1).sum::<f64>() / n;
+    // Resolve path.
+    let mut pts: Vec<[f64; 3]> = Vec::with_capacity(path.len());
+    for (i, p) in path.iter().enumerate() {
+        let xyz = resolve_arr(p, params).map_err(|m| EvalError::Parameter {
+            id: id.into(),
+            message: format!("path point {i}: {m}"),
+        })?;
+        pts.push(xyz);
+    }
+    let n_path = pts.len();
+    // For each path point, compute the tangent of the segment that
+    // STARTS there (i.e. tangent for index i is direction from pts[i] to
+    // pts[i+1]). For the last point we reuse the previous tangent.
+    let mut tangents: Vec<[f64; 3]> = Vec::with_capacity(n_path);
+    for i in 0..n_path - 1 {
+        let d = [
+            pts[i + 1][0] - pts[i][0],
+            pts[i + 1][1] - pts[i][1],
+            pts[i + 1][2] - pts[i][2],
+        ];
+        let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        if len < 1e-12 {
+            return Err(EvalError::Invalid {
+                id: id.into(),
+                reason: format!("sweep segment {i}→{} has zero length", i + 1),
+            });
+        }
+        tangents.push([d[0] / len, d[1] / len, d[2] / len]);
+    }
+    // For each path point, build a frame. Each segment uses its endpoint
+    // frames (start frame + end frame) to lift the profile and call
+    // extrude_lofted.
+    let frame_at = |seg_tangent: [f64; 3]| -> ([f64; 3], [f64; 3]) {
+        // Pick a "world up" reference and build x = up × tangent,
+        // y = tangent × x. Falls back to +x when tangent ~ +z.
+        let up: [f64; 3] = if seg_tangent[2].abs() > 0.9 {
+            [1.0, 0.0, 0.0]
+        } else {
+            [0.0, 0.0, 1.0]
+        };
+        let x = [
+            up[1] * seg_tangent[2] - up[2] * seg_tangent[1],
+            up[2] * seg_tangent[0] - up[0] * seg_tangent[2],
+            up[0] * seg_tangent[1] - up[1] * seg_tangent[0],
+        ];
+        let xn = (x[0] * x[0] + x[1] * x[1] + x[2] * x[2]).sqrt();
+        let xu = [x[0] / xn, x[1] / xn, x[2] / xn];
+        let y = [
+            seg_tangent[1] * xu[2] - seg_tangent[2] * xu[1],
+            seg_tangent[2] * xu[0] - seg_tangent[0] * xu[2],
+            seg_tangent[0] * xu[1] - seg_tangent[1] * xu[0],
+        ];
+        (xu, y)
+    };
+    // Build a single segment of the sweep: profile lifted at p_a using
+    // tangent_a's frame, profile lifted at p_b using tangent_b's frame.
+    let lift = |p: [f64; 3], tangent: [f64; 3], scale: f64, twist: f64| -> Vec<Point3> {
+        let (xu, y) = frame_at(tangent);
+        let cos_t = twist.cos();
+        let sin_t = twist.sin();
+        prof_xy
+            .iter()
+            .map(|&(u, v)| {
+                // Apply scale around centroid, then twist around centroid.
+                let du = (u - cx) * scale;
+                let dv = (v - cy) * scale;
+                let ru = du * cos_t - dv * sin_t;
+                let rv = du * sin_t + dv * cos_t;
+                let lu = cx + ru;
+                let lv = cy + rv;
+                Point3::new(
+                    p[0] + lu * xu[0] + lv * y[0],
+                    p[1] + lu * xu[1] + lv * y[1],
+                    p[2] + lu * xu[2] + lv * y[2],
+                )
+            })
+            .collect()
+    };
+    let twist_total = twist_rad.unwrap_or(0.0);
+    let (s0, s1) = scale_range.unwrap_or((1.0, 1.0));
+    let mut acc: Option<Solid> = None;
+    for i in 0..n_path - 1 {
+        let frac_a = i as f64 / (n_path - 1) as f64;
+        let frac_b = (i + 1) as f64 / (n_path - 1) as f64;
+        let scale_a = s0 + (s1 - s0) * frac_a;
+        let scale_b = s0 + (s1 - s0) * frac_b;
+        let twist_a = twist_total * frac_a;
+        let twist_b = twist_total * frac_b;
+        // Both endpoints of segment i use segment i's tangent — that
+        // makes the segment itself a clean ruled surface (no shear at the
+        // ends), and inter-segment seams are welded by `try_union`.
+        let bot = lift(pts[i], tangents[i], scale_a, twist_a);
+        let top = lift(pts[i + 1], tangents[i], scale_b, twist_b);
+        let seg = extrude_lofted(&bot, &top);
+        acc = Some(match acc.take() {
+            None => seg,
+            Some(prev) => prev.try_union(&seg).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "sweep_profile_segment_union",
+                message: format!("segment {i}: {}", e.message),
+            })?,
+        });
+    }
+    Ok(acc.unwrap())
 }
 
 /// Build a cylinder of `r`, `segments` whose axis runs from `p0` to `p1`
