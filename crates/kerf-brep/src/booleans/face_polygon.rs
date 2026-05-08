@@ -30,7 +30,51 @@ pub fn face_polygon(solid: &Solid, face: FaceId) -> Option<Vec<Point3>> {
             polygon.reverse();
         }
     }
+    rotate_polygon_off_stinger_junction(&mut polygon);
     Some(polygon)
+}
+
+/// Rotate the polygon so `polygon[0]` is not adjacent to a stinger fold.
+///
+/// Fjord-style polygons (annular faces represented as a single CCW walk with
+/// a return-trip "stinger" connecting outer and inner rings) carry duplicated
+/// vertex positions at the stinger junction. A naive fan-triangulate from
+/// such a junction emits zero-area triangles. Downstream consumers
+/// (tessellators, area integrators, the readiness_quality test) are happier
+/// with an apex chosen from a non-degenerate stretch of the polygon. This is
+/// purely a starting-vertex rotation — the polygon's set of edges and
+/// winding are unchanged.
+fn rotate_polygon_off_stinger_junction(polygon: &mut Vec<Point3>) {
+    let n = polygon.len();
+    if n < 4 {
+        return;
+    }
+    // A vertex is a "junction" if either of its incident triangles in a fan
+    // from itself would have zero signed area in 3D — i.e. the next two
+    // edges are collinear with the apex. Find the first non-junction vertex.
+    let mut best: Option<usize> = None;
+    for start in 0..n {
+        let v0 = polygon[start].coords;
+        let mut all_ok = true;
+        for i in 1..n - 1 {
+            let v1 = polygon[(start + i) % n].coords;
+            let v2 = polygon[(start + i + 1) % n].coords;
+            let area_x2 = (v1 - v0).cross(&(v2 - v0)).norm();
+            if area_x2 < 1e-12 {
+                all_ok = false;
+                break;
+            }
+        }
+        if all_ok {
+            best = Some(start);
+            break;
+        }
+    }
+    if let Some(s) = best {
+        if s != 0 {
+            polygon.rotate_left(s);
+        }
+    }
 }
 
 /// Returns the ordered list of vertex positions along the face's outer loop

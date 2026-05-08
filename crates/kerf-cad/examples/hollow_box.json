@@ -1,0 +1,18 @@
+{
+  "parameters": {
+    "outer_x": 40.0, "outer_y": 30.0, "outer_z": 20.0,
+    "wall":    2.0
+  },
+  "features": [
+    {"kind": "Box",   "id": "outer", "extents": ["$outer_x", "$outer_y", "$outer_z"]},
+
+    {
+      "kind": "BoxAt",
+      "id": "cavity",
+      "extents": [36.0, 26.0, 16.0],
+      "origin":  ["$wall", "$wall", "$wall"]
+    },
+
+    {"kind": "Difference", "id": "out", "inputs": ["outer", "cavity"]}
+  ]
+}
