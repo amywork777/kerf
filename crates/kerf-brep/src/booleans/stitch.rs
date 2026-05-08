@@ -744,11 +744,31 @@ fn rescue_one_half_edge_orphans(
             let Some(ref_surface) = ref_surface else {
                 continue;
             };
+            // First pass: prefer a coplanar partner (chord_merge style).
             for di in 0..dropped.len() {
                 if !available[di] {
                     continue;
                 }
                 if !surfaces_coplanar(&dropped[di].surface, &ref_surface, tol) {
+                    continue;
+                }
+                if polygon_has_directed_edge(&dropped[di].polygon, ra, rb, pt_tol) {
+                    kept.push(dropped[di].clone());
+                    available[di] = false;
+                    promoted = true;
+                    break;
+                }
+            }
+            if promoted {
+                break;
+            }
+            // Second pass: directed-edge match WITHOUT coplanarity. This
+            // covers cylinder-facet seam edges where the partner is the
+            // adjacent (non-coplanar) lateral facet that got
+            // misclassified. Specificity is preserved because a directed
+            // edge only matches when both endpoints AND order line up.
+            for di in 0..dropped.len() {
+                if !available[di] {
                     continue;
                 }
                 if polygon_has_directed_edge(&dropped[di].polygon, ra, rb, pt_tol) {
