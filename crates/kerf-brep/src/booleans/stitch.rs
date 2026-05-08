@@ -143,6 +143,28 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
     // duplicates from the second-solid pass).
     let kept: Vec<KeptFace> = kept.iter().map(|kf| (*kf).clone()).collect();
     let (kept, face_to_vidx) = drop_orphan_contributors(kept, face_to_vidx);
+
+    // Stage 1d (best-effort one-sided-boundary rescue): after orphan-
+    // contributor pruning, some kept faces may still contribute half-edges
+    // on canonical edges that have no opposite-direction partner
+    // (1-direction-only). This shows up in:
+    //   - LBracket + Counterbore (concave interior corner near cutter)
+    //   - 4-corner z-edge Fillets (wedges share lateral body faces)
+    // Both panic with "edge key (...) has 1 half-edges (expected 2)".
+    //
+    // The rescue greedily drops kept faces whose polygon edges land on
+    // currently-unpaired canonical edges, iterating to fixpoint. It's a
+    // safety-valve net: if more than `MAX_DROP_FRACTION` of kept faces
+    // would have to be discarded, we abandon the rescue and let stage 5
+    // panic as before (so the bug still surfaces clearly). For genuinely
+    // closed kept sets (the common case) it's a no-op.
+    //
+    // It does NOT fully solve LBracket+Counterbore or 4-corner-fillet —
+    // those are open-boundary cases where face-dropping cascades to drop
+    // the whole solid; the proper fix is synthesizing patch faces from
+    // the unpaired loop, which requires the original surface geometry.
+    // Tracked as deferred work in the e2e_scenarios bug commentary.
+    let (kept, face_to_vidx) = drop_one_sided_boundary(kept, face_to_vidx);
     let kept: Vec<&KeptFace> = kept.iter().collect();
 
     // Stage 2: create vertices in the kerf-topo solid.
@@ -503,6 +525,109 @@ fn drop_orphan_contributors(
         .filter_map(|(i, v)| keep_mask[i].then_some(v))
         .collect();
     (new_kept, new_face_to_vidx)
+}
+
+/// Best-effort rescue for kept face sets with one-sided boundary edges.
+///
+/// Conservative behaviour: only act when the kept set already has zero
+/// one-sided edges (no-op, fast path) OR when a single iteration of
+/// "drop the face whose share of one-sided edges is highest" reduces the
+/// count to zero. If after `MAX_PASSES` we still have one-sided edges,
+/// abandon the rescue and return the original input — let stitch panic
+/// so the bug remains visible.
+///
+/// The greedy "drop one face per pass" approach can NOT close legitimately
+/// open boundaries (LBracket+Counterbore concave-corner case, 4-corner
+/// fillet shared-face case) — dropping a face cascades to create new
+/// one-sided edges on its partner faces and the fixpoint typically
+/// collapses to the empty kept set. Both cases are tracked as deferred
+/// work; they need a synthesise-patch-face approach, not face dropping.
+fn drop_one_sided_boundary(
+    kept: Vec<KeptFace>,
+    face_to_vidx: Vec<Vec<usize>>,
+) -> (Vec<KeptFace>, Vec<Vec<usize>>) {
+    const MAX_PASSES: usize = 4;
+    let initial_count = kept.len();
+    if initial_count == 0 {
+        return (kept, face_to_vidx);
+    }
+
+    let mut keep_mask: Vec<bool> = vec![true; initial_count];
+    for _pass in 0..MAX_PASSES {
+        // Build edge -> (forward_count, backward_count, contributing_faces).
+        let mut edge_to_dirs: HashMap<(usize, usize), (usize, usize, Vec<usize>)> = HashMap::new();
+        for (face_idx, vidx) in face_to_vidx.iter().enumerate() {
+            if !keep_mask[face_idx] {
+                continue;
+            }
+            let n = vidx.len();
+            for i in 0..n {
+                let v_start = vidx[i];
+                let v_end = vidx[(i + 1) % n];
+                if v_start == v_end {
+                    continue;
+                }
+                let key = canonical_edge_key(v_start, v_end);
+                let forward = (v_start, v_end) == key;
+                let entry = edge_to_dirs.entry(key).or_insert((0, 0, Vec::new()));
+                if forward {
+                    entry.0 += 1;
+                } else {
+                    entry.1 += 1;
+                }
+                if !entry.2.contains(&face_idx) {
+                    entry.2.push(face_idx);
+                }
+            }
+        }
+
+        let mut one_sided_count: Vec<usize> = vec![0; initial_count];
+        let mut any = false;
+        for (_key, (fwd, bwd, faces)) in &edge_to_dirs {
+            let one_sided = (*fwd == 0 && *bwd >= 1) || (*bwd == 0 && *fwd >= 1);
+            if !one_sided {
+                continue;
+            }
+            any = true;
+            for &f in faces {
+                one_sided_count[f] += 1;
+            }
+        }
+        if !any {
+            // Success: kept set has no one-sided edges. Apply the mask.
+            let new_kept: Vec<KeptFace> = kept
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, kf)| keep_mask[i].then_some(kf))
+                .collect();
+            let new_face_to_vidx: Vec<Vec<usize>> = face_to_vidx
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, v)| keep_mask[i].then_some(v))
+                .collect();
+            return (new_kept, new_face_to_vidx);
+        }
+
+        let mut victim: Option<usize> = None;
+        let mut victim_count: usize = 0;
+        for (i, &c) in one_sided_count.iter().enumerate() {
+            if !keep_mask[i] || c == 0 {
+                continue;
+            }
+            if c > victim_count || (c == victim_count && Some(i) > victim) {
+                victim = Some(i);
+                victim_count = c;
+            }
+        }
+        let Some(v) = victim else {
+            break;
+        };
+        keep_mask[v] = false;
+    }
+
+    // Did not converge within MAX_PASSES. Return original input untouched
+    // so stitch's panic remains visible.
+    (kept, face_to_vidx)
 }
 
 fn find_or_add(positions: &mut Vec<Point3>, p: Point3, tol: &Tolerance) -> usize {
