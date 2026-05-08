@@ -171,6 +171,20 @@ fn stitch_inner(kept: &[KeptFace], tol: &Tolerance) -> Solid {
     // duplicates from the second-solid pass).
     let kept: Vec<KeptFace> = kept.iter().map(|kf| (*kf).clone()).collect();
     let (kept, face_to_vidx) = drop_orphan_contributors(kept, face_to_vidx);
+
+    // Stage 1d (GAP C): prune "excursion" vertices. A vertex `v` that
+    // appears in EXACTLY ONE polygon AND whose two adjacent edges in that
+    // polygon are both orphans (no other polygon has either edge as a twin)
+    // is part of a detour that the boolean classifier accidentally threaded
+    // through this face. The detour adds no real boundary — its sole effect
+    // is to leave 1-half-edge orphans in stitch. Removing `v` collapses the
+    // detour while preserving the face's true outer boundary.
+    //
+    // This is the multi-edge-fillet-stitch repair: sequential subtracts in
+    // build_fillets push split-vertex artifacts (e.g., y=0.096 chord-points
+    // from wedge2's cylinder samples) into body z-face polygons that have
+    // no corresponding kept partner. Pruning collapses them.
+    let face_to_vidx = prune_excursion_vertices(&face_to_vidx);
     let kept: Vec<&KeptFace> = kept.iter().collect();
 
     // Stage 2: create vertices in the kerf-topo solid.
@@ -201,7 +215,10 @@ fn stitch_inner(kept: &[KeptFace], tol: &Tolerance) -> Solid {
     let mut self_loops: Vec<kerf_topo::HalfEdgeId> = Vec::new();
 
     for (face_idx, kf) in kept.iter().enumerate() {
-        let n = kf.polygon.len();
+        // After Stage 1d (excursion pruning), face_to_vidx may have fewer
+        // vertices than kf.polygon — use face_to_vidx as the source of
+        // truth for the half-edge count.
+        let n = face_to_vidx[face_idx].len();
         debug_assert!(n >= 3, "face polygon must have at least 3 vertices");
 
         let loop_id = new_solid.topo.build_insert_loop_placeholder();
@@ -533,6 +550,93 @@ fn drop_orphan_contributors(
     (new_kept, new_face_to_vidx)
 }
 
+/// GAP C: prune detour vertices whose adjacent polygon edges have no
+/// matching twin in any other polygon. A detour vertex contributes
+/// 1-half-edge orphans that the stitcher cannot pair, and removing it
+/// collapses the spurious excursion without altering any face's real
+/// boundary.
+///
+/// Pruning conditions (all must hold for vertex `v` in polygon `P`):
+///   1. `v` appears in exactly one polygon (no other face has a vertex
+///      with the same global index after dedup).
+///   2. Both directed edges incident on `v` in `P` (prev→v and v→next) are
+///      orphans — no other polygon has the reverse edge as a twin.
+///   3. The polygon has at least 4 vertices remaining after removal.
+///
+/// Iterates to fixpoint: removing one excursion vertex can re-classify
+/// neighbors as removable.
+fn prune_excursion_vertices(face_to_vidx: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let mut polys: Vec<Vec<usize>> = face_to_vidx.to_vec();
+    loop {
+        // Build vertex-occurrence count and directed-edge multiset.
+        let mut vertex_in_polys: HashMap<usize, usize> = HashMap::new();
+        let mut directed_edges: HashMap<(usize, usize), usize> = HashMap::new();
+        for vidx in &polys {
+            let n = vidx.len();
+            // Track unique vertices per polygon (a vertex may legitimately
+            // appear once in each face).
+            let mut seen = std::collections::HashSet::new();
+            for &v in vidx {
+                seen.insert(v);
+            }
+            for v in seen {
+                *vertex_in_polys.entry(v).or_insert(0) += 1;
+            }
+            for i in 0..n {
+                let a = vidx[i];
+                let b = vidx[(i + 1) % n];
+                if a == b {
+                    continue;
+                }
+                *directed_edges.entry((a, b)).or_insert(0) += 1;
+            }
+        }
+        // Find a removable vertex.
+        let mut removed = false;
+        'outer: for poly_idx in 0..polys.len() {
+            let n = polys[poly_idx].len();
+            if n <= 4 {
+                continue;
+            }
+            for i in 0..n {
+                let prev = polys[poly_idx][(i + n - 1) % n];
+                let v = polys[poly_idx][i];
+                let next = polys[poly_idx][(i + 1) % n];
+                if prev == v || v == next || prev == next {
+                    continue;
+                }
+                if *vertex_in_polys.get(&v).unwrap_or(&0) != 1 {
+                    continue;
+                }
+                // Both incident directed edges must be orphans (no twin
+                // in any other polygon: the reverse direction has 0
+                // entries).
+                let edge_a_twin = *directed_edges.get(&(v, prev)).unwrap_or(&0);
+                let edge_b_twin = *directed_edges.get(&(next, v)).unwrap_or(&0);
+                if edge_a_twin > 0 || edge_b_twin > 0 {
+                    continue;
+                }
+                // Removing v: replace [prev, v, next] with [prev, next].
+                // The new edge (prev, next) must not already appear with
+                // BOTH directions in other polygons (would create a new
+                // 3+ entries conflict).
+                let new_edge_fwd = *directed_edges.get(&(prev, next)).unwrap_or(&0);
+                let new_edge_rev = *directed_edges.get(&(next, prev)).unwrap_or(&0);
+                if new_edge_fwd > 0 || new_edge_rev > 1 {
+                    continue;
+                }
+                polys[poly_idx].remove(i);
+                removed = true;
+                break 'outer;
+            }
+        }
+        if !removed {
+            break;
+        }
+    }
+    polys
+}
+
 fn find_or_add(positions: &mut Vec<Point3>, p: Point3, tol: &Tolerance) -> usize {
     for (i, q) in positions.iter().enumerate() {
         if (p - *q).norm() < tol.point_eq {
@@ -720,5 +824,55 @@ mod tests {
         assert_eq!(new_s.edge_count(), 12);
         assert_eq!(new_s.face_count(), 6);
         validate(&new_s.topo).unwrap();
+    }
+
+    #[test]
+    fn prune_excursion_vertices_removes_orphan_detour() {
+        // A 6-vertex polygon with a detour: square (0..3) plus an excursion
+        // through vertex 4 (only in this polygon, both adjacent edges
+        // orphans). The square's 4 corners are shared with neighbors
+        // (simulated as additional polygons referencing them).
+        let polys = vec![
+            // Polygon under test: square 0,1,2,3 with detour 4,5 inserted
+            // between 1 and 2. Vertex 4 and 5 are unique to this polygon.
+            vec![0, 1, 4, 5, 2, 3],
+            // Neighbors that share edges with the square's perimeter so
+            // those edges have twins (and won't be prunable).
+            vec![1, 0, 6, 7],     // edge (0,1) twin lives here as (1,0)
+            vec![2, 1, 8, 9],     // edge (1,2) twin
+            vec![3, 2, 10, 11],   // edge (2,3) twin
+            vec![0, 3, 12, 13],   // edge (3,0) twin
+        ];
+        let pruned = prune_excursion_vertices(&polys);
+        // Vertices 4 and 5 should be pruned: each appears only in poly 0,
+        // their adjacent directed edges (1→4, 4→5, 5→2) have no reverse
+        // twins anywhere.
+        assert_eq!(pruned[0], vec![0, 1, 2, 3], "detour collapsed");
+        // Other polygons unchanged.
+        assert_eq!(pruned[1], polys[1]);
+        assert_eq!(pruned[2], polys[2]);
+        assert_eq!(pruned[3], polys[3]);
+        assert_eq!(pruned[4], polys[4]);
+    }
+
+    #[test]
+    fn prune_excursion_vertices_preserves_shared_corners() {
+        // A square 0,1,2,3 whose vertex 1 is also used by another
+        // polygon. Even if vertex 1's edges are orphans, it's NOT
+        // prunable because the rule requires vertex_in_polys[v] == 1.
+        let polys = vec![vec![0, 1, 2, 3], vec![5, 1, 6]];
+        let pruned = prune_excursion_vertices(&polys);
+        assert_eq!(pruned[0], vec![0, 1, 2, 3]);
+        assert_eq!(pruned[1], vec![5, 1, 6]);
+    }
+
+    #[test]
+    fn prune_excursion_vertices_preserves_min_polygon() {
+        // A 4-vertex polygon (minimum) should never be pruned even if all
+        // edges are orphans, because removing a vertex would leave a
+        // degenerate triangle below 4-vertex floor.
+        let polys = vec![vec![0, 1, 2, 3]];
+        let pruned = prune_excursion_vertices(&polys);
+        assert_eq!(pruned[0], vec![0, 1, 2, 3]);
     }
 }
