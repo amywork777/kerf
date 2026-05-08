@@ -8,11 +8,15 @@
 use wasm_bindgen::prelude::*;
 
 use kerf_brep::{
+    dimension::{
+        self, render_dimensioned_view, Dimension, DimensionKind, ViewKind, ViewportSpec,
+    },
     measure::solid_volume,
     tessellate::{tessellate, tessellate_with_face_index},
     Solid,
 };
 use kerf_cad::Model;
+use kerf_geom::{Point3, Vec3};
 
 // Default panic hook is fine; viewer can install console_error_panic_hook
 // if it wants nicer traces in DevTools. Keeping the wasm crate dep-light.
@@ -162,4 +166,142 @@ fn solid_to_triangles(solid: &Solid, segments: usize) -> Vec<f32> {
         }
     }
     out
+}
+
+// ----------------------------------------------------------------------
+// Drawing-dimension helpers (back-end half of the "Drawings" capability).
+//
+// The viewer can drive these without re-implementing the math. All inputs
+// are flat `[f64; N]` arrays so the JS side doesn't need to know about
+// nalgebra Point3/Vec3.
+// ----------------------------------------------------------------------
+
+fn pt(a: &[f64]) -> Result<Point3, JsError> {
+    if a.len() < 3 {
+        return Err(JsError::new("expected [x, y, z]"));
+    }
+    Ok(Point3::new(a[0], a[1], a[2]))
+}
+
+fn vc(a: &[f64]) -> Result<Vec3, JsError> {
+    if a.len() < 3 {
+        return Err(JsError::new("expected [x, y, z]"));
+    }
+    Ok(Vec3::new(a[0], a[1], a[2]))
+}
+
+/// Euclidean distance between two world-space points.
+#[wasm_bindgen]
+pub fn measure_distance(p1: Vec<f64>, p2: Vec<f64>) -> Result<f64, JsError> {
+    Ok(dimension::distance(pt(&p1)?, pt(&p2)?))
+}
+
+/// Project a 3D point into 2D paper coordinates for the named view.
+/// `view` is one of `"top"`, `"front"`, `"side"`, `"iso"`. Returned
+/// `[u, v]` is in world units.
+#[wasm_bindgen]
+pub fn project_to_view(p: Vec<f64>, view: &str) -> Result<Vec<f64>, JsError> {
+    let v = ViewKind::from_str(view)
+        .ok_or_else(|| JsError::new(&format!("unknown view '{view}' (top|front|side|iso)")))?;
+    let (u, vv) = dimension::to_2d_view(pt(&p)?, v);
+    Ok(vec![u, vv])
+}
+
+/// Angle (radians) at `vertex` formed by rays to `a` and `b`. Range [0, pi].
+#[wasm_bindgen]
+pub fn angle_at_vertex(a: Vec<f64>, vertex: Vec<f64>, b: Vec<f64>) -> Result<f64, JsError> {
+    Ok(dimension::angle_at_vertex(pt(&a)?, pt(&vertex)?, pt(&b)?))
+}
+
+/// Project a point onto a plane defined by `(plane_origin, plane_normal)`.
+#[wasm_bindgen]
+pub fn project_point_to_plane(
+    p: Vec<f64>,
+    plane_normal: Vec<f64>,
+    plane_origin: Vec<f64>,
+) -> Result<Vec<f64>, JsError> {
+    let q = dimension::project_to_plane(pt(&p)?, vc(&plane_normal)?, pt(&plane_origin)?);
+    Ok(vec![q.x, q.y, q.z])
+}
+
+/// Render a model + named view + dimension list to an SVG string.
+///
+/// `dimensions_json` is an array of objects:
+///   `{ "kind": "linear",   "from": [x,y,z], "to": [x,y,z] }`
+///   `{ "kind": "radial",   "from": [x,y,z], "to": [x,y,z], "center": [x,y,z] }`
+///   `{ "kind": "angular",  "from": [x,y,z], "to": [x,y,z], "vertex": [x,y,z] }`
+///
+/// `viewport_json` is `{ "width": f64, "height": f64, "padding": f64 }` —
+/// pass an empty object `{}` to use the default A4-ish viewport.
+#[wasm_bindgen]
+pub fn render_drawing_svg(
+    json: &str,
+    target_id: &str,
+    params_json: &str,
+    view: &str,
+    dimensions_json: &str,
+    viewport_json: &str,
+) -> Result<String, JsError> {
+    let mut model =
+        Model::from_json_str(json).map_err(|e| JsError::new(&format!("parse model: {e}")))?;
+    let overrides: std::collections::HashMap<String, f64> = serde_json::from_str(params_json)
+        .map_err(|e| JsError::new(&format!("parse params: {e}")))?;
+    for (k, v) in overrides {
+        model.parameters.insert(k, v);
+    }
+    let solid = model
+        .evaluate(target_id)
+        .map_err(|e| JsError::new(&format!("evaluate '{target_id}': {e}")))?;
+    let view_kind = ViewKind::from_str(view)
+        .ok_or_else(|| JsError::new(&format!("unknown view '{view}' (top|front|side|iso)")))?;
+
+    #[derive(serde::Deserialize)]
+    struct DimRaw {
+        kind: String,
+        from: [f64; 3],
+        to: [f64; 3],
+        center: Option<[f64; 3]>,
+        vertex: Option<[f64; 3]>,
+    }
+    let raws: Vec<DimRaw> = serde_json::from_str(dimensions_json)
+        .map_err(|e| JsError::new(&format!("parse dimensions: {e}")))?;
+    let mut dims: Vec<Dimension> = Vec::with_capacity(raws.len());
+    for r in raws {
+        let from = Point3::new(r.from[0], r.from[1], r.from[2]);
+        let to = Point3::new(r.to[0], r.to[1], r.to[2]);
+        let kind = match r.kind.to_ascii_lowercase().as_str() {
+            "linear" => DimensionKind::Linear,
+            "radial" | "radius" | "radialfromcenter" => {
+                let c = r.center.ok_or_else(|| JsError::new("radial dim missing 'center'"))?;
+                DimensionKind::RadialFromCenter {
+                    center: Point3::new(c[0], c[1], c[2]),
+                }
+            }
+            "angular" | "angle" => {
+                let v = r.vertex.ok_or_else(|| JsError::new("angular dim missing 'vertex'"))?;
+                DimensionKind::Angular {
+                    vertex: Point3::new(v[0], v[1], v[2]),
+                }
+            }
+            other => return Err(JsError::new(&format!("unknown dimension kind '{other}'"))),
+        };
+        dims.push(Dimension { from, to, kind });
+    }
+
+    #[derive(serde::Deserialize, Default)]
+    struct VpRaw {
+        width: Option<f64>,
+        height: Option<f64>,
+        padding: Option<f64>,
+    }
+    let vp_raw: VpRaw = serde_json::from_str(viewport_json)
+        .map_err(|e| JsError::new(&format!("parse viewport: {e}")))?;
+    let default_vp = ViewportSpec::default_a4_ish();
+    let viewport = ViewportSpec::new(
+        vp_raw.width.unwrap_or(default_vp.width),
+        vp_raw.height.unwrap_or(default_vp.height),
+        vp_raw.padding.unwrap_or(default_vp.padding),
+    );
+
+    Ok(render_dimensioned_view(&solid, view_kind, &dims, viewport))
 }
