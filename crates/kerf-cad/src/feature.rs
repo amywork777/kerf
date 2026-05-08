@@ -852,6 +852,93 @@ pub enum Feature {
         wire_segments: usize,
     },
 
+    /// TwistedExtrude: extrude a polygon while rotating linearly about
+    /// the +z axis. The profile sits at z=0 with no rotation; at z=`height`
+    /// it is rotated by `twist_deg` degrees about the centroid of its
+    /// xy points. Built as a single `extrude_lofted` between the original
+    /// profile and the rotated profile. Side faces are quad-shaped but
+    /// non-planar in general (each side wraps a helical strip) — that's
+    /// fine for STL/STEP export and volume calculations, but booleans
+    /// against the result are degraded and may trip stitch.
+    TwistedExtrude {
+        id: String,
+        profile: Profile2D,
+        height: Scalar,
+        twist_deg: Scalar,
+    },
+
+    /// HelicalRib: a rectangular cross-section sweep along a helical path.
+    /// Like a coarse decorative ridge or screw root. `coil_radius` is the
+    /// helix radius, `rib_size` is the square cross-section side length
+    /// (sweep_cylinder_segment with segments=4 gives a square cross-section
+    /// in the cylinder's local frame). Centered on +z axis like Coil.
+    HelicalRib {
+        id: String,
+        coil_radius: Scalar,
+        rib_size: Scalar,
+        pitch: Scalar,
+        turns: Scalar,
+        segments_per_turn: usize,
+    },
+
+    /// ScrewThread: a triangular V-thread cross-section sweep along a
+    /// helical path. Approximates a standard machine thread. The thread
+    /// "wire" is a triangular prism (segments=3) with circumscribed radius
+    /// `thread_height`. `coil_radius` is the major radius of the thread.
+    ScrewThread {
+        id: String,
+        coil_radius: Scalar,
+        thread_height: Scalar,
+        pitch: Scalar,
+        turns: Scalar,
+        segments_per_turn: usize,
+    },
+
+    /// SpiralWedge: a helical sweep where the cross-section radius grows
+    /// linearly from `wire_radius_start` at the bottom to `wire_radius_end`
+    /// at the top. Useful for tapered springs or decorative spirals where
+    /// the wire thickens as it climbs.
+    SpiralWedge {
+        id: String,
+        coil_radius: Scalar,
+        wire_radius_start: Scalar,
+        wire_radius_end: Scalar,
+        pitch: Scalar,
+        turns: Scalar,
+        segments_per_turn: usize,
+        wire_segments: usize,
+    },
+
+    /// DoubleHelix: two intertwined helices, offset by 180° in starting
+    /// angle. Each helix has the same pitch, turns, and wire radius.
+    /// Resembles DNA / decorative twist columns. The union may trip stitch
+    /// where the two helices come close in z; the evaluator returns the
+    /// boolean error in that case.
+    DoubleHelix {
+        id: String,
+        coil_radius: Scalar,
+        wire_radius: Scalar,
+        pitch: Scalar,
+        turns: Scalar,
+        segments_per_turn: usize,
+        wire_segments: usize,
+    },
+
+    /// TaperedCoil: helical sweep where the helix radius decreases
+    /// linearly with z, forming a conical spring. `coil_radius_start` is
+    /// the radius at z=0; `coil_radius_end` is at z=pitch*turns.
+    /// `wire_radius` is constant.
+    TaperedCoil {
+        id: String,
+        coil_radius_start: Scalar,
+        coil_radius_end: Scalar,
+        wire_radius: Scalar,
+        pitch: Scalar,
+        turns: Scalar,
+        segments_per_turn: usize,
+        wire_segments: usize,
+    },
+
     /// Mortise: rectangular pocket cut into the +z face of a workpiece.
     /// Centered on (cx, cy), spanning (width, length, depth) where depth
     /// is along -z. Produces a freestanding pocket solid; subtract it
@@ -2730,6 +2817,12 @@ impl Feature {
             | Feature::KnurledGrip { id, .. }
             | Feature::Pipe { id, .. }
             | Feature::Spring { id, .. }
+            | Feature::TwistedExtrude { id, .. }
+            | Feature::HelicalRib { id, .. }
+            | Feature::ScrewThread { id, .. }
+            | Feature::SpiralWedge { id, .. }
+            | Feature::DoubleHelix { id, .. }
+            | Feature::TaperedCoil { id, .. }
             | Feature::Mortise { id, .. }
             | Feature::Tenon { id, .. }
             | Feature::FingerJoint { id, .. }
@@ -2959,6 +3052,12 @@ impl Feature {
             | Feature::KnurledGrip { .. }
             | Feature::Pipe { .. }
             | Feature::Spring { .. }
+            | Feature::TwistedExtrude { .. }
+            | Feature::HelicalRib { .. }
+            | Feature::ScrewThread { .. }
+            | Feature::SpiralWedge { .. }
+            | Feature::DoubleHelix { .. }
+            | Feature::TaperedCoil { .. }
             | Feature::Mortise { .. }
             | Feature::Tenon { .. }
             | Feature::FingerJoint { .. }

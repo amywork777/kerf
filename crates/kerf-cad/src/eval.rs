@@ -2155,6 +2155,414 @@ fn build(
             }
             Ok(acc.unwrap())
         }
+        Feature::TwistedExtrude {
+            profile,
+            height,
+            twist_deg,
+            ..
+        } => {
+            if profile.points.len() < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TwistedExtrude profile needs at least 3 points (got {})",
+                        profile.points.len()
+                    ),
+                });
+            }
+            let h = resolve_one(id, height, params)?;
+            let twist = resolve_one(id, twist_deg, params)?;
+            if h <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("TwistedExtrude requires positive height (got {h})"),
+                });
+            }
+            let mut bottom_pts = Vec::with_capacity(profile.points.len());
+            for p in &profile.points {
+                let xy = resolve_arr(p, params).map_err(|message| EvalError::Parameter {
+                    id: id.into(),
+                    message,
+                })?;
+                bottom_pts.push(Point3::new(xy[0], xy[1], 0.0));
+            }
+            // Rotate the top profile about the centroid of the bottom by twist_rad.
+            let n = bottom_pts.len() as f64;
+            let cx = bottom_pts.iter().map(|p| p.x).sum::<f64>() / n;
+            let cy = bottom_pts.iter().map(|p| p.y).sum::<f64>() / n;
+            let twist_rad = twist.to_radians();
+            let cos_t = twist_rad.cos();
+            let sin_t = twist_rad.sin();
+            let top_pts: Vec<Point3> = bottom_pts
+                .iter()
+                .map(|p| {
+                    let dx = p.x - cx;
+                    let dy = p.y - cy;
+                    Point3::new(
+                        cx + dx * cos_t - dy * sin_t,
+                        cy + dx * sin_t + dy * cos_t,
+                        h,
+                    )
+                })
+                .collect();
+            Ok(extrude_lofted(&bottom_pts, &top_pts))
+        }
+        Feature::HelicalRib {
+            coil_radius,
+            rib_size,
+            pitch,
+            turns,
+            segments_per_turn,
+            ..
+        } => {
+            let r_coil = resolve_one(id, coil_radius, params)?;
+            let r_rib = resolve_one(id, rib_size, params)?;
+            let p = resolve_one(id, pitch, params)?;
+            let t = resolve_one(id, turns, params)?;
+            if r_coil <= 0.0 || r_rib <= 0.0 || p <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "HelicalRib requires positive radii, pitch, turns (got coil={r_coil}, rib={r_rib}, pitch={p}, turns={t})"
+                    ),
+                });
+            }
+            if r_rib >= r_coil {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "HelicalRib rib_size ({r_rib}) must be less than coil_radius ({r_coil})"
+                    ),
+                });
+            }
+            if *segments_per_turn < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "HelicalRib requires segments_per_turn >= 6".into(),
+                });
+            }
+            let total_samples = (*segments_per_turn as f64 * t).ceil() as usize + 1;
+            let total_angle = 2.0 * std::f64::consts::PI * t;
+            let mut acc: Option<Solid> = None;
+            for i in 0..total_samples - 1 {
+                let theta_a = total_angle * i as f64 / (total_samples - 1) as f64;
+                let theta_b = total_angle * (i + 1) as f64 / (total_samples - 1) as f64;
+                let p0 = [
+                    r_coil * theta_a.cos(),
+                    r_coil * theta_a.sin(),
+                    p * theta_a / (2.0 * std::f64::consts::PI),
+                ];
+                let p1 = [
+                    r_coil * theta_b.cos(),
+                    r_coil * theta_b.sin(),
+                    p * theta_b / (2.0 * std::f64::consts::PI),
+                ];
+                // segments=4 produces a square cross-section (the "rib").
+                let cyl = sweep_cylinder_segment(p0, p1, r_rib, 4).ok_or_else(|| {
+                    EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!("HelicalRib segment {i} has zero length"),
+                    }
+                })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "helical_rib_segment_union",
+                        message: format!("segment {i}: {}", e.message),
+                    })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+        Feature::ScrewThread {
+            coil_radius,
+            thread_height,
+            pitch,
+            turns,
+            segments_per_turn,
+            ..
+        } => {
+            let r_coil = resolve_one(id, coil_radius, params)?;
+            let r_thread = resolve_one(id, thread_height, params)?;
+            let p = resolve_one(id, pitch, params)?;
+            let t = resolve_one(id, turns, params)?;
+            if r_coil <= 0.0 || r_thread <= 0.0 || p <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ScrewThread requires positive radii, pitch, turns (got coil={r_coil}, thread={r_thread}, pitch={p}, turns={t})"
+                    ),
+                });
+            }
+            if r_thread >= r_coil {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ScrewThread thread_height ({r_thread}) must be less than coil_radius ({r_coil})"
+                    ),
+                });
+            }
+            if *segments_per_turn < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "ScrewThread requires segments_per_turn >= 6".into(),
+                });
+            }
+            let total_samples = (*segments_per_turn as f64 * t).ceil() as usize + 1;
+            let total_angle = 2.0 * std::f64::consts::PI * t;
+            let mut acc: Option<Solid> = None;
+            for i in 0..total_samples - 1 {
+                let theta_a = total_angle * i as f64 / (total_samples - 1) as f64;
+                let theta_b = total_angle * (i + 1) as f64 / (total_samples - 1) as f64;
+                let p0 = [
+                    r_coil * theta_a.cos(),
+                    r_coil * theta_a.sin(),
+                    p * theta_a / (2.0 * std::f64::consts::PI),
+                ];
+                let p1 = [
+                    r_coil * theta_b.cos(),
+                    r_coil * theta_b.sin(),
+                    p * theta_b / (2.0 * std::f64::consts::PI),
+                ];
+                // segments=3 produces a triangular cross-section (V-thread).
+                let cyl = sweep_cylinder_segment(p0, p1, r_thread, 3).ok_or_else(|| {
+                    EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!("ScrewThread segment {i} has zero length"),
+                    }
+                })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "screw_thread_segment_union",
+                        message: format!("segment {i}: {}", e.message),
+                    })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+        Feature::SpiralWedge {
+            coil_radius,
+            wire_radius_start,
+            wire_radius_end,
+            pitch,
+            turns,
+            segments_per_turn,
+            wire_segments,
+            ..
+        } => {
+            let r_coil = resolve_one(id, coil_radius, params)?;
+            let r_start = resolve_one(id, wire_radius_start, params)?;
+            let r_end = resolve_one(id, wire_radius_end, params)?;
+            let p = resolve_one(id, pitch, params)?;
+            let t = resolve_one(id, turns, params)?;
+            if r_coil <= 0.0 || r_start <= 0.0 || r_end <= 0.0 || p <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "SpiralWedge requires positive radii, pitch, turns (got coil={r_coil}, start={r_start}, end={r_end}, pitch={p}, turns={t})"
+                    ),
+                });
+            }
+            let r_max = r_start.max(r_end);
+            if r_max >= r_coil {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "SpiralWedge max wire radius ({r_max}) must be less than coil_radius ({r_coil})"
+                    ),
+                });
+            }
+            if *segments_per_turn < 6 || *wire_segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "SpiralWedge requires segments_per_turn >= 6 and wire_segments >= 3".into(),
+                });
+            }
+            let total_samples = (*segments_per_turn as f64 * t).ceil() as usize + 1;
+            let total_angle = 2.0 * std::f64::consts::PI * t;
+            let mut acc: Option<Solid> = None;
+            for i in 0..total_samples - 1 {
+                let theta_a = total_angle * i as f64 / (total_samples - 1) as f64;
+                let theta_b = total_angle * (i + 1) as f64 / (total_samples - 1) as f64;
+                let frac_mid = (i as f64 + 0.5) / (total_samples - 1) as f64;
+                let r_seg = r_start + (r_end - r_start) * frac_mid;
+                let p0 = [
+                    r_coil * theta_a.cos(),
+                    r_coil * theta_a.sin(),
+                    p * theta_a / (2.0 * std::f64::consts::PI),
+                ];
+                let p1 = [
+                    r_coil * theta_b.cos(),
+                    r_coil * theta_b.sin(),
+                    p * theta_b / (2.0 * std::f64::consts::PI),
+                ];
+                let cyl = sweep_cylinder_segment(p0, p1, r_seg, *wire_segments).ok_or_else(|| {
+                    EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!("SpiralWedge segment {i} has zero length"),
+                    }
+                })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "spiral_wedge_segment_union",
+                        message: format!("segment {i}: {}", e.message),
+                    })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+        Feature::DoubleHelix {
+            coil_radius,
+            wire_radius,
+            pitch,
+            turns,
+            segments_per_turn,
+            wire_segments,
+            ..
+        } => {
+            let r_coil = resolve_one(id, coil_radius, params)?;
+            let r_wire = resolve_one(id, wire_radius, params)?;
+            let p = resolve_one(id, pitch, params)?;
+            let t = resolve_one(id, turns, params)?;
+            if r_coil <= 0.0 || r_wire <= 0.0 || p <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "DoubleHelix requires positive radii, pitch, turns (got coil={r_coil}, wire={r_wire}, pitch={p}, turns={t})"
+                    ),
+                });
+            }
+            if r_wire >= r_coil {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "DoubleHelix wire_radius ({r_wire}) must be less than coil_radius ({r_coil})"
+                    ),
+                });
+            }
+            if *segments_per_turn < 6 || *wire_segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "DoubleHelix requires segments_per_turn >= 6 and wire_segments >= 3".into(),
+                });
+            }
+            let total_samples = (*segments_per_turn as f64 * t).ceil() as usize + 1;
+            let total_angle = 2.0 * std::f64::consts::PI * t;
+            // Build helix A (start angle 0) and helix B (start angle pi),
+            // then union them. Each helix is built as a single chain.
+            let build_helix = |phase: f64| -> Result<Solid, EvalError> {
+                let mut acc: Option<Solid> = None;
+                for i in 0..total_samples - 1 {
+                    let theta_a = total_angle * i as f64 / (total_samples - 1) as f64 + phase;
+                    let theta_b = total_angle * (i + 1) as f64 / (total_samples - 1) as f64 + phase;
+                    let z_a = p * (theta_a - phase) / (2.0 * std::f64::consts::PI);
+                    let z_b = p * (theta_b - phase) / (2.0 * std::f64::consts::PI);
+                    let p0 = [r_coil * theta_a.cos(), r_coil * theta_a.sin(), z_a];
+                    let p1 = [r_coil * theta_b.cos(), r_coil * theta_b.sin(), z_b];
+                    let cyl = sweep_cylinder_segment(p0, p1, r_wire, *wire_segments)
+                        .ok_or_else(|| EvalError::Invalid {
+                            id: id.into(),
+                            reason: format!("DoubleHelix phase={phase} segment {i} has zero length"),
+                        })?;
+                    acc = Some(match acc.take() {
+                        None => cyl,
+                        Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean {
+                            id: id.into(),
+                            op: "double_helix_segment_union",
+                            message: format!("phase {phase} segment {i}: {}", e.message),
+                        })?,
+                    });
+                }
+                Ok(acc.unwrap())
+            };
+            let helix_a = build_helix(0.0)?;
+            let helix_b = build_helix(std::f64::consts::PI)?;
+            helix_a.try_union(&helix_b).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "double_helix_strand_union",
+                message: e.message,
+            })
+        }
+        Feature::TaperedCoil {
+            coil_radius_start,
+            coil_radius_end,
+            wire_radius,
+            pitch,
+            turns,
+            segments_per_turn,
+            wire_segments,
+            ..
+        } => {
+            let r_start = resolve_one(id, coil_radius_start, params)?;
+            let r_end = resolve_one(id, coil_radius_end, params)?;
+            let r_wire = resolve_one(id, wire_radius, params)?;
+            let p = resolve_one(id, pitch, params)?;
+            let t = resolve_one(id, turns, params)?;
+            if r_start <= 0.0 || r_end <= 0.0 || r_wire <= 0.0 || p <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TaperedCoil requires positive radii, pitch, turns (got start={r_start}, end={r_end}, wire={r_wire}, pitch={p}, turns={t})"
+                    ),
+                });
+            }
+            let r_min = r_start.min(r_end);
+            if r_wire >= r_min {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TaperedCoil wire_radius ({r_wire}) must be less than min coil radius ({r_min})"
+                    ),
+                });
+            }
+            if *segments_per_turn < 6 || *wire_segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "TaperedCoil requires segments_per_turn >= 6 and wire_segments >= 3".into(),
+                });
+            }
+            let total_samples = (*segments_per_turn as f64 * t).ceil() as usize + 1;
+            let total_angle = 2.0 * std::f64::consts::PI * t;
+            let mut acc: Option<Solid> = None;
+            for i in 0..total_samples - 1 {
+                let theta_a = total_angle * i as f64 / (total_samples - 1) as f64;
+                let theta_b = total_angle * (i + 1) as f64 / (total_samples - 1) as f64;
+                let frac_a = i as f64 / (total_samples - 1) as f64;
+                let frac_b = (i + 1) as f64 / (total_samples - 1) as f64;
+                let r_a = r_start + (r_end - r_start) * frac_a;
+                let r_b = r_start + (r_end - r_start) * frac_b;
+                let p0 = [
+                    r_a * theta_a.cos(),
+                    r_a * theta_a.sin(),
+                    p * theta_a / (2.0 * std::f64::consts::PI),
+                ];
+                let p1 = [
+                    r_b * theta_b.cos(),
+                    r_b * theta_b.sin(),
+                    p * theta_b / (2.0 * std::f64::consts::PI),
+                ];
+                let cyl = sweep_cylinder_segment(p0, p1, r_wire, *wire_segments).ok_or_else(
+                    || EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!("TaperedCoil segment {i} has zero length"),
+                    },
+                )?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "tapered_coil_segment_union",
+                        message: format!("segment {i}: {}", e.message),
+                    })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
         Feature::Mortise { center, width, length, depth, .. } => {
             let cx = resolve_one(id, &center[0], params)?;
             let cy = resolve_one(id, &center[1], params)?;
