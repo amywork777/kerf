@@ -2523,6 +2523,50 @@ pub enum Feature {
         slices: usize,
     },
 
+    /// Mushroom: cylindrical stem topped by a wider spherical cap.
+    /// Sphere center is at the top of the stem, so the cap drapes
+    /// outward beyond the stem.
+    Mushroom {
+        id: String,
+        stem_radius: Scalar,
+        stem_height: Scalar,
+        cap_radius: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// Lightbulb: a cylindrical base, frustum neck transition, and
+    /// spherical bulb on top. Three-piece composition.
+    Lightbulb {
+        id: String,
+        base_radius: Scalar,
+        base_height: Scalar,
+        neck_height: Scalar,
+        bulb_radius: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// DomedRoof: a cylinder topped with a hemisphere of the same
+    /// radius — silo, roundhouse, or kiln-cap shape.
+    DomedRoof {
+        id: String,
+        radius: Scalar,
+        wall_height: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// Beehive: a stack of progressively narrower cylinders, evoking
+    /// a traditional skep beehive. Four cylinder layers unioned.
+    Beehive {
+        id: String,
+        base_radius: Scalar,
+        layer_height: Scalar,
+        layers: usize,
+        slices: usize,
+    },
+
     /// Volute: a decorative scroll/spiral disk — Archimedean spiral
     /// rod plus a central disk. Used as classical column-capital
     /// ornament.
@@ -2876,6 +2920,10 @@ impl Feature {
             | Feature::PrismHole { id, .. }
             | Feature::KeyholeShape { id, .. }
             | Feature::AcornShape { id, .. }
+            | Feature::Mushroom { id, .. }
+            | Feature::Lightbulb { id, .. }
+            | Feature::DomedRoof { id, .. }
+            | Feature::Beehive { id, .. }
             | Feature::Volute { id, .. }
             | Feature::ScrollPlate { id, .. }
             | Feature::DovetailSlot { id, .. }
@@ -3105,6 +3153,10 @@ impl Feature {
             | Feature::PrismHole { .. }
             | Feature::KeyholeShape { .. }
             | Feature::AcornShape { .. }
+            | Feature::Mushroom { .. }
+            | Feature::Lightbulb { .. }
+            | Feature::DomedRoof { .. }
+            | Feature::Beehive { .. }
             | Feature::Volute { .. }
             | Feature::ScrollPlate { .. }
             | Feature::DovetailSlot { .. }

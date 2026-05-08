@@ -5185,6 +5185,84 @@ fn build(
             let stem = cylinder_along_axis(sr, sl + 1e-3, *slices, 2, br - 1e-3, 0.0, 0.0);
             body.try_union(&stem).map_err(|e| EvalError::Boolean { id: id.into(), op: "acorn_join", message: e.message })
         }
+        Feature::Mushroom { stem_radius, stem_height, cap_radius, stacks, slices, .. } => {
+            let sr = resolve_one(id, stem_radius, params)?;
+            let sh = resolve_one(id, stem_height, params)?;
+            let cr = resolve_one(id, cap_radius, params)?;
+            if sr <= 0.0 || sh <= 0.0 || cr <= 0.0 || cr <= sr || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Mushroom requires cap_radius>stem_radius, positive dims (got sr={sr}, cr={cr})") });
+            }
+            // Three pieces: stem cylinder + frustum collar (stem→cap radius)
+            // + spherical cap. The collar avoids the sharp radius jump that
+            // trips stitch when sphere sits directly on stem.
+            let collar_h = (cr - sr).min(sh * 0.5).max(1e-2);
+            let stem = cylinder_faceted(sr, sh, *slices);
+            let collar_raw = frustum_faceted(sr, cr, collar_h, *slices);
+            let collar = translate_solid(&collar_raw, Vec3::new(0.0, 0.0, sh - 1e-3));
+            let cap_raw = sphere_faceted(cr, *stacks, *slices);
+            let cap = translate_solid(&cap_raw, Vec3::new(0.0, 0.0, sh + collar_h - 1e-3));
+            let stem_collar = stem.try_union(&collar).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "mushroom_collar",
+                message: e.message,
+            })?;
+            stem_collar.try_union(&cap).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "mushroom_cap",
+                message: e.message,
+            })
+        }
+        Feature::Lightbulb { base_radius, base_height, neck_height, bulb_radius, stacks, slices, .. } => {
+            let basr = resolve_one(id, base_radius, params)?;
+            let bash = resolve_one(id, base_height, params)?;
+            let nh = resolve_one(id, neck_height, params)?;
+            let br = resolve_one(id, bulb_radius, params)?;
+            if basr <= 0.0 || bash <= 0.0 || nh <= 0.0 || br <= 0.0 || br <= basr || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Lightbulb requires bulb_radius>base_radius, positive dims (got basr={basr}, br={br})") });
+            }
+            let base = cylinder_faceted(basr, bash, *slices);
+            let neck_raw = frustum_faceted(basr, br, nh, *slices);
+            let neck = translate_solid(&neck_raw, Vec3::new(0.0, 0.0, bash));
+            let bulb_raw = sphere_faceted(br, *stacks, *slices);
+            let bulb = translate_solid(&bulb_raw, Vec3::new(0.0, 0.0, bash + nh));
+            let lower = base.try_union(&neck).map_err(|e| EvalError::Boolean { id: id.into(), op: "lightbulb_neck", message: e.message })?;
+            lower.try_union(&bulb).map_err(|e| EvalError::Boolean { id: id.into(), op: "lightbulb_bulb", message: e.message })
+        }
+        Feature::DomedRoof { radius, wall_height, stacks, slices, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let wh = resolve_one(id, wall_height, params)?;
+            if r <= 0.0 || wh <= 0.0 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("DomedRoof requires positive radius and wall_height (got r={r}, wh={wh})") });
+            }
+            let wall = cylinder_faceted(r, wh, *slices);
+            let dome_raw = sphere_faceted(r, *stacks, *slices);
+            let dome = translate_solid(&dome_raw, Vec3::new(0.0, 0.0, wh));
+            wall.try_union(&dome).map_err(|e| EvalError::Boolean { id: id.into(), op: "domed_roof_join", message: e.message })
+        }
+        Feature::Beehive { base_radius, layer_height, layers, slices, .. } => {
+            let r0 = resolve_one(id, base_radius, params)?;
+            let lh = resolve_one(id, layer_height, params)?;
+            if r0 <= 0.0 || lh <= 0.0 || *layers < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Beehive requires layers>=2, positive base_radius and layer_height (got r0={r0}, layers={layers})") });
+            }
+            // Each layer's radius shrinks linearly to 0.4*r0 at the top.
+            let mut acc: Option<Solid> = None;
+            for i in 0..*layers {
+                let frac = i as f64 / (*layers as f64 - 1.0).max(1.0);
+                let r_i = r0 * (1.0 - 0.6 * frac);
+                let z_i = lh * i as f64;
+                let layer = cylinder_along_axis(r_i, lh + 1e-3, *slices, 2, z_i, 0.0, 0.0);
+                acc = Some(match acc {
+                    None => layer,
+                    Some(prev) => prev.try_union(&layer).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "beehive_layer",
+                        message: e.message,
+                    })?,
+                });
+            }
+            Ok(acc.expect("beehive must have >=2 layers"))
+        }
         Feature::Volute { max_radius, revolutions, rod_radius, center_disk_radius, thickness, segments_per_revolution, center_segments, .. } => {
             let r_max = resolve_one(id, max_radius, params)?;
             let revs = resolve_one(id, revolutions, params)?;
