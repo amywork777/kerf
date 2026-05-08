@@ -1,0 +1,16 @@
+{
+  "parameters": {
+    "block_x": 30.0, "block_y": 20.0, "block_z": 10.0
+  },
+  "features": [
+    {"kind": "Box", "id": "block", "extents": ["$block_x", "$block_y", "$block_z"]},
+
+    {"kind": "Cylinder", "id": "pocket", "radius": 2.0, "height": 12.0, "segments": 12},
+
+    {"kind": "Translate", "id": "p1", "input": "pocket", "offset": [ 6.0, 10.0, -1.0]},
+    {"kind": "Translate", "id": "p2", "input": "pocket", "offset": [15.0, 10.0, -1.0]},
+    {"kind": "Translate", "id": "p3", "input": "pocket", "offset": [24.0, 10.0, -1.0]},
+
+    {"kind": "Difference", "id": "out", "inputs": ["block", "p1", "p2", "p3"]}
+  ]
+}

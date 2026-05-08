@@ -1,0 +1,23 @@
+[package]
+name        = "kerf-cad-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "WASM bindings: evaluate a kerf-cad model JSON in the browser, return triangles for Three.js."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+kerf-brep = { path = "../kerf-brep" }
+kerf-cad  = { path = "../kerf-cad" }
+kerf-geom = { path = "../kerf-geom" }
+wasm-bindgen = "0.2"
+serde-wasm-bindgen = "0.6"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
