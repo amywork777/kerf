@@ -764,10 +764,21 @@ fn scenario_08_multi_view_dimensioned_drawing() {
 // works fine on a plain Box. Likely root cause: LBracket's interior
 // corner exposes a face whose boundary is shared with the cutter's
 // cylindrical wall in a way the stitcher's adjacency map can't reconcile.
+//
+// FIX ATTEMPT (deferred): the e2e bugfix branch added a best-effort
+// `drop_one_sided_boundary` rescue in stitch.rs (Stage 1d). Empirically,
+// dropping faces just cascades to drop the whole solid for this case —
+// the kept-face set has a genuinely open boundary that face-dropping
+// can't repair. The proper fix is to synthesize a patch face for each
+// connected loop of unpaired half-edges using the surrounding faces'
+// surface geometry. That's multi-week scope.
 #[test]
 #[ignore = "kernel: counterbore-into-LBracket triggers `non-manifold input \
-            to stitch` panic. Documented in STATUS.md. The stand-in test \
-            scenario_08_multi_view_dimensioned_drawing uses Box+BoltCircle."]
+            to stitch` panic. Documented in STATUS.md. Best-effort rescue \
+            in stitch.rs::drop_one_sided_boundary doesn't close the gap — \
+            see commit message of fix(brep): best-effort one-sided-boundary \
+            rescue. The stand-in test scenario_08_multi_view_dimensioned_\
+            drawing uses Box+BoltCircle."]
 fn scenario_08_lbracket_with_counterbore_bug() {
     let leg = 40.0;
     let thickness = 8.0;
@@ -811,8 +822,10 @@ fn scenario_08_lbracket_with_counterbore_bug() {
 #[test]
 #[ignore = "kernel: 4-corner z-edge fillets share lateral body faces — \
             documented in tests/fillets_plural.rs and STATUS.md. This e2e \
-            scenario inherits the same limitation. When GAP C+D fillet \
-            rescue is shipped, remove the ignore."]
+            scenario inherits the same limitation. The stitch rescue \
+            scaffold in drop_one_sided_boundary doesn't help — same \
+            structural issue as scenario_08 (face-dropping cascades). \
+            When the synthesise-patch-face pass lands, remove the ignore."]
 fn scenario_09_picking_drives_fillet_chain() {
     let lx = 60.0;
     let ly = 30.0;
