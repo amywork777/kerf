@@ -54,7 +54,7 @@ kernel + authoring + viewer + production output).
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
-| Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
+| Manufacturing features (240+ — see catalog) | 12% | 95% | 11.4 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
@@ -151,7 +151,9 @@ real kernel additions:
 - **Decorative composites**: Arrow, Funnel, TruncatedPyramid.
 - **Transforms**: ScaleXYZ.
 
-727 tests pass, 9 ignored. 220+ Features in catalog.
+742 tests pass, 9 ignored. 241 Features in catalog (round 8 added
+TableTop, Bench, WindowLouver, Hammer, ScrewDriver, Wrench, Heart3D,
+Star3D, Cross3D, Chair — furniture, tools, and decorative composites).
 
 The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
 are real manufacturing features even if multi-edge fillet is still

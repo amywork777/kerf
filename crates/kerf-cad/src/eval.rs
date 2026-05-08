@@ -5254,6 +5254,324 @@ fn build(
             }
             Ok(acc.unwrap())
         }
+        Feature::TableTop { top_width, top_depth, top_thickness, leg_radius, leg_height, leg_inset, segments, .. } => {
+            let tw = resolve_one(id, top_width, params)?;
+            let td = resolve_one(id, top_depth, params)?;
+            let tt = resolve_one(id, top_thickness, params)?;
+            let lr = resolve_one(id, leg_radius, params)?;
+            let lh = resolve_one(id, leg_height, params)?;
+            let li = resolve_one(id, leg_inset, params)?;
+            if tw <= 0.0 || td <= 0.0 || tt <= 0.0 || lr <= 0.0 || lh <= 0.0 || li <= 0.0
+                || *segments < 6 || 2.0 * (li + lr) >= tw || 2.0 * (li + lr) >= td
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("TableTop requires positive dims, segments>=6, legs fit in slab (got tw={tw}, td={td}, lr={lr}, li={li})") });
+            }
+            // Slab on top.
+            let slab = box_at(Vec3::new(tw, td, tt), Point3::new(0.0, 0.0, lh));
+            let eps = 1e-3;
+            let leg_h = lh + eps; // poke into slab
+            // Four legs at the inset corners.
+            let corners = [
+                (li + lr, li + lr),
+                (tw - li - lr, li + lr),
+                (li + lr, td - li - lr),
+                (tw - li - lr, td - li - lr),
+            ];
+            let mut acc = slab;
+            for (i, (cx, cy)) in corners.iter().enumerate() {
+                let leg = cylinder_along_axis(lr, leg_h, *segments, 2, 0.0, *cx, *cy);
+                acc = acc.try_union(&leg).map_err(|e| EvalError::Boolean {
+                    id: id.into(), op: "table_top_leg", message: format!("leg {i}: {}", e.message),
+                })?;
+            }
+            Ok(acc)
+        }
+        Feature::Bench { length, depth, seat_thickness, leg_height, support_thickness, support_inset, .. } => {
+            let l = resolve_one(id, length, params)?;
+            let d = resolve_one(id, depth, params)?;
+            let st = resolve_one(id, seat_thickness, params)?;
+            let lh = resolve_one(id, leg_height, params)?;
+            let sup_t = resolve_one(id, support_thickness, params)?;
+            let sup_i = resolve_one(id, support_inset, params)?;
+            if l <= 0.0 || d <= 0.0 || st <= 0.0 || lh <= 0.0 || sup_t <= 0.0 || sup_i < 0.0
+                || 2.0 * (sup_i + sup_t) >= l
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Bench requires positive dims, supports fit in length (got l={l}, sup_t={sup_t}, sup_i={sup_i})") });
+            }
+            // Seat slab spans the full length, sits at z ∈ [lh, lh + st].
+            let seat = box_at(Vec3::new(l, d, st), Point3::new(0.0, 0.0, lh));
+            let eps = 1e-3;
+            let sup_h = lh + eps;
+            // Two box supports at each end, inset from edges.
+            let left = box_at(
+                Vec3::new(sup_t, d, sup_h),
+                Point3::new(sup_i, 0.0, 0.0),
+            );
+            let right = box_at(
+                Vec3::new(sup_t, d, sup_h),
+                Point3::new(l - sup_i - sup_t, 0.0, 0.0),
+            );
+            let with_left = seat.try_union(&left).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "bench_left_support", message: e.message,
+            })?;
+            with_left.try_union(&right).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "bench_right_support", message: e.message,
+            })
+        }
+        Feature::WindowLouver { outer_width, outer_height, frame_thickness, depth, slats, slat_thickness, .. } => {
+            let ow = resolve_one(id, outer_width, params)?;
+            let oh = resolve_one(id, outer_height, params)?;
+            let ft = resolve_one(id, frame_thickness, params)?;
+            let d = resolve_one(id, depth, params)?;
+            let stk = resolve_one(id, slat_thickness, params)?;
+            let n = *slats;
+            if ow <= 0.0 || oh <= 0.0 || ft <= 0.0 || d <= 0.0 || stk <= 0.0 || n == 0
+                || 2.0 * ft >= ow || 2.0 * ft >= oh
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("WindowLouver requires positive dims, 2*ft<ow,oh, slats>=1 (got ow={ow}, oh={oh}, ft={ft})") });
+            }
+            // Outer frame: outer rect minus inner rect (window-frame style).
+            let outer = box_at(Vec3::new(ow, oh, d), Point3::new(0.0, 0.0, 0.0));
+            let inner = box_at(
+                Vec3::new(ow - 2.0 * ft, oh - 2.0 * ft, d + 2e-3),
+                Point3::new(ft, ft, -1e-3),
+            );
+            let frame = outer.try_difference(&inner).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "window_louver_frame", message: e.message,
+            })?;
+            // Inner cavity has height (oh - 2*ft); place n slats evenly along y.
+            let cavity_h = oh - 2.0 * ft;
+            // Need cavity_h > n*stk (slats fit with gaps). If not, error.
+            if (n as f64) * stk >= cavity_h {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("WindowLouver slats don't fit (n*stk={} >= cavity_h={})", (n as f64) * stk, cavity_h) });
+            }
+            // Distribute slats: gap = (cavity_h - n*stk) / (n + 1).
+            let gap = (cavity_h - (n as f64) * stk) / ((n + 1) as f64);
+            let mut acc = frame;
+            let eps = 1e-3;
+            for i in 0..n {
+                let y0 = ft + gap + (i as f64) * (stk + gap);
+                // Slats poke 1e-3 into the frame on both x-sides and span the
+                // full depth (no z-overlap issues since both align z=[0,d]).
+                // Z: pad slightly so the z-faces don't coincide with frame's z=0/z=d.
+                let slat = box_at(
+                    Vec3::new(ow - 2.0 * ft + 2.0 * eps, stk, d - 2.0 * eps),
+                    Point3::new(ft - eps, y0, eps),
+                );
+                acc = acc.try_union(&slat).map_err(|e| EvalError::Boolean {
+                    id: id.into(), op: "window_louver_slat", message: format!("slat {i}: {}", e.message),
+                })?;
+            }
+            Ok(acc)
+        }
+        Feature::Hammer { head_length, head_width, head_height, handle_radius, handle_length, segments, .. } => {
+            let hl = resolve_one(id, head_length, params)?;
+            let hw = resolve_one(id, head_width, params)?;
+            let hh = resolve_one(id, head_height, params)?;
+            let hr = resolve_one(id, handle_radius, params)?;
+            let han_l = resolve_one(id, handle_length, params)?;
+            if hl <= 0.0 || hw <= 0.0 || hh <= 0.0 || hr <= 0.0 || han_l <= 0.0 || *segments < 6
+                || 2.0 * hr >= hl || 2.0 * hr >= hw
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Hammer requires positive dims, segments>=6, handle fits in head (got hl={hl}, hw={hw}, hr={hr})") });
+            }
+            // Head: rectangular box centered on (0,0), at z ∈ [han_l, han_l+hh].
+            let head = box_at(
+                Vec3::new(hl, hw, hh),
+                Point3::new(-hl / 2.0, -hw / 2.0, han_l),
+            );
+            // Handle: cylinder of radius hr along z from 0 to han_l + 1e-3 (poke into head).
+            let handle = cylinder_along_axis(hr, han_l + 1e-3, *segments, 2, 0.0, 0.0, 0.0);
+            head.try_union(&handle).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "hammer_union", message: e.message,
+            })
+        }
+        Feature::ScrewDriver { handle_radius, handle_length, shaft_radius, shaft_length, tip_width, tip_thickness, tip_length, segments, .. } => {
+            let hr = resolve_one(id, handle_radius, params)?;
+            let hl = resolve_one(id, handle_length, params)?;
+            let sr = resolve_one(id, shaft_radius, params)?;
+            let sl = resolve_one(id, shaft_length, params)?;
+            let tw = resolve_one(id, tip_width, params)?;
+            let tt = resolve_one(id, tip_thickness, params)?;
+            let tl = resolve_one(id, tip_length, params)?;
+            if hr <= 0.0 || hl <= 0.0 || sr <= 0.0 || sl <= 0.0 || tw <= 0.0 || tt <= 0.0 || tl <= 0.0
+                || *segments < 6 || sr >= hr || tw > 2.0 * sr * 1.5
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("ScrewDriver requires sr<hr, positive dims, segments>=6 (got hr={hr}, sr={sr}, tw={tw})") });
+            }
+            // Handle: cylinder z ∈ [0, hl].
+            let handle = cylinder_along_axis(hr, hl, *segments, 2, 0.0, 0.0, 0.0);
+            // Shaft: cylinder z ∈ [hl - 1e-3, hl + sl] (poke into handle).
+            let shaft = cylinder_along_axis(sr, sl + 1e-3, *segments, 2, hl - 1e-3, 0.0, 0.0);
+            // Tip: thin flat box centered at (0, 0, hl + sl - 1e-3..hl + sl + tl).
+            let tip = box_at(
+                Vec3::new(tw, tt, tl + 1e-3),
+                Point3::new(-tw / 2.0, -tt / 2.0, hl + sl - 1e-3),
+            );
+            let with_shaft = handle.try_union(&shaft).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "screwdriver_handle_shaft", message: e.message,
+            })?;
+            with_shaft.try_union(&tip).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "screwdriver_shaft_tip", message: e.message,
+            })
+        }
+        Feature::Wrench { head_width, head_length, thickness, handle_root_width, handle_tip_width, handle_length, .. } => {
+            let hw = resolve_one(id, head_width, params)?;
+            let hl = resolve_one(id, head_length, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            let hrw = resolve_one(id, handle_root_width, params)?;
+            let htw = resolve_one(id, handle_tip_width, params)?;
+            let han_l = resolve_one(id, handle_length, params)?;
+            if hw <= 0.0 || hl <= 0.0 || t <= 0.0 || hrw <= 0.0 || htw <= 0.0 || han_l <= 0.0
+                || hrw > hw || htw > hrw
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Wrench requires positive dims, handle widths in (0,head_width], htw<=hrw (got hw={hw}, hrw={hrw}, htw={htw})") });
+            }
+            // Head: rectangular box, sitting at x=[0,hw], y=[0,hl], z=[0,t].
+            let head = box_at(Vec3::new(hw, hl, t), Point3::new(0.0, 0.0, 0.0));
+            // Handle: tapered prism extruded by `t` along +z. The 2D profile is a
+            // trapezoid: at y=hl it has width hrw centered on x=hw/2; at y=hl+han_l
+            // it has width htw centered on x=hw/2. Pull root back by 1e-3 to seal.
+            let prof = vec![
+                Point3::new(hw / 2.0 - hrw / 2.0, hl - 1e-3, 0.0),
+                Point3::new(hw / 2.0 + hrw / 2.0, hl - 1e-3, 0.0),
+                Point3::new(hw / 2.0 + htw / 2.0, hl + han_l, 0.0),
+                Point3::new(hw / 2.0 - htw / 2.0, hl + han_l, 0.0),
+            ];
+            let handle = extrude_polygon(&prof, Vec3::new(0.0, 0.0, t));
+            head.try_union(&handle).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "wrench_union", message: e.message,
+            })
+        }
+        Feature::Heart3D { lobe_radius, lobe_offset, lobe_z, stacks, slices, .. } => {
+            let lr = resolve_one(id, lobe_radius, params)?;
+            let lo = resolve_one(id, lobe_offset, params)?;
+            let lz = resolve_one(id, lobe_z, params)?;
+            if lr <= 0.0 || lo <= 0.0 || lz <= 0.0 || *stacks < 2 || *slices < 3 || lo >= 2.0 * lr {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Heart3D requires positive dims, lobe_offset<2*lobe_radius (got lr={lr}, lo={lo}, lz={lz})") });
+            }
+            // Two faceted spheres for lobes.
+            let left_raw = sphere_faceted(lr, *stacks, *slices);
+            let right_raw = sphere_faceted(lr, *stacks, *slices);
+            // Cone: apex at (0, 0, 0), base of radius lr at z=lz.
+            // cone_faceted creates a cone with base at z=0 of radius lr,
+            // apex at z=h. We want apex DOWN, so build at z=lz then offset.
+            // Strategy: cone_faceted(lr, lz, slices) gives base at z=0, apex at z=lz.
+            // Mirror or just use it: we want apex DOWN at z=0, base up at z=lz.
+            // The cone_faceted base is at z=0 by default — we want apex at bottom.
+            // Build it z-flipped: a cone with base (lr) at z=0, apex at z=lz, then
+            // mirror. Easier: build cone with base lr at top via frustum_faceted
+            // from a tiny apex radius up to lr.
+            let cone_solid = frustum_faceted(1e-3 * lr, lr, lz, *slices);
+            // Now union with sphere-overlap pattern (br - 1e-3 motif).
+            // We have a cone with z ∈ [0, lz] and spheres at (±lo, 0, lz).
+            // Spheres overlap with cone tip at top, where cone radius is lr ≈ sphere radius.
+            // Apply pole-overlap by sliding spheres slightly down (so they
+            // overlap into the cone instead of just touching).
+            let left = translate_solid(&left_raw, Vec3::new(-lo, 0.0, lz - 1e-3));
+            let right = translate_solid(&right_raw, Vec3::new(lo, 0.0, lz - 1e-3));
+            let with_left = cone_solid.try_union(&left).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "heart3d_left_lobe", message: e.message,
+            })?;
+            with_left.try_union(&right).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "heart3d_right_lobe", message: e.message,
+            })
+        }
+        Feature::Star3D { arm_length, arm_thickness, .. } => {
+            let al = resolve_one(id, arm_length, params)?;
+            let at = resolve_one(id, arm_thickness, params)?;
+            if al <= 0.0 || at <= 0.0 || at >= al {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Star3D requires positive dims, arm_thickness<arm_length (got al={al}, at={at})") });
+            }
+            // Three orthogonal arms centered on origin.
+            let x_arm = box_at(
+                Vec3::new(al, at, at),
+                Point3::new(-al / 2.0, -at / 2.0, -at / 2.0),
+            );
+            let y_arm = box_at(
+                Vec3::new(at, al, at),
+                Point3::new(-at / 2.0, -al / 2.0, -at / 2.0),
+            );
+            let z_arm = box_at(
+                Vec3::new(at, at, al),
+                Point3::new(-at / 2.0, -at / 2.0, -al / 2.0),
+            );
+            let xy = x_arm.try_union(&y_arm).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "star3d_xy", message: e.message,
+            })?;
+            xy.try_union(&z_arm).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "star3d_xyz", message: e.message,
+            })
+        }
+        Feature::Cross3D { width, depth, height, arm_span, arm_height, arm_z, .. } => {
+            let w = resolve_one(id, width, params)?;
+            let d = resolve_one(id, depth, params)?;
+            let h = resolve_one(id, height, params)?;
+            let asp = resolve_one(id, arm_span, params)?;
+            let ah = resolve_one(id, arm_height, params)?;
+            let az = resolve_one(id, arm_z, params)?;
+            if w <= 0.0 || d <= 0.0 || h <= 0.0 || asp <= 0.0 || ah <= 0.0 || az < 0.0
+                || asp <= w || az + ah > h
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Cross3D requires positive dims, asp>w, az+ah<=h (got w={w}, asp={asp}, az={az}, h={h})") });
+            }
+            // Vertical post: spans x ∈ [0, w], y ∈ [0, d], z ∈ [0, h].
+            let post = box_at(Vec3::new(w, d, h), Point3::new(0.0, 0.0, 0.0));
+            // Crossbar: spans x ∈ [-(asp-w)/2, (asp-w)/2 + w] = [w/2 - asp/2, w/2 + asp/2],
+            // y ∈ [0, d], z ∈ [az, az + ah]. Centered in x on the post.
+            let arm = box_at(
+                Vec3::new(asp, d, ah),
+                Point3::new(w / 2.0 - asp / 2.0, 0.0, az),
+            );
+            post.try_union(&arm).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "cross3d_union", message: e.message,
+            })
+        }
+        Feature::Chair { seat_size, seat_thickness, leg_height, leg_thickness, leg_inset, back_thickness, back_height, .. } => {
+            let ss = resolve_one(id, seat_size, params)?;
+            let st = resolve_one(id, seat_thickness, params)?;
+            let lh = resolve_one(id, leg_height, params)?;
+            let lt = resolve_one(id, leg_thickness, params)?;
+            let li = resolve_one(id, leg_inset, params)?;
+            let bt = resolve_one(id, back_thickness, params)?;
+            let bh = resolve_one(id, back_height, params)?;
+            if ss <= 0.0 || st <= 0.0 || lh <= 0.0 || lt <= 0.0 || li < 0.0 || bt <= 0.0 || bh <= 0.0
+                || 2.0 * (li + lt) >= ss || bt >= ss
+            {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Chair requires positive dims, legs+back fit in seat (got ss={ss}, lt={lt}, li={li}, bt={bt})") });
+            }
+            // Seat slab.
+            let seat = box_at(Vec3::new(ss, ss, st), Point3::new(0.0, 0.0, lh));
+            let eps = 1e-3;
+            let leg_h = lh + eps;
+            // Back rest first (union seat + back is two well-separated boxes
+            // with a thin overlap; cleaner than back + 4-leg accumulator).
+            // Back x is inset by eps on both sides so its x-faces don't coincide
+            // with seat's x=0/x=ss. Y: span [-eps, bt] so the back's y=0 face
+            // doesn't coincide with seat's y=0 face. Z: poke eps into seat top.
+            let back = box_at(
+                Vec3::new(ss - 2.0 * eps, bt + eps, bh + eps),
+                Point3::new(eps, -eps, lh + st - eps),
+            );
+            let seat_back = seat.try_union(&back).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "chair_back", message: e.message,
+            })?;
+            // Four box legs at corners (square cross-section).
+            let corners = [
+                (li, li),
+                (ss - li - lt, li),
+                (li, ss - li - lt),
+                (ss - li - lt, ss - li - lt),
+            ];
+            let mut acc = seat_back;
+            for (i, (lx, ly)) in corners.iter().enumerate() {
+                let leg = box_at(Vec3::new(lt, lt, leg_h), Point3::new(*lx, *ly, 0.0));
+                acc = acc.try_union(&leg).map_err(|e| EvalError::Boolean {
+                    id: id.into(), op: "chair_leg", message: format!("leg {i}: {}", e.message),
+                })?;
+            }
+            Ok(acc)
+        }
         Feature::HoleArray {
             input,
             axis,
