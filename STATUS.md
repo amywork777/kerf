@@ -57,12 +57,60 @@ kernel + authoring + viewer + production output).
 | Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
-| 2D sketcher UI                            | 8%        | 65%      | 5.2    |
+| 2D sketcher UI                            | 8%        | 88%      | 7.04   |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~70.2%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~72.0%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08, part 2)
+## Latest session (2026-05-08, part 3)
+
+**2D sketcher polish: multi-loop, named ref-planes, trim/extend/fillet.**
+Sketcher scorecard line 65% → 88% (+1.84 SW pts). 739 tests → 751 tests
+(+12 new sketch tests), 0 failed, 9 ignored (unchanged).
+
+- **Multi-loop sketches** (Tier A): `Sketch::to_profile_2d` already
+  emitted one `Profile2D` per closed loop; `build_sketch_extrude` now
+  accepts multiple profiles, builds each in the local sketch frame, and
+  unions them via the boolean engine. Disjoint sub-loops that share no
+  geometry compose into a multi-bodied solid (volume = sum of parts).
+  Overlapping sub-loops — where the polygons cross each other's edges —
+  are rejected with the new `SketchError::DisjointSubLoops` (only
+  fully-disjoint or fully-nested arrangements are well-formed for now).
+- **Named ref-plane positioning** (Tier B): `SketchPlane::NamedRefPlane(id)`
+  now resolves to the model's `Feature::RefPlane` of that id at extrude
+  time. The sketch is built in its local XY plane and then rigid-body
+  transformed: rotate so local +Z aligns with the named plane's normal
+  axis, translate to the named plane's `position`. Axis-aligned
+  variants (Xy / Xz / Yz) are unchanged. Unknown ref-plane ids fail with
+  a clear error.
+- **2D editing operations** (Tier C): three new `SketchPrim` variants —
+  `TrimLine { line, at_point }`, `ExtendLine { line, to_point }`,
+  `FilletCorner { corner_point, radius }`. They are resolved BEFORE
+  loop tracing as a primitive-rewriting pass: `TrimLine` rewrites the
+  Line endpoint nearest `at_point` (clipping the closer half off);
+  `ExtendLine` rewrites the Line endpoint nearest `to_point` (extending
+  the line to reach it); `FilletCorner` finds two Lines that share
+  `corner_point`, computes tangent points at distance `r/tan(θ/2)`
+  along each, inserts an Arc on the inscribed circle of radius `r`,
+  and rewrites both Lines to terminate at the new tangent points. The
+  fillet picks the SHORT-way arc (90° for orthogonal corners). Edge
+  cases — colinear lines, radius too large for adjacent edge length,
+  unknown line / point — fail with structured errors.
+- **Viewer (Tier D)**: TypeScript type definitions extended with the
+  three new `SketchPrim` variants so JSON sketches with `TrimLine` /
+  `ExtendLine` / `FilletCorner` round-trip through the canvas.
+  Trim / Extend / Fillet buttons added to the toolbar (prompt-driven
+  for now — full multi-click canvas tools are deferred).
+
+What's still deferred from the sketcher line (the remaining 12%): a
+constraint solver that actually enforces the stored `SketchConstraint`s,
+a true polygon-with-holes pipeline (today's nested-loop case unions
+solids rather than producing one polygon-with-holes profile), and
+multi-click canvas UX for the new edit operations (Trim/Extend/Fillet
+go through `window.prompt` for ids today). Functionally, the sketcher
+covers all "draw a 2D profile and turn it into a feature" workflows.
+
+## Earlier session (2026-05-08, part 2)
 
 **2D sketcher viewer UI shipped.** Sketcher scorecard line 30% → 65%
 (+2.8 SW pts on top of the data-model). New `viewer/src/sketcher.ts`
