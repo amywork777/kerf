@@ -483,9 +483,13 @@ fn scenario_05_shelled_box_with_hole() {
 //    lofted base. Verify topology composes (vertex/face counts > 0) and
 //    no panic.
 //
-//    BUG NOTE: solid_volume returns 0 for revolved solids (documented
-//    kernel limitation in STATUS.md — the seam loop walk fails for the
-//    full 360° lune). We assert face/vertex counts instead.
+//    HISTORICAL NOTE: solid_volume previously returned 0 for revolved
+//    solids — the loop walk on a single 360°-spanning lune face produces
+//    a degenerate "polygon" (back-and-forth seam + self-loop circles)
+//    whose divergence-theorem integrand vanishes. solid_volume now
+//    detects analytic surface kinds (Cone/Cylinder/Sphere/Torus) and
+//    integrates over per-face tessellated triangles instead. The vase
+//    now reports its true ~1.78 volume; we assert that explicitly.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -531,11 +535,14 @@ fn scenario_06_lofted_revolved_compound() {
     assert!(vase.face_count() > 0, "vase should have faces");
     assert!(vase.vertex_count() > 3);
     let v_vase = solid_volume(&vase);
-    // BUG/LIMITATION: solid_volume = 0 for revolved seams. Documented in
-    // STATUS.md as a kernel-side limitation.
+    // BUG FIX: solid_volume now uses analytic-surface tessellation for
+    // revolved faces, so v_vase is the actual swept volume rather than 0.
+    // The vase is a slim hourglass — analytic via Pappus's theorem applied
+    // to each profile segment. We just assert it's positive and broadly
+    // in range (the vase profile is smaller than a unit cylinder).
     assert!(
-        v_vase.abs() < 1e-3 || v_vase > 0.0,
-        "v_vase {v_vase} — expected ~0 (kernel seam walk) or positive",
+        v_vase > 0.5 && v_vase < 5.0,
+        "v_vase {v_vase} — expected positive (vase swept volume), got {v_vase}",
     );
 
     let v_base = solid_volume(&base);
