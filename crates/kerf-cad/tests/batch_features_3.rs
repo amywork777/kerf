@@ -108,19 +108,17 @@ fn bushing_volume_in_expected_range() {
         body_length: lit(l_body),
         segments: 16,
     });
-    match m.evaluate("b") {
-        Ok(s) => {
-            let v = solid_volume(&s);
-            // Approx: flange disk + body sleeve - bore.
-            let v_flange = PI * r_fl * r_fl * t_fl;
-            let v_body = PI * r_out * r_out * l_body;
-            let v_bore = PI * r_in * r_in * (t_fl + l_body);
-            let exp = v_flange + v_body - v_bore;
-            let rel = (v - exp).abs() / exp;
-            assert!(rel < 0.10, "bushing v={v}, exp={exp}, rel={rel}");
-        }
-        Err(_) => {} // Multi-cylinder boolean limitations: tolerated.
-    }
+    // Stitch GAP E repairs the bore-cylinder coincident-cap overlap with the
+    // flange+body assembly.
+    let s = m.evaluate("b").unwrap();
+    let v = solid_volume(&s);
+    // Approx: flange disk + body sleeve - bore.
+    let v_flange = PI * r_fl * r_fl * t_fl;
+    let v_body = PI * r_out * r_out * l_body;
+    let v_bore = PI * r_in * r_in * (t_fl + l_body);
+    let exp = v_flange + v_body - v_bore;
+    let rel = (v - exp).abs() / exp;
+    assert!(rel < 0.10, "bushing v={v}, exp={exp}, rel={rel}");
 }
 
 #[test]

@@ -27,10 +27,10 @@ fn vector_arrow_completes() {
         head_length: lit(0.5),
         segments: 12,
     });
-    match m.evaluate("va") {
-        Ok(s) => assert!(solid_volume(&s) > 0.0),
-        Err(_) => {} // sweep + cone union may trip kernel
-    }
+    // Stitch GAP E (synthesize closing planar caps from cycles of orphan
+    // edges) repairs the cone-tip-meets-cylinder overlap.
+    let s = m.evaluate("va").unwrap();
+    assert!(solid_volume(&s) > 0.0);
 }
 
 #[test]
@@ -42,10 +42,9 @@ fn bone_shape_completes() {
         shaft_length: lit(3.0),
         stacks: 6, slices: 12,
     });
-    match m.evaluate("bs") {
-        Ok(s) => assert!(solid_volume(&s) > 0.0),
-        Err(_) => {} // sphere + cylinder union may trip kernel
-    }
+    // Stitch GAP E repairs the sphere-cap meets cylinder-cap overlap.
+    let s = m.evaluate("bs").unwrap();
+    assert!(solid_volume(&s) > 0.0);
 }
 
 #[test]
@@ -59,10 +58,9 @@ fn pawn_completes() {
         head_radius: lit(0.4),
         segments: 12, stacks: 6,
     });
-    match m.evaluate("p") {
-        Ok(s) => assert!(solid_volume(&s) > 0.0),
-        Err(_) => {}
-    }
+    // Stitch GAP E repairs the chained cylinder/frustum/sphere unions.
+    let s = m.evaluate("p").unwrap();
+    assert!(solid_volume(&s) > 0.0);
 }
 
 #[test]
