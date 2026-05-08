@@ -5,6 +5,7 @@
 //! JSON serde lets the recipe be data, not code.
 
 pub mod assembly;
+pub mod cache;
 pub mod eval;
 pub mod feature;
 pub mod model;
@@ -17,6 +18,7 @@ pub use assembly::{
     apply_pose_to_solid, Assembly, AssemblyError, AssemblyRef, AxisRef, Instance, Mate, MateError,
     Pose, ResolvedPose, SurfaceRef,
 };
+pub use cache::{EvalCache, Fingerprint};
 pub use eval::EvalError;
 pub use feature::{Feature, FilletEdge, Profile2D};
 pub use model::{Model, ModelError};

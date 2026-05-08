@@ -13,6 +13,7 @@ use kerf_brep::{
 use kerf_geom::{Point3, Vec3};
 use thiserror::Error;
 
+use crate::cache::{feature_fingerprint, EvalCache, Fingerprint};
 use crate::feature::{Feature, FilletEdge, Profile2D};
 use crate::model::Model;
 use crate::scalar::{resolve_arr, Scalar};
@@ -45,6 +46,106 @@ impl Model {
         let mut stack: Vec<String> = Vec::new();
         self.eval_into(target_id, &mut cache, &mut stack)?;
         Ok(cache.remove(target_id).expect("just computed"))
+    }
+
+    /// Evaluate `target_id` reusing previously-computed Solids from `cache`.
+    ///
+    /// On a cache hit (same recipe as last call) this returns in microseconds:
+    /// it just clones the stored Solid. On a miss for one feature, only that
+    /// feature and its dependents are recomputed; sibling subtrees stay cached.
+    ///
+    /// The cache is keyed on a "recipe fingerprint" — see [`crate::cache`]
+    /// for the full design. Safe to call across many models if you keep one
+    /// cache per Model; mixing caches across models will cause spurious hits.
+    pub fn evaluate_cached(
+        &self,
+        target_id: &str,
+        cache: &mut EvalCache,
+    ) -> Result<Solid, EvalError> {
+        let (solid, _) = self.evaluate_cached_with_fingerprint(target_id, cache)?;
+        Ok(solid)
+    }
+
+    /// Same as [`Self::evaluate_cached`] but also returns the recipe
+    /// fingerprint of the resulting solid. The fingerprint is stable across
+    /// runs (depends only on the feature graph + parameters), so callers
+    /// can use it as a cache key for downstream computation like mesh
+    /// tessellation. See [`crate::cache::feature_fingerprint`].
+    pub fn evaluate_cached_with_fingerprint(
+        &self,
+        target_id: &str,
+        cache: &mut EvalCache,
+    ) -> Result<(Solid, Fingerprint), EvalError> {
+        if self.feature(target_id).is_none() {
+            return Err(EvalError::UnknownId(target_id.to_string()));
+        }
+        // Fingerprints computed during this walk, by feature id. Local to
+        // one evaluate_cached call so the same DAG produces consistent
+        // upstream fingerprints regardless of caller's previous state.
+        let mut fps: HashMap<String, Fingerprint> = HashMap::new();
+        // Solids actually used during this walk. We hand these to `build`
+        // directly (it expects a HashMap<String, Solid>); cache hits land
+        // here as clones from the long-lived cache.
+        let mut local: HashMap<String, Solid> = HashMap::new();
+        let mut stack: Vec<String> = Vec::new();
+        self.eval_into_cached(target_id, &mut local, &mut fps, cache, &mut stack)?;
+        let fp = *fps.get(target_id).expect("just computed");
+        Ok((local.remove(target_id).expect("just computed"), fp))
+    }
+
+    fn eval_into_cached(
+        &self,
+        id: &str,
+        local: &mut HashMap<String, Solid>,
+        fps: &mut HashMap<String, Fingerprint>,
+        cache: &mut EvalCache,
+        stack: &mut Vec<String>,
+    ) -> Result<(), EvalError> {
+        if local.contains_key(id) {
+            return Ok(());
+        }
+        if stack.iter().any(|s| s == id) {
+            return Err(EvalError::Cycle(id.to_string()));
+        }
+        let feature = self
+            .feature(id)
+            .ok_or_else(|| EvalError::UnknownId(id.to_string()))?;
+
+        stack.push(id.to_string());
+        for dep in feature.inputs() {
+            self.eval_into_cached(dep, local, fps, cache, stack)?;
+        }
+        stack.pop();
+
+        // Compute this feature's fingerprint from its inputs'.
+        let input_fps: Vec<Fingerprint> = feature
+            .inputs()
+            .iter()
+            .map(|dep| *fps.get(*dep).expect("dep evaluated"))
+            .collect();
+        let fp = feature_fingerprint(feature, &self.parameters, &input_fps);
+        fps.insert(id.to_string(), fp);
+
+        // Cache hit: clone the stored solid into local. Cloning a Solid
+        // is O(verts+edges+faces) but no boolean recomputation.
+        if let Some(hit) = cache.get(id, fp) {
+            local.insert(id.to_string(), hit.clone());
+            return Ok(());
+        }
+
+        let mut result = build(feature, &self.parameters, local)?;
+        // Picking provenance: tag any face in this feature's result that
+        // doesn't already carry an owner tag with this feature's id.
+        let owner = id.to_string();
+        let face_ids: Vec<_> = result.topo.face_ids().collect();
+        for fid in face_ids {
+            if !result.face_owner_tag.contains_key(fid) {
+                result.face_owner_tag.insert(fid, owner.clone());
+            }
+        }
+        cache.put(id.to_string(), fp, result.clone());
+        local.insert(id.to_string(), result);
+        Ok(())
     }
 
     fn eval_into(
