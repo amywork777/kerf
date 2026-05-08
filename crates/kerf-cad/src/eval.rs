@@ -6730,6 +6730,555 @@ fn build(
             Ok(acc)
         }
 
+        // ---------------------------------------------------------------
+        // Reference geometry batch 3 (5 features) — ship 2026-05-08.
+        // ---------------------------------------------------------------
+
+        Feature::MidPlaneRef {
+            position_a,
+            position_b,
+            axis,
+            extents,
+            marker_thickness,
+            ..
+        } => {
+            let pa = resolve3(id, position_a, params)?;
+            let pb = resolve3(id, position_b, params)?;
+            let e = resolve3(
+                id,
+                &[extents[0].clone(), extents[1].clone(), Scalar::lit(0.0)],
+                params,
+            )?;
+            let t = resolve_one(id, marker_thickness, params)?;
+            if e[0] <= 0.0 || e[1] <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "MidPlaneRef extents and marker_thickness must be > 0 (got w={}, h={}, t={})",
+                        e[0], e[1], t
+                    ),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            // Midpoint between the two positions.
+            let mid = [
+                0.5 * (pa[0] + pb[0]),
+                0.5 * (pa[1] + pb[1]),
+                0.5 * (pa[2] + pb[2]),
+            ];
+            let mut box_extents = [0.0_f64; 3];
+            box_extents[axis_idx] = t;
+            box_extents[a_idx] = e[0];
+            box_extents[b_idx] = e[1];
+            let mut origin = [0.0_f64; 3];
+            origin[axis_idx] = mid[axis_idx] - t / 2.0;
+            origin[a_idx] = mid[a_idx] - e[0] / 2.0;
+            origin[b_idx] = mid[b_idx] - e[1] / 2.0;
+            Ok(box_at(
+                Vec3::new(box_extents[0], box_extents[1], box_extents[2]),
+                Point3::new(origin[0], origin[1], origin[2]),
+            ))
+        }
+        Feature::PerpRefPlane {
+            axis,
+            point,
+            extents,
+            marker_thickness,
+            ..
+        } => {
+            let p = resolve3(id, point, params)?;
+            let e = resolve3(
+                id,
+                &[extents[0].clone(), extents[1].clone(), Scalar::lit(0.0)],
+                params,
+            )?;
+            let t = resolve_one(id, marker_thickness, params)?;
+            if e[0] <= 0.0 || e[1] <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "PerpRefPlane extents and marker_thickness must be > 0 (got w={}, h={}, t={})",
+                        e[0], e[1], t
+                    ),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            let mut box_extents = [0.0_f64; 3];
+            box_extents[axis_idx] = t;
+            box_extents[a_idx] = e[0];
+            box_extents[b_idx] = e[1];
+            let mut origin = [0.0_f64; 3];
+            origin[axis_idx] = p[axis_idx] - t / 2.0;
+            origin[a_idx] = p[a_idx] - e[0] / 2.0;
+            origin[b_idx] = p[b_idx] - e[1] / 2.0;
+            Ok(box_at(
+                Vec3::new(box_extents[0], box_extents[1], box_extents[2]),
+                Point3::new(origin[0], origin[1], origin[2]),
+            ))
+        }
+        Feature::OffsetRefPlane {
+            base_position,
+            axis,
+            offset,
+            extents,
+            marker_thickness,
+            ..
+        } => {
+            let bp = resolve3(id, base_position, params)?;
+            let off = resolve_one(id, offset, params)?;
+            let e = resolve3(
+                id,
+                &[extents[0].clone(), extents[1].clone(), Scalar::lit(0.0)],
+                params,
+            )?;
+            let t = resolve_one(id, marker_thickness, params)?;
+            if e[0] <= 0.0 || e[1] <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "OffsetRefPlane extents and marker_thickness must be > 0 (got w={}, h={}, t={})",
+                        e[0], e[1], t
+                    ),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            let mut box_extents = [0.0_f64; 3];
+            box_extents[axis_idx] = t;
+            box_extents[a_idx] = e[0];
+            box_extents[b_idx] = e[1];
+            let mut origin = [0.0_f64; 3];
+            origin[axis_idx] = bp[axis_idx] + off - t / 2.0;
+            origin[a_idx] = bp[a_idx] - e[0] / 2.0;
+            origin[b_idx] = bp[b_idx] - e[1] / 2.0;
+            Ok(box_at(
+                Vec3::new(box_extents[0], box_extents[1], box_extents[2]),
+                Point3::new(origin[0], origin[1], origin[2]),
+            ))
+        }
+        Feature::CoordinateAxes {
+            length,
+            bar_radius,
+            head_length,
+            segments,
+            ..
+        } => {
+            let l = resolve_one(id, length, params)?;
+            let r = resolve_one(id, bar_radius, params)?;
+            let _hl = resolve_one(id, head_length, params)?;
+            if l <= 0.0 || r <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "CoordinateAxes requires positive length, bar_radius (got l={l}, r={r})"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("CoordinateAxes segments must be >= 6 (got {segments})"),
+                });
+            }
+            // Three thin cylinders along x, y, z, each spanning a band
+            // around the origin. Same recipe as Marker3D, which is the
+            // tested-robust 3-bar union: each bar's length and start are
+            // staggered slightly (by integer multiples of `r`) so the
+            // bars' end caps never sit coplanar with another bar's
+            // lateral cylindrical surface.
+            let bar_x = cylinder_along_axis(r, 2.0 * l, *segments, 0, -l, 0.0, 0.0);
+            let bar_y = cylinder_along_axis(
+                r,
+                2.0 * l + 2.0 * r,
+                *segments,
+                1,
+                -l - r,
+                0.0,
+                0.0,
+            );
+            let bar_z = cylinder_along_axis(
+                r,
+                2.0 * l + 2.0 * r,
+                *segments,
+                2,
+                -l - r,
+                0.0,
+                0.0,
+            );
+            let xy = bar_x.try_union(&bar_y).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "coord_axes_xy",
+                message: e.message,
+            })?;
+            xy.try_union(&bar_z).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "coord_axes_xyz",
+                message: e.message,
+            })
+        }
+        Feature::OriginPoint { marker_radius, .. } => {
+            let r = resolve_one(id, marker_radius, params)?;
+            if r <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("OriginPoint marker_radius must be > 0 (got {r})"),
+                });
+            }
+            // Same convention as RefPoint: tiny faceted sphere at origin.
+            Ok(sphere_faceted(r, 4, 6))
+        }
+
+        // ---------------------------------------------------------------
+        // Manufacturing batch 4 (5 features) — ship 2026-05-08.
+        // ---------------------------------------------------------------
+
+        Feature::CenterDrill {
+            drill_radius,
+            drill_depth,
+            chamfer_radius,
+            chamfer_depth,
+            segments,
+            ..
+        } => {
+            let dr = resolve_one(id, drill_radius, params)?;
+            let dd = resolve_one(id, drill_depth, params)?;
+            let cr = resolve_one(id, chamfer_radius, params)?;
+            let cd = resolve_one(id, chamfer_depth, params)?;
+            if dr <= 0.0 || dd <= 0.0 || cr <= 0.0 || cd <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "CenterDrill requires positive radii and depths (got drill_r={dr}, drill_d={dd}, chamfer_r={cr}, chamfer_d={cd})"
+                    ),
+                });
+            }
+            if cr <= dr {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "CenterDrill chamfer_radius ({cr}) must be > drill_radius ({dr})"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("CenterDrill segments must be >= 6 (got {segments})"),
+                });
+            }
+            // Chamfer frustum: bottom (z=0) at drill_radius, top (z=chamfer_depth)
+            // at chamfer_radius.
+            let chamfer = frustum_faceted(dr, cr, cd, *segments);
+            // Drill cone (apex pointing -z): base at z=0 with drill_radius,
+            // apex at z=-drill_depth. Build a +z cone, then mirror about z=0
+            // — easier: build cone of (drill_radius, drill_depth) with apex
+            // at +z = drill_depth, then translate down so apex sits at
+            // -drill_depth. Use frustum_faceted(top=0,bot=drill_radius)
+            // is degenerate; cone_faceted(r=drill_radius, h=drill_depth)
+            // gives a +z cone with base at z=0, apex at z=drill_depth.
+            // Mirror via apply_orthonormal_remap: (x,y,z) -> (x,y,-z).
+            let cone_up = cone_faceted(dr, dd, *segments);
+            let cone_down = mirror_solid(
+                &cone_up,
+                Point3::origin(),
+                Vec3::new(0.0, 0.0, 1.0),
+            );
+            chamfer.try_union(&cone_down).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "center_drill_union",
+                message: e.message,
+            })
+        }
+        Feature::OilHole {
+            body_radius,
+            body_height,
+            hole_radius,
+            entry,
+            exit,
+            body_segments,
+            hole_segments,
+            ..
+        } => {
+            let br = resolve_one(id, body_radius, params)?;
+            let bh = resolve_one(id, body_height, params)?;
+            let hr = resolve_one(id, hole_radius, params)?;
+            let en = resolve3(id, entry, params)?;
+            let ex = resolve3(id, exit, params)?;
+            if br <= 0.0 || bh <= 0.0 || hr <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "OilHole requires positive body_radius, body_height, hole_radius (got br={br}, bh={bh}, hr={hr})"
+                    ),
+                });
+            }
+            if hr >= br {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "OilHole hole_radius ({hr}) must be < body_radius ({br})"
+                    ),
+                });
+            }
+            if *body_segments < 6 || *hole_segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "OilHole body_segments and hole_segments must be >= 6 (got bs={body_segments}, hs={hole_segments})"
+                    ),
+                });
+            }
+            // Body cylinder along +z, base at origin.
+            let body = cylinder_along_axis(br, bh, *body_segments, 2, 0.0, 0.0, 0.0);
+            // Oil-hole cylinder along (exit - entry). Extend each end by a
+            // small overhang so the cutter pokes outside the body and
+            // avoids coplanar caps.
+            let d = [ex[0] - en[0], ex[1] - en[1], ex[2] - en[2]];
+            let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            if len < 1e-9 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "OilHole entry and exit must differ".into(),
+                });
+            }
+            let eps = (len * 0.05).max(1e-3);
+            let unit = [d[0] / len, d[1] / len, d[2] / len];
+            let p0 = [
+                en[0] - unit[0] * eps,
+                en[1] - unit[1] * eps,
+                en[2] - unit[2] * eps,
+            ];
+            let p1 = [
+                ex[0] + unit[0] * eps,
+                ex[1] + unit[1] * eps,
+                ex[2] + unit[2] * eps,
+            ];
+            let hole = sweep_cylinder_segment(p0, p1, hr, *hole_segments).ok_or_else(|| {
+                EvalError::Invalid {
+                    id: id.into(),
+                    reason: "OilHole hole has zero-length segment".into(),
+                }
+            })?;
+            body.try_difference(&hole).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "oil_hole",
+                message: e.message,
+            })
+        }
+        Feature::ReliefCut {
+            small_radius,
+            small_height,
+            large_radius,
+            large_height,
+            relief_width,
+            relief_depth,
+            segments,
+            ..
+        } => {
+            let sr = resolve_one(id, small_radius, params)?;
+            let sh = resolve_one(id, small_height, params)?;
+            let lr = resolve_one(id, large_radius, params)?;
+            let lh = resolve_one(id, large_height, params)?;
+            let rw = resolve_one(id, relief_width, params)?;
+            let rd = resolve_one(id, relief_depth, params)?;
+            if sr <= 0.0 || sh <= 0.0 || lr <= 0.0 || lh <= 0.0 || rw <= 0.0 || rd <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ReliefCut requires positive dims (got sr={sr}, sh={sh}, lr={lr}, lh={lh}, rw={rw}, rd={rd})"
+                    ),
+                });
+            }
+            if sr >= lr {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ReliefCut small_radius ({sr}) must be < large_radius ({lr})"
+                    ),
+                });
+            }
+            if rd >= lr - sr {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ReliefCut relief_depth ({rd}) must be < large_radius - small_radius ({})",
+                        lr - sr
+                    ),
+                });
+            }
+            if rw >= lh {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ReliefCut relief_width ({rw}) must be < large_height ({lh})"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("ReliefCut segments must be >= 6 (got {segments})"),
+                });
+            }
+            // Build as three concentric cylinders unioned along +z:
+            //   z ∈ [0, lh - rw]:        radius lr  (large body)
+            //   z ∈ [lh - rw, lh]:       radius lr - rd (narrowed relief)
+            //   z ∈ [lh, lh + sh]:       radius sr  (small body)
+            // The narrowed middle band IS the undercut relief — material
+            // has been "taken away" relative to the surrounding lr radius,
+            // forming a groove at the base of the shoulder.
+            let lower_h = lh - rw;
+            let lower = cylinder_along_axis(lr, lower_h, *segments, 2, 0.0, 0.0, 0.0);
+            let relief_band = cylinder_along_axis(
+                lr - rd,
+                rw,
+                *segments,
+                2,
+                lower_h,
+                0.0,
+                0.0,
+            );
+            let small = cylinder_along_axis(sr, sh, *segments, 2, lh, 0.0, 0.0);
+            let lr_band = lower.try_union(&relief_band).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "relief_cut_lower_union",
+                message: e.message,
+            })?;
+            lr_band.try_union(&small).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "relief_cut_small_union",
+                message: e.message,
+            })
+        }
+        Feature::WrenchFlats {
+            shaft_radius,
+            shaft_length,
+            flats_z_start,
+            flats_length,
+            flat_distance,
+            segments,
+            ..
+        } => {
+            let r = resolve_one(id, shaft_radius, params)?;
+            let l = resolve_one(id, shaft_length, params)?;
+            let zs = resolve_one(id, flats_z_start, params)?;
+            let fl = resolve_one(id, flats_length, params)?;
+            let fd = resolve_one(id, flat_distance, params)?;
+            if r <= 0.0 || l <= 0.0 || fl <= 0.0 || fd <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "WrenchFlats requires positive shaft_radius, shaft_length, flats_length, flat_distance (got r={r}, l={l}, fl={fl}, fd={fd})"
+                    ),
+                });
+            }
+            if fd >= 2.0 * r {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "WrenchFlats flat_distance ({fd}) must be < 2*shaft_radius ({})",
+                        2.0 * r
+                    ),
+                });
+            }
+            if zs < 0.0 || zs + fl > l + 1e-9 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "WrenchFlats flats range [{zs}, {}] must lie within [0, {l}]",
+                        zs + fl
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("WrenchFlats segments must be >= 6 (got {segments})"),
+                });
+            }
+            // Shaft cylinder along +z, base at origin.
+            let shaft = cylinder_along_axis(r, l, *segments, 2, 0.0, 0.0, 0.0);
+            // Two cutter boxes that machine off opposite sides. Each box
+            // sits between y=fd/2 and y=r+overhang (and the mirror), spans
+            // x ∈ [-r-overhang, r+overhang], z ∈ [zs, zs+fl].
+            let overhang = (r * 0.1).max(1e-3);
+            let box_w = 2.0 * (r + overhang);
+            let box_h = (r + overhang) - fd / 2.0;
+            if box_h <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "WrenchFlats: cutter box has non-positive height".into(),
+                });
+            }
+            let cutter_pos = box_at(
+                Vec3::new(box_w, box_h, fl),
+                Point3::new(-(r + overhang), fd / 2.0, zs),
+            );
+            let cutter_neg = box_at(
+                Vec3::new(box_w, box_h, fl),
+                Point3::new(-(r + overhang), -(r + overhang), zs),
+            );
+            let cutter = cutter_pos.try_union(&cutter_neg).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "wrench_flats_cutter",
+                message: e.message,
+            })?;
+            shaft.try_difference(&cutter).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "wrench_flats",
+                message: e.message,
+            })
+        }
+        Feature::Knurl {
+            radius,
+            height,
+            groove_depth,
+            groove_count,
+            ..
+        } => {
+            let r = resolve_one(id, radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            let gd = resolve_one(id, groove_depth, params)?;
+            if r <= 0.0 || h <= 0.0 || gd <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Knurl requires positive radius, height, groove_depth (got r={r}, h={h}, gd={gd})"
+                    ),
+                });
+            }
+            if gd >= r {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Knurl groove_depth ({gd}) must be < radius ({r})"),
+                });
+            }
+            if *groove_count < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Knurl groove_count must be >= 6 (got {groove_count})"),
+                });
+            }
+            // Build a profile that alternates between r (outer arc) and
+            // r - groove_depth (groove notch). Two vertices per groove
+            // (one at the outer rim before, one at the notch). Each
+            // groove takes one slot of size 2*PI/groove_count; the half
+            // BEFORE the notch sits at radius r, the half AT the notch
+            // sits at r-gd. (Same algorithm as KnurledGrip but
+            // SUBTRACTING from a flat cylinder, i.e. notches are
+            // valleys not ridges.)
+            let n = 2 * *groove_count;
+            let mut prof = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                let rad = if i % 2 == 0 { r } else { r - gd };
+                prof.push(Point3::new(rad * theta.cos(), rad * theta.sin(), 0.0));
+            }
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, h)))
+        }
+
         Feature::Union { inputs, .. } => fold_boolean(id, inputs, cache, BoolKind::Union),
         Feature::Intersection { inputs, .. } => {
             fold_boolean(id, inputs, cache, BoolKind::Intersection)
