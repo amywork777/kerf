@@ -6,6 +6,7 @@
 
 pub mod assembly;
 pub mod cache;
+pub mod catalog;
 pub mod eval;
 pub mod feature;
 pub mod model;
