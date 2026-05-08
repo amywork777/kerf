@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "rm -rf .test-out && tsc --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop --outDir .test-out --lib ES2022,DOM src/sketcher.ts src/sketch_state.test.ts && node .test-out/sketch_state.test.js"
   },
   "dependencies": {
     "three": "^0.170.0"
