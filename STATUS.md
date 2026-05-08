@@ -56,13 +56,49 @@ kernel + authoring + viewer + production output).
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
 | Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
-| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
+| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases; closed-form Cylinder×Plane intersection lifts to brep-layer EllipseSegment) | 8% | 50% | 4.0 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.0%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~65.4%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-06)
+## Latest session (2026-05-08)
+
+Curved-surface category 45% → 50% (+0.4 SW pts), 727 → 738 tests, 0 failed,
+9 ignored.
+
+- **Brep-layer `EllipseSegment`**: new arc-bounded ellipse type in
+  `crates/kerf-brep/src/geometry.rs` with explicit start/end angles, `Sense`
+  (forward/reverse), `directed_span`, `start_point`/`end_point`, `is_full`,
+  and lossless conversion to the existing `CurveSegment`. Added
+  `CurveSegment::circle` and `CurveSegment::ellipse` arc constructors mirroring
+  `CurveSegment::line`. `Cylinder×Plane`-style closed conics can now travel
+  through the brep type system as first-class arcs rather than faceted
+  polygons.
+- **Brep-layer `cylinder_plane_intersection`**: new
+  `crates/kerf-brep/src/booleans/analytic_curves.rs` lifts `kerf-geom`'s
+  closed-form `intersect_plane_cylinder` to the brep layer, returning
+  `CylinderPlaneIntersection { Empty | Tangent(Line) | TwoLines(Line, Line)
+  | Circle(EllipseSegment) | Ellipse(EllipseSegment) }`. Circles are returned
+  as degenerate ellipses (semi_major == semi_minor == r) so downstream code
+  that walks closed conics has a single curve type.
+- **Math sanity tests**: 11 new tests covering all four geometric regimes:
+  perpendicular plane → circle; parallel-and-axis-passing plane → two
+  ruling lines; parallel-and-tangent plane → single ruling line;
+  parallel-and-disjoint plane → empty; oblique plane at 45° → ellipse with
+  semi_major = √2; oblique plane at 30° → ellipse with semi_major = 1/cos(30°)
+  AND every sampled point on the resulting ellipse verified to lie exactly on
+  both the cylinder surface and the cutting plane to 1e-9.
+- **Wiring deferred**: `boolean::face_intersections` still emits line-segment
+  chords only. Extending it to emit ellipse-arc chords requires teaching
+  `splice` (vertex coincidence on parameter), `split` (in-curve parameter
+  splitting), and `stitch` (arc-twin matching, half-edge orientation along
+  curve parameter rather than 3D direction) to handle non-line chords —
+  multi-week and explicitly out of scope for this session per the task brief.
+  Today this module exists as the analytic foundation that those wiring
+  tasks will sit on top of.
+
+## Previous session (2026-05-06)
 
 GAP 1 (Picking → edit) shipped. GAP 2 Plan B (SweepPath) shipped. Bonus
 faceted torus + Donut feature shipped. ~52.7% → ~54.7% (+2 SW pts), 518
