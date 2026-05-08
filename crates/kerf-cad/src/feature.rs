@@ -2707,6 +2707,49 @@ pub enum Feature {
         slices: usize,
     },
 
+    /// TieredCake: three cylindrical tiers of decreasing radius
+    /// stacked on top of each other. Wedding-cake silhouette.
+    TieredCake {
+        id: String,
+        bottom_radius: Scalar,
+        middle_radius: Scalar,
+        top_radius: Scalar,
+        tier_height: Scalar,
+        slices: usize,
+    },
+
+    /// Spindle: a cylinder body with conical caps at both ends.
+    /// Symmetrical, evokes a textile spindle or shuttlecock body.
+    Spindle {
+        id: String,
+        body_radius: Scalar,
+        body_height: Scalar,
+        cap_height: Scalar,
+        slices: usize,
+    },
+
+    /// Ufo: a flat oblate disk (cylinder of small height) with a
+    /// hemispherical dome on top — flying-saucer silhouette.
+    Ufo {
+        id: String,
+        disk_radius: Scalar,
+        disk_height: Scalar,
+        dome_radius: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// CrowsNest: tall slim pole with a flat circular platform at
+    /// the top — lookout, antenna mast.
+    CrowsNest {
+        id: String,
+        pole_radius: Scalar,
+        pole_height: Scalar,
+        platform_radius: Scalar,
+        platform_thickness: Scalar,
+        slices: usize,
+    },
+
     /// Volute: a decorative scroll/spiral disk — Archimedean spiral
     /// rod plus a central disk. Used as classical column-capital
     /// ornament.
@@ -3076,6 +3119,10 @@ impl Feature {
             | Feature::Goblet { id, .. }
             | Feature::TableLamp { id, .. }
             | Feature::MushroomCloud { id, .. }
+            | Feature::TieredCake { id, .. }
+            | Feature::Spindle { id, .. }
+            | Feature::Ufo { id, .. }
+            | Feature::CrowsNest { id, .. }
             | Feature::Volute { id, .. }
             | Feature::ScrollPlate { id, .. }
             | Feature::DovetailSlot { id, .. }
@@ -3321,6 +3368,10 @@ impl Feature {
             | Feature::Goblet { .. }
             | Feature::TableLamp { .. }
             | Feature::MushroomCloud { .. }
+            | Feature::TieredCake { .. }
+            | Feature::Spindle { .. }
+            | Feature::Ufo { .. }
+            | Feature::CrowsNest { .. }
             | Feature::Volute { .. }
             | Feature::ScrollPlate { .. }
             | Feature::DovetailSlot { .. }

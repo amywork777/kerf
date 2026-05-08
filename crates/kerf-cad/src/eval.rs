@@ -5429,6 +5429,63 @@ fn build(
             let cloud = translate_solid(&cloud_raw, Vec3::new(0.0, 0.0, sh + cr * 0.5));
             stem.try_union(&cloud).map_err(|e| EvalError::Boolean { id: id.into(), op: "mushroom_cloud_join", message: e.message })
         }
+        Feature::TieredCake { bottom_radius, middle_radius, top_radius, tier_height, slices, .. } => {
+            let br = resolve_one(id, bottom_radius, params)?;
+            let mr = resolve_one(id, middle_radius, params)?;
+            let tr = resolve_one(id, top_radius, params)?;
+            let h = resolve_one(id, tier_height, params)?;
+            if br <= 0.0 || mr <= 0.0 || tr <= 0.0 || h <= 0.0
+                || mr >= br || tr >= mr || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("TieredCake requires top<middle<bottom (got br={br}, mr={mr}, tr={tr})") });
+            }
+            let bottom = cylinder_faceted(br, h, *slices);
+            let middle = cylinder_along_axis(mr, h, *slices, 2, h - 1e-3, 0.0, 0.0);
+            let top = cylinder_along_axis(tr, h, *slices, 2, 2.0 * h - 2e-3, 0.0, 0.0);
+            let lower = bottom.try_union(&middle).map_err(|e| EvalError::Boolean { id: id.into(), op: "tiered_cake_middle", message: e.message })?;
+            lower.try_union(&top).map_err(|e| EvalError::Boolean { id: id.into(), op: "tiered_cake_top", message: e.message })
+        }
+        Feature::Spindle { body_radius, body_height, cap_height, slices, .. } => {
+            let r = resolve_one(id, body_radius, params)?;
+            let bh = resolve_one(id, body_height, params)?;
+            let ch = resolve_one(id, cap_height, params)?;
+            if r <= 0.0 || bh <= 0.0 || ch <= 0.0 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Spindle requires positive dims (got r={r})") });
+            }
+            // Bottom cone (apex pointing down means we use a frustum with
+            // a tiny bottom radius), body cylinder, top cone (apex up).
+            let bot_raw = frustum_faceted(r * 0.05, r, ch, *slices);
+            let bot = bot_raw;
+            let body = cylinder_along_axis(r, bh, *slices, 2, ch - 1e-3, 0.0, 0.0);
+            let top_raw = cone_faceted(r, ch, *slices);
+            let top = translate_solid(&top_raw, Vec3::new(0.0, 0.0, ch + bh - 1e-3));
+            let lower = bot.try_union(&body).map_err(|e| EvalError::Boolean { id: id.into(), op: "spindle_body", message: e.message })?;
+            lower.try_union(&top).map_err(|e| EvalError::Boolean { id: id.into(), op: "spindle_top_cap", message: e.message })
+        }
+        Feature::Ufo { disk_radius, disk_height, dome_radius, stacks, slices, .. } => {
+            let dr = resolve_one(id, disk_radius, params)?;
+            let dh = resolve_one(id, disk_height, params)?;
+            let domr = resolve_one(id, dome_radius, params)?;
+            if dr <= 0.0 || dh <= 0.0 || domr <= 0.0 || domr >= dr || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Ufo requires dome_radius<disk_radius, positive dims (got dr={dr}, domr={domr})") });
+            }
+            let disk = cylinder_faceted(dr, dh, *slices);
+            let dome_raw = sphere_faceted(domr, *stacks, *slices);
+            let dome = translate_solid(&dome_raw, Vec3::new(0.0, 0.0, dh));
+            disk.try_union(&dome).map_err(|e| EvalError::Boolean { id: id.into(), op: "ufo_join", message: e.message })
+        }
+        Feature::CrowsNest { pole_radius, pole_height, platform_radius, platform_thickness, slices, .. } => {
+            let pr = resolve_one(id, pole_radius, params)?;
+            let ph = resolve_one(id, pole_height, params)?;
+            let plr = resolve_one(id, platform_radius, params)?;
+            let plt = resolve_one(id, platform_thickness, params)?;
+            if pr <= 0.0 || ph <= 0.0 || plr <= 0.0 || plt <= 0.0 || plr <= pr || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("CrowsNest requires platform_radius>pole_radius, positive dims (got pr={pr}, plr={plr})") });
+            }
+            let pole = cylinder_faceted(pr, ph, *slices);
+            let platform_raw = cylinder_faceted(plr, plt, *slices);
+            let platform = translate_solid(&platform_raw, Vec3::new(0.0, 0.0, ph - 1e-3));
+            pole.try_union(&platform).map_err(|e| EvalError::Boolean { id: id.into(), op: "crows_nest_join", message: e.message })
+        }
         Feature::Beehive { base_radius, layer_height, layers, slices, .. } => {
             let r0 = resolve_one(id, base_radius, params)?;
             let lh = resolve_one(id, layer_height, params)?;
