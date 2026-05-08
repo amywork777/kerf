@@ -54,12 +54,12 @@ kernel + authoring + viewer + production output).
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
-| Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
+| Manufacturing features (180+ — see catalog) | 12% | 96% | 11.52 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
-| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
+| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob + TulipBulb + PaperLantern + AcornCap + Ankh compose for simple cases) | 8% | 46% | 3.68 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.0%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~65.2%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
 ## Latest session (2026-05-06)
@@ -151,7 +151,38 @@ real kernel additions:
 - **Decorative composites**: Arrow, Funnel, TruncatedPyramid.
 - **Transforms**: ScaleXYZ.
 
-727 tests pass, 9 ignored. 220+ Features in catalog.
+748 tests pass, 9 ignored. 280+ Features in catalog.
+
+## Latest session (2026-05-08, round 7)
+
+Added 10 new Features in mixed buckets:
+
+- **Curved-surface compositions (4)**: `TulipBulb` (small bulb sphere +
+  slim cylindrical neck — pole-overlap pattern), `PaperLantern` (cylinder
+  body with hemispherical caps top + bottom), `AcornCap` (hemisphere +
+  thin cylindrical rim — just the cap of an acorn), `Ankh` (vertical
+  cylinder shaft + horizontal cross-arm + faceted torus loop, rotated to
+  open vertically).
+- **Mechanical (3)**: `CamLobe2` (eccentric circle profile cam — distinct
+  from the elliptical `CamLobe`), `PistonHead` (cylinder body + wider
+  crown disk + N ring grooves around the body), `PulleyGroove` (true
+  V-groove using two opposing frustums — distinct from `Pulley`'s
+  rectangular groove).
+- **Decorative (2)**: `Pinwheel` (star polygon plate with center bore —
+  axle-mountable spinner), `GearTooth` (single trapezoidal tooth profile
+  for arrayed compositions).
+- **Composition (1)**: `HourglassFigure` (frustum + frustum + cap disks —
+  classic hourglass silhouette without the shared-waist boolean limit
+  of the existing `Hourglass`).
+
+21 new tests (10 volume + 10 round-trip + 1 combined batch round-trip).
+
+All sphere/cylinder unions use the AcornShape pole-overlap pattern
+(`br - 1e-3`) to keep the kernel stitch happy. The PaperLantern double
+hemisphere build uses the Lens-style box-clip → translate pattern.
+
+727 tests → 748 tests (+21), 0 failed, 9 ignored unchanged. Catalog
+~270 → 280+ Features.
 
 The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
 are real manufacturing features even if multi-edge fillet is still

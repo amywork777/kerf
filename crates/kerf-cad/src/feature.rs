@@ -2590,6 +2590,142 @@ pub enum Feature {
         wall_thickness: Scalar,
     },
 
+    /// TulipBulb: a small, elegant bulb — sphere body with a slim cylindrical
+    /// neck rising from the top. Like AcornShape but proportioned for a
+    /// tulip-bulb silhouette (taller neck, smaller bulb relative to neck).
+    /// Uses the AcornShape pole-overlap pattern (br - 1e-3) to avoid
+    /// stitch trips at the sphere/cylinder join.
+    TulipBulb {
+        id: String,
+        bulb_radius: Scalar,
+        neck_radius: Scalar,
+        neck_length: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// PaperLantern: a cylindrical body with a hemisphere cap on each end.
+    /// Like a stretched capsule but explicitly a lantern silhouette —
+    /// hemispheres of the body radius, body cylinder between them.
+    PaperLantern {
+        id: String,
+        body_radius: Scalar,
+        body_height: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// AcornCap: just the cap of an acorn — a hemisphere with a small
+    /// cylindrical ring rim at the bottom edge. Half-sphere at top
+    /// (z >= 0), thin rim cylinder at z=0.
+    AcornCap {
+        id: String,
+        cap_radius: Scalar,
+        rim_height: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// HourglassFigure: a classic hourglass silhouette built from two
+    /// frustums plus disk end-caps. End disks (bottom and top) are
+    /// short cylinders of `end_radius`, a frustum tapers from end_radius
+    /// down to waist_radius, then a mirrored frustum back up. Avoids the
+    /// shared-waist boolean limit of `Hourglass` because the body is built
+    /// as two frustums sharing the waist face but with different radii.
+    HourglassFigure {
+        id: String,
+        end_radius: Scalar,
+        waist_radius: Scalar,
+        body_half_height: Scalar,
+        cap_thickness: Scalar,
+        cap_radius: Scalar,
+        segments: usize,
+    },
+
+    /// Ankh: cross with a looped top — a vertical cylinder shaft, a
+    /// horizontal cylinder cross-arm at the upper portion of the shaft,
+    /// and a faceted torus loop sitting on top of the shaft.
+    Ankh {
+        id: String,
+        shaft_height: Scalar,
+        shaft_radius: Scalar,
+        arm_length: Scalar,
+        arm_radius: Scalar,
+        loop_major_radius: Scalar,
+        loop_minor_radius: Scalar,
+        major_segs: usize,
+        minor_segs: usize,
+        segments: usize,
+    },
+
+    /// CamLobe2: an eccentric (offset) circular cam profile — a single
+    /// circle of radius `radius`, but offset from the rotation axis by
+    /// `eccentricity`. The bore (rotation axis hole) is at the origin.
+    /// Distinct from `CamLobe` (which uses an elliptical profile rx, ry).
+    CamLobe2 {
+        id: String,
+        radius: Scalar,
+        eccentricity: Scalar,
+        bore_radius: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
+    /// PistonHead: a stubby cylinder body (the piston shaft section) with
+    /// a wider flat crown disk on top. Optionally has `groove_count`
+    /// shallow ring grooves around the body. Built as: body cylinder +
+    /// crown disk, minus ring cutters for the grooves.
+    PistonHead {
+        id: String,
+        body_radius: Scalar,
+        body_height: Scalar,
+        crown_radius: Scalar,
+        crown_thickness: Scalar,
+        groove_count: usize,
+        groove_depth: Scalar,
+        groove_width: Scalar,
+        segments: usize,
+    },
+
+    /// PulleyGroove: a cylinder with a true V-shaped groove around its
+    /// equator (formed by subtracting two opposing frustums whose
+    /// shared waist is the groove valley). Distinct from `Pulley` which
+    /// uses a rectangular groove.
+    PulleyGroove {
+        id: String,
+        outer_radius: Scalar,
+        groove_inner_radius: Scalar,
+        width: Scalar,
+        groove_width: Scalar,
+        segments: usize,
+    },
+
+    /// Pinwheel: a star-shaped extruded plate with a center bore — like
+    /// `Star` but explicitly with a hole in the center (for mounting on
+    /// an axle). Decorative spinning toy / fan blade silhouette.
+    Pinwheel {
+        id: String,
+        points: usize,
+        outer_radius: Scalar,
+        inner_radius: Scalar,
+        bore_radius: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
+    /// GearTooth: a single trapezoidal gear-tooth profile, extruded
+    /// along +z. Width tapers from `root_width` at z=0 (root) to
+    /// `tip_width` at the tip; tooth extends `tooth_height` in +y; thickness
+    /// `thickness` in +z. Useful as a building block in compositions
+    /// (e.g. arrayed around a gear blank).
+    GearTooth {
+        id: String,
+        root_width: Scalar,
+        tip_width: Scalar,
+        tooth_height: Scalar,
+        thickness: Scalar,
+    },
+
     Translate {
         id: String,
         input: String,
@@ -2878,6 +3014,16 @@ impl Feature {
             | Feature::AcornShape { id, .. }
             | Feature::Volute { id, .. }
             | Feature::ScrollPlate { id, .. }
+            | Feature::TulipBulb { id, .. }
+            | Feature::PaperLantern { id, .. }
+            | Feature::AcornCap { id, .. }
+            | Feature::HourglassFigure { id, .. }
+            | Feature::Ankh { id, .. }
+            | Feature::CamLobe2 { id, .. }
+            | Feature::PistonHead { id, .. }
+            | Feature::PulleyGroove { id, .. }
+            | Feature::Pinwheel { id, .. }
+            | Feature::GearTooth { id, .. }
             | Feature::DovetailSlot { id, .. }
             | Feature::VeeGroove { id, .. }
             | Feature::Bolt { id, .. }
@@ -3107,6 +3253,16 @@ impl Feature {
             | Feature::AcornShape { .. }
             | Feature::Volute { .. }
             | Feature::ScrollPlate { .. }
+            | Feature::TulipBulb { .. }
+            | Feature::PaperLantern { .. }
+            | Feature::AcornCap { .. }
+            | Feature::HourglassFigure { .. }
+            | Feature::Ankh { .. }
+            | Feature::CamLobe2 { .. }
+            | Feature::PistonHead { .. }
+            | Feature::PulleyGroove { .. }
+            | Feature::Pinwheel { .. }
+            | Feature::GearTooth { .. }
             | Feature::DovetailSlot { .. }
             | Feature::VeeGroove { .. }
             | Feature::Bolt { .. }

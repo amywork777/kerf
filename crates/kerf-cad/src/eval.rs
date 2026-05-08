@@ -5254,6 +5254,314 @@ fn build(
             }
             Ok(acc.unwrap())
         }
+        Feature::TulipBulb { bulb_radius, neck_radius, neck_length, stacks, slices, .. } => {
+            let br = resolve_one(id, bulb_radius, params)?;
+            let nr = resolve_one(id, neck_radius, params)?;
+            let nl = resolve_one(id, neck_length, params)?;
+            if br <= 0.0 || nr <= 0.0 || nr >= br || nl <= 0.0 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("TulipBulb requires neck<bulb, positive dims (got br={br}, nr={nr}, nl={nl})"),
+                });
+            }
+            // Bulb sphere at origin + neck cylinder rising from top, using
+            // pole-overlap pattern (br - 1e-3) to avoid stitch trips.
+            let bulb = sphere_faceted(br, *stacks, *slices);
+            let neck = cylinder_along_axis(nr, nl + 1e-3, *slices, 2, br - 1e-3, 0.0, 0.0);
+            bulb.try_union(&neck).map_err(|e| EvalError::Boolean { id: id.into(), op: "tulip_bulb_join", message: e.message })
+        }
+        Feature::PaperLantern { body_radius, body_height, stacks, slices, .. } => {
+            let r = resolve_one(id, body_radius, params)?;
+            let h = resolve_one(id, body_height, params)?;
+            if r <= 0.0 || h <= 0.0 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("PaperLantern requires positive dims (got r={r}, h={h})"),
+                });
+            }
+            // Body cylinder from z=0 to z=h, plus a sphere at each end clipped
+            // to a hemisphere. Use pole-overlap: cylinder embeds into each
+            // hemisphere by 1e-3 (avoids the kernel stitch on the flat
+            // sphere-cylinder shared face).
+            let body = cylinder_along_axis(r, h, *slices, 2, 0.0, 0.0, 0.0);
+            // Top hemisphere: sphere centered at z=h, with z<h cut away.
+            let top_sph = sphere_faceted(r, *stacks, *slices);
+            let top_cutter = box_at(
+                Vec3::new(4.0 * r, 4.0 * r, 2.0 * r),
+                Point3::new(-2.0 * r, -2.0 * r, -2.0 * r),
+            );
+            let top_hemi = top_sph
+                .try_difference(&top_cutter)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "lantern_top_clip", message: e.message })?;
+            let top_t = translate_solid(&top_hemi, Vec3::new(0.0, 0.0, h - 1e-3));
+            // Bottom hemisphere: sphere at origin, z>0 clipped.
+            let bot_sph = sphere_faceted(r, *stacks, *slices);
+            let bot_cutter = box_at(
+                Vec3::new(4.0 * r, 4.0 * r, 2.0 * r),
+                Point3::new(-2.0 * r, -2.0 * r, 0.0),
+            );
+            let bot_hemi = bot_sph
+                .try_difference(&bot_cutter)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "lantern_bot_clip", message: e.message })?;
+            let bot_t = translate_solid(&bot_hemi, Vec3::new(0.0, 0.0, 1e-3));
+            let with_top = body
+                .try_union(&top_t)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "lantern_top_join", message: e.message })?;
+            with_top.try_union(&bot_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "lantern_bot_join", message: e.message })
+        }
+        Feature::AcornCap { cap_radius, rim_height, stacks, slices, .. } => {
+            let r = resolve_one(id, cap_radius, params)?;
+            let rh = resolve_one(id, rim_height, params)?;
+            if r <= 0.0 || rh <= 0.0 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("AcornCap requires positive dims (got r={r}, rh={rh})"),
+                });
+            }
+            // Top hemisphere of radius r at origin (z>=0), plus a thin
+            // cylinder rim of radius r and height rh just below z=0.
+            let sph = sphere_faceted(r, *stacks, *slices);
+            let cutter = box_at(
+                Vec3::new(4.0 * r, 4.0 * r, 2.0 * r),
+                Point3::new(-2.0 * r, -2.0 * r, -2.0 * r),
+            );
+            let hemi = sph
+                .try_difference(&cutter)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "acorncap_clip", message: e.message })?;
+            // Rim: thin cylinder at z = -rh + 1e-3 to z = 1e-3 (overlap into hemi).
+            let rim = cylinder_along_axis(r, rh + 1e-3, *slices, 2, -rh, 0.0, 0.0);
+            hemi.try_union(&rim).map_err(|e| EvalError::Boolean { id: id.into(), op: "acorncap_rim_join", message: e.message })
+        }
+        Feature::HourglassFigure { end_radius, waist_radius, body_half_height, cap_thickness, cap_radius, segments, .. } => {
+            let er = resolve_one(id, end_radius, params)?;
+            let wr = resolve_one(id, waist_radius, params)?;
+            let hh = resolve_one(id, body_half_height, params)?;
+            let ct = resolve_one(id, cap_thickness, params)?;
+            let cr = resolve_one(id, cap_radius, params)?;
+            if er <= 0.0 || wr <= 0.0 || hh <= 0.0 || ct <= 0.0 || cr <= 0.0
+                || wr >= er || cr < er || *segments < 6
+            {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("HourglassFigure requires waist<end<=cap, positive dims (got er={er}, wr={wr}, hh={hh}, cr={cr})"),
+                });
+            }
+            // Bottom cap disk at z=0..ct, then frustum from z=ct..ct+hh
+            // tapering er -> wr, then frustum from ct+hh..ct+2*hh tapering
+            // wr -> er, then top cap at ct+2*hh..2*ct+2*hh.
+            let bot_cap = cylinder_along_axis(cr, ct, *segments, 2, 0.0, 0.0, 0.0);
+            let bot_taper = frustum_faceted(wr, er, hh, *segments);
+            let bot_taper_t = translate_solid(&bot_taper, Vec3::new(0.0, 0.0, ct - 1e-3));
+            let top_taper = frustum_faceted(er, wr, hh, *segments);
+            let top_taper_t = translate_solid(&top_taper, Vec3::new(0.0, 0.0, ct + hh - 1e-3));
+            let top_cap = cylinder_along_axis(cr, ct, *segments, 2, ct + 2.0 * hh - 1e-3, 0.0, 0.0);
+            let acc = bot_cap.try_union(&bot_taper_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "hourglass_fig_bot", message: e.message })?;
+            let acc = acc.try_union(&top_taper_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "hourglass_fig_top_taper", message: e.message })?;
+            acc.try_union(&top_cap).map_err(|e| EvalError::Boolean { id: id.into(), op: "hourglass_fig_top_cap", message: e.message })
+        }
+        Feature::Ankh { shaft_height, shaft_radius, arm_length, arm_radius, loop_major_radius, loop_minor_radius, major_segs, minor_segs, segments, .. } => {
+            let sh = resolve_one(id, shaft_height, params)?;
+            let sr = resolve_one(id, shaft_radius, params)?;
+            let al = resolve_one(id, arm_length, params)?;
+            let ar = resolve_one(id, arm_radius, params)?;
+            let lmr = resolve_one(id, loop_major_radius, params)?;
+            let lminr = resolve_one(id, loop_minor_radius, params)?;
+            if sh <= 0.0 || sr <= 0.0 || al <= 0.0 || ar <= 0.0 || lmr <= 0.0 || lminr <= 0.0
+                || lmr <= lminr || *major_segs < 3 || *minor_segs < 3 || *segments < 6
+            {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Ankh requires positive dims, lmr>lminr (got sh={sh}, sr={sr}, lmr={lmr}, lminr={lminr})"),
+                });
+            }
+            // Shaft: vertical cylinder from z=0 to z=sh, axis +z.
+            let shaft = cylinder_along_axis(sr, sh, *segments, 2, 0.0, 0.0, 0.0);
+            // Cross-arm: horizontal cylinder along +x at z = 0.7 * sh,
+            // length al centered on origin x.
+            let arm_z = 0.7 * sh;
+            let arm = cylinder_along_axis(ar, al, *segments, 0, -al / 2.0, 0.0, arm_z);
+            // Loop: torus on top of the shaft (centered above z=sh + lmr,
+            // axis +y so the torus sits as a vertical loop).
+            // Build torus_faceted (axis +z), then rotate it to axis +y by
+            // rotation around x by 90°. We can place it via translate.
+            let loop_torus = torus_faceted(lmr, lminr, *major_segs, *minor_segs);
+            // Rotate around x by 90° so torus opens facing camera (axis +y).
+            let loop_rotated = rotate_solid(&loop_torus, Vec3::new(1.0, 0.0, 0.0), std::f64::consts::FRAC_PI_2, Point3::new(0.0, 0.0, 0.0));
+            let loop_t = translate_solid(&loop_rotated, Vec3::new(0.0, 0.0, sh + lmr - 1e-3));
+            let acc = shaft.try_union(&arm).map_err(|e| EvalError::Boolean { id: id.into(), op: "ankh_shaft_arm", message: e.message })?;
+            acc.try_union(&loop_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "ankh_loop", message: e.message })
+        }
+        Feature::CamLobe2 { radius, eccentricity, bore_radius, thickness, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let e = resolve_one(id, eccentricity, params)?;
+            let bore = resolve_one(id, bore_radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r <= 0.0 || e < 0.0 || bore <= 0.0 || t <= 0.0
+                || bore >= r || e >= r || *segments < 6
+            {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("CamLobe2 requires bore<r, e<r, positive dims (got r={r}, e={e}, bore={bore})"),
+                });
+            }
+            // Eccentric circle profile: circle of radius r centered at (e, 0).
+            let n = *segments;
+            let mut prof = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                prof.push(Point3::new(e + r * theta.cos(), r * theta.sin(), 0.0));
+            }
+            let disk = extrude_polygon(&prof, Vec3::new(0.0, 0.0, t));
+            let eps = (t * 0.05).max(1e-3);
+            // Bore at origin (rotation axis), not at lobe center.
+            let hole = cylinder_along_axis(bore, t + 2.0 * eps, *segments, 2, -eps, 0.0, 0.0);
+            disk.try_difference(&hole).map_err(|e| EvalError::Boolean { id: id.into(), op: "cam_lobe2_bore", message: e.message })
+        }
+        Feature::PistonHead { body_radius, body_height, crown_radius, crown_thickness, groove_count, groove_depth, groove_width, segments, .. } => {
+            let br = resolve_one(id, body_radius, params)?;
+            let bh = resolve_one(id, body_height, params)?;
+            let cr = resolve_one(id, crown_radius, params)?;
+            let ct = resolve_one(id, crown_thickness, params)?;
+            let gd = resolve_one(id, groove_depth, params)?;
+            let gw = resolve_one(id, groove_width, params)?;
+            if br <= 0.0 || bh <= 0.0 || cr <= 0.0 || ct <= 0.0 || gd <= 0.0 || gw <= 0.0
+                || cr < br || gd >= br || *segments < 8
+            {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("PistonHead requires crown>=body, gd<br, positive dims (got br={br}, cr={cr}, gd={gd})"),
+                });
+            }
+            // Body cylinder from z=0 to z=bh, then crown disk on top
+            // (z=bh..bh+ct) of crown_radius. Subtract groove ring cutters
+            // at evenly spaced heights along the body.
+            let body = cylinder_along_axis(br, bh, *segments, 2, 0.0, 0.0, 0.0);
+            let crown = cylinder_along_axis(cr, ct + 1e-3, *segments, 2, bh - 1e-3, 0.0, 0.0);
+            let mut acc = body.try_union(&crown).map_err(|e| EvalError::Boolean { id: id.into(), op: "piston_crown", message: e.message })?;
+            if *groove_count > 0 && gw < bh {
+                // Place grooves evenly between z=gw and z=bh-gw.
+                let avail = bh - 2.0 * gw;
+                let gn = *groove_count;
+                let step = if gn > 1 { avail / (gn as f64 - 1.0) } else { 0.0 };
+                for k in 0..gn {
+                    let z0 = gw + step * k as f64;
+                    // Ring cutter: outer cylinder bigger than body, inner
+                    // smaller-radius cylinder kept (so the difference forms
+                    // a ring shell that subtracts from body).
+                    let outer = cylinder_along_axis(br + gd, gw, *segments, 2, z0, 0.0, 0.0);
+                    let inner = cylinder_along_axis(br - gd, gw + 2.0 * 1e-3, *segments, 2, z0 - 1e-3, 0.0, 0.0);
+                    let ring = outer.try_difference(&inner).map_err(|e| EvalError::Boolean { id: id.into(), op: "piston_groove_ring", message: format!("groove {k}: {}", e.message) })?;
+                    acc = acc.try_difference(&ring).map_err(|e| EvalError::Boolean { id: id.into(), op: "piston_groove_cut", message: format!("groove {k}: {}", e.message) })?;
+                }
+            }
+            Ok(acc)
+        }
+        Feature::PulleyGroove { outer_radius, groove_inner_radius, width, groove_width, segments, .. } => {
+            let r = resolve_one(id, outer_radius, params)?;
+            let gir = resolve_one(id, groove_inner_radius, params)?;
+            let w = resolve_one(id, width, params)?;
+            let gw = resolve_one(id, groove_width, params)?;
+            if r <= 0.0 || gir <= 0.0 || w <= 0.0 || gw <= 0.0
+                || gir >= r || gw >= w || *segments < 8
+            {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("PulleyGroove requires gir<r, gw<w, positive dims (got r={r}, gir={gir}, w={w}, gw={gw})"),
+                });
+            }
+            // Body cylinder of radius r and height w. V-groove: subtract
+            // two opposing frustums sharing a thin "valley" face at radius
+            // gir. The lower frustum tapers from r->gir going up over half
+            // the groove width; upper frustum mirrors back from gir->r.
+            // Each frustum is built as a faceted frustum extending from
+            // r_outer (bigger than r, so it cuts cleanly) down to the
+            // valley.
+            let body = cylinder_faceted(r, w, *segments);
+            let groove_z0 = (w - gw) / 2.0;
+            let half = gw / 2.0;
+            let r_big = r + gw; // larger than r, so frustum encloses body radially
+            // Lower frustum: r_big at z=groove_z0, gir at z=groove_z0+half.
+            let lower = frustum_faceted(r_big, gir, half, *segments);
+            let lower_t = translate_solid(&lower, Vec3::new(0.0, 0.0, groove_z0));
+            // Upper frustum: gir at z=groove_z0+half, r_big at z=groove_z0+gw.
+            let upper = frustum_faceted(gir, r_big, half, *segments);
+            let upper_t = translate_solid(&upper, Vec3::new(0.0, 0.0, groove_z0 + half - 1e-3));
+            let cutter = lower_t
+                .try_union(&upper_t)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "pulley_groove_v_union", message: e.message })?;
+            // Subtract the V-cutter from the body. The cutter is wider
+            // than the body radius by gw, so it cleanly bites in to gir.
+            // BUT we need to keep the cutter INTERSECTED with a ring
+            // bigger than body at the outside and smaller on the inside,
+            // i.e. only cut between the body's outer rim and gir.
+            // Approach: build a ring cutter (outer cylinder bigger than
+            // body, hollowed by smaller cylinder of gir) and intersect it
+            // with the V-cutter. This cleanly puts the V cut into the
+            // outer surface of the body.
+            let ring_outer = cylinder_along_axis(r + 2.0 * gw, gw + 2.0 * 1e-3, *segments, 2, groove_z0 - 1e-3, 0.0, 0.0);
+            let ring_inner = cylinder_along_axis(gir, gw + 4.0 * 1e-3, *segments, 2, groove_z0 - 2.0 * 1e-3, 0.0, 0.0);
+            let ring = ring_outer
+                .try_difference(&ring_inner)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "pulley_groove_ring", message: e.message })?;
+            // Use ring as the cutter directly: it removes a rectangular
+            // slab between gir and r+gw at z in [groove_z0, groove_z0+gw].
+            // Then to taper that into a V we'd need the V cutter; but
+            // intersecting a ring with the V-cutter is equivalent to
+            // intersection of (ring) and (V), which leaves just the V
+            // shape inside the ring's annulus.
+            let v_cut = ring
+                .try_intersection(&cutter)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "pulley_groove_v_intersect", message: e.message })?;
+            body.try_difference(&v_cut).map_err(|e| EvalError::Boolean { id: id.into(), op: "pulley_groove_cut", message: e.message })
+        }
+        Feature::Pinwheel { points, outer_radius, inner_radius, bore_radius, thickness, segments, .. } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_in = resolve_one(id, inner_radius, params)?;
+            let bore = resolve_one(id, bore_radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if *points < 3 || r_out <= 0.0 || r_in <= 0.0 || bore <= 0.0 || t <= 0.0
+                || r_in >= r_out || bore >= r_in || *segments < 6
+            {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Pinwheel requires points>=3, bore<inner<outer, positive dims (got pts={points}, r_out={r_out}, r_in={r_in}, bore={bore})"),
+                });
+            }
+            // Star polygon: 2*points alternating outer/inner.
+            let n = 2 * *points;
+            let prof: Vec<Point3> = (0..n)
+                .map(|i| {
+                    let theta = 2.0 * std::f64::consts::PI * i as f64 / n as f64;
+                    let r = if i % 2 == 0 { r_out } else { r_in };
+                    Point3::new(r * theta.cos(), r * theta.sin(), 0.0)
+                })
+                .collect();
+            let plate = extrude_polygon(&prof, Vec3::new(0.0, 0.0, t));
+            let eps = (t * 0.05).max(1e-3);
+            let hole = cylinder_along_axis(bore, t + 2.0 * eps, *segments, 2, -eps, 0.0, 0.0);
+            plate.try_difference(&hole).map_err(|e| EvalError::Boolean { id: id.into(), op: "pinwheel_bore", message: e.message })
+        }
+        Feature::GearTooth { root_width, tip_width, tooth_height, thickness, .. } => {
+            let rw = resolve_one(id, root_width, params)?;
+            let tw = resolve_one(id, tip_width, params)?;
+            let th = resolve_one(id, tooth_height, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if rw <= 0.0 || tw <= 0.0 || th <= 0.0 || t <= 0.0 || tw > rw {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("GearTooth requires positive dims, tip<=root (got rw={rw}, tw={tw}, th={th})"),
+                });
+            }
+            // Trapezoid in xy plane: root at y=0 of width rw centered on x,
+            // tip at y=th of width tw centered on x. CCW from +z.
+            let prof = vec![
+                Point3::new(-rw / 2.0, 0.0, 0.0),
+                Point3::new(rw / 2.0, 0.0, 0.0),
+                Point3::new(tw / 2.0, th, 0.0),
+                Point3::new(-tw / 2.0, th, 0.0),
+            ];
+            Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, t)))
+        }
         Feature::HoleArray {
             input,
             axis,
