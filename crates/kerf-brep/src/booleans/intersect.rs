@@ -8,11 +8,37 @@ use kerf_geom::{Plane, Point3, Tolerance};
 use kerf_topo::FaceId;
 
 use crate::Solid;
+use crate::booleans::analytic_curves::{
+    CylinderPlaneIntersection, cylinder_plane_intersection,
+};
 use crate::booleans::{
     BooleanOp, ClipResult, FaceClassification, classify_face, clip_line_to_convex_polygon,
     face_polygon, keep_a_face, keep_b_face,
 };
-use crate::geometry::SurfaceKind;
+use crate::geometry::{EllipseSegment, SurfaceKind};
+
+/// Classification of a `FaceIntersection`'s underlying chord geometry.
+///
+/// Tier 2 of curved-surface stitch wiring. `Linear` is the legacy planar
+/// chord that the entire boolean engine has always handled. `Arc` is the
+/// newer Cylinder×Plane chord, where the closed-form intersection is an
+/// ellipse (or degenerate circle) loop rather than a straight segment.
+///
+/// The presence of an `Arc(...)` variant in the result of `face_intersections`
+/// signals to downstream consumers that this chord can't go through the
+/// existing line-chord splice/split/stitch pipeline as-is. The current
+/// pipeline filters them out before mef'ing — Tier 3 will route them
+/// through curve-aware splice/stitch instead.
+#[derive(Clone, Debug)]
+pub enum FaceIntersectionKind {
+    /// Straight chord between `start` and `end`. The line direction equals
+    /// `(end - start).normalize()`.
+    Linear,
+    /// Arc chord on a curved face boundary (today: closed ellipse from
+    /// Cylinder×Plane). `start == end == segment.start_point()` for closed
+    /// loops, since the conic returns to itself.
+    Arc(EllipseSegment),
+}
 
 #[derive(Clone, Debug)]
 pub struct FaceIntersection {
@@ -20,35 +46,113 @@ pub struct FaceIntersection {
     pub face_b: FaceId,
     pub start: Point3,
     pub end: Point3,
+    /// Tier 2: chord geometry kind. Defaults to `Linear` for the legacy
+    /// Plane×Plane path. `Arc` for Cylinder×Plane.
+    pub kind: FaceIntersectionKind,
+}
+
+impl FaceIntersection {
+    /// True iff this intersection is the legacy linear-chord variant. Used
+    /// by downstream consumers (splice, split, classify_chord_interiorness)
+    /// that aren't yet curve-aware to skip arc chords without inspecting
+    /// the kind enum directly.
+    pub fn is_linear(&self) -> bool {
+        matches!(self.kind, FaceIntersectionKind::Linear)
+    }
 }
 
 pub fn face_intersections(a: &Solid, b: &Solid, tol: &Tolerance) -> Vec<FaceIntersection> {
     let mut results = Vec::new();
     for fa_id in a.topo.face_ids() {
-        let SurfaceKind::Plane(plane_a) = a
+        let surf_a = a
             .face_geom
             .get(fa_id)
             .cloned()
-            .unwrap_or_else(|| panic!("face {fa_id:?} has no surface"))
-        else {
-            continue;
-        };
+            .unwrap_or_else(|| panic!("face {fa_id:?} has no surface"));
         for fb_id in b.topo.face_ids() {
-            let SurfaceKind::Plane(plane_b) = b
+            let surf_b = b
                 .face_geom
                 .get(fb_id)
                 .cloned()
-                .unwrap_or_else(|| panic!("face {fb_id:?} has no surface"))
-            else {
-                continue;
-            };
+                .unwrap_or_else(|| panic!("face {fb_id:?} has no surface"));
 
-            if let Some(seg) = intersect_planar_pair(a, fa_id, &plane_a, b, fb_id, &plane_b, tol) {
-                results.push(seg);
+            match (&surf_a, &surf_b) {
+                (SurfaceKind::Plane(pa), SurfaceKind::Plane(pb)) => {
+                    if let Some(seg) =
+                        intersect_planar_pair(a, fa_id, pa, b, fb_id, pb, tol)
+                    {
+                        results.push(seg);
+                    }
+                }
+                (SurfaceKind::Cylinder(cyl), SurfaceKind::Plane(pl)) => {
+                    if let Some(seg) =
+                        intersect_cylinder_plane_pair(fa_id, cyl, fb_id, pl, false, tol)
+                    {
+                        results.push(seg);
+                    }
+                }
+                (SurfaceKind::Plane(pl), SurfaceKind::Cylinder(cyl)) => {
+                    if let Some(seg) =
+                        intersect_cylinder_plane_pair(fa_id, cyl, fb_id, pl, true, tol)
+                    {
+                        results.push(seg);
+                    }
+                }
+                _ => {
+                    // Other curved-surface combinations (Cylinder×Cylinder,
+                    // Sphere×Plane, Torus×anything) aren't yet typed at the
+                    // brep layer. They fall through unchanged today —
+                    // analytic-curves.rs's roadmap will pick them up.
+                }
             }
         }
     }
     results
+}
+
+fn intersect_cylinder_plane_pair(
+    face_cyl: FaceId,
+    cyl: &kerf_geom::Cylinder,
+    face_plane: FaceId,
+    plane: &Plane,
+    cylinder_is_b: bool,
+    tol: &Tolerance,
+) -> Option<FaceIntersection> {
+    // Use the closed-form Cylinder×Plane intersection from analytic_curves.
+    // Tier 2: emit an Arc-kind FaceIntersection for true closed-conic
+    // intersections (Circle/Ellipse). The TwoLines/Tangent regimes are
+    // genuinely two (or one) ruling segments along the cylinder's axis —
+    // those aren't yet wired to face_intersections because clipping a
+    // ruling line against a finite cylinder face's actual rectangular
+    // u-v domain requires per-primitive face geometry that the brep
+    // layer doesn't currently expose. We return None for those regimes,
+    // matching today's behavior of skipping Cylinder×Plane entirely; the
+    // arc-loop case is the new addition.
+    match cylinder_plane_intersection(cyl, plane, tol) {
+        CylinderPlaneIntersection::Empty => None,
+        CylinderPlaneIntersection::Tangent(_) => None,
+        CylinderPlaneIntersection::TwoLines(_, _) => None,
+        CylinderPlaneIntersection::Circle(seg)
+        | CylinderPlaneIntersection::Ellipse(seg) => {
+            // Closed loop: start == end. Use the ellipse parameter t=0
+            // anchor as both endpoints; downstream consumers that treat
+            // this as a degenerate point intersection (because they
+            // haven't been taught to walk arc kind) won't process it.
+            let p = seg.start_point();
+            let (face_a, face_b) = if cylinder_is_b {
+                (face_plane, face_cyl)
+            } else {
+                (face_cyl, face_plane)
+            };
+            Some(FaceIntersection {
+                face_a,
+                face_b,
+                start: p,
+                end: p,
+                kind: FaceIntersectionKind::Arc(seg),
+            })
+        }
+    }
 }
 
 fn intersect_planar_pair(
@@ -97,6 +201,7 @@ fn intersect_planar_pair(
         face_b: fb_id,
         start,
         end,
+        kind: FaceIntersectionKind::Linear,
     })
 }
 
@@ -207,7 +312,7 @@ mod tests {
     use super::*;
     use kerf_geom::{Point3, Vec3};
 
-    use crate::primitives::{box_, box_at};
+    use crate::primitives::{box_, box_at, cylinder};
 
     #[test]
     fn disjoint_boxes_have_no_face_intersections() {
@@ -228,6 +333,8 @@ mod tests {
             result.len()
         );
         for seg in &result {
+            // All planar inputs → all chords must be Linear kind.
+            assert!(seg.is_linear(), "expected Linear chord");
             let len = (seg.end - seg.start).norm();
             assert!(
                 len > 1e-6,
@@ -244,5 +351,80 @@ mod tests {
         let small = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(4.0, 4.0, 4.0));
         let result = face_intersections(&big, &small, &Tolerance::default());
         assert_eq!(result.len(), 0);
+    }
+
+    /// Tier 2 test: Cylinder×Plane face pairs must emit `Arc(EllipseSegment)`
+    /// kind FaceIntersections, not be silently skipped.
+    #[test]
+    fn face_intersection_returns_arc_for_cylinder_plane() {
+        // Unit-radius cylinder of height 4 centered on Z axis (its lateral
+        // face has SurfaceKind::Cylinder), and a box [0,4]³ centered at
+        // origin so its top face's plane (z=2) cuts the cylinder
+        // perpendicular to the axis. The Cylinder×Plane intersection is a
+        // unit circle.
+        let cyl = cylinder(1.0, 4.0);
+        let bx = box_at(
+            Vec3::new(4.0, 4.0, 4.0),
+            Point3::new(-2.0, -2.0, 0.0), // bottom face at z=0, top at z=4
+        );
+        // Make box smaller on z so its top face plane is at z=2 (inside the
+        // cylinder's lateral range).
+        let plate = box_at(
+            Vec3::new(4.0, 4.0, 2.0),
+            Point3::new(-2.0, -2.0, 0.0), // top face at z=2
+        );
+
+        let result = face_intersections(&cyl, &plate, &Tolerance::default());
+        // We expect AT LEAST one arc-kind chord — the cylinder's lateral
+        // face vs each of the box's parallel-to-axis or perpendicular-
+        // to-axis faces.
+        let arc_count = result.iter().filter(|i| !i.is_linear()).count();
+        assert!(
+            arc_count > 0,
+            "expected at least one Arc-kind chord from Cylinder×Plane, got {} total ({} linear)",
+            result.len(),
+            result.iter().filter(|i| i.is_linear()).count()
+        );
+        // And every Arc chord's payload must be a closed ellipse segment.
+        for inter in &result {
+            if let FaceIntersectionKind::Arc(seg) = &inter.kind {
+                assert!(
+                    seg.is_full(),
+                    "arc segment is expected to be a full closed loop"
+                );
+                // Sanity: arc center lies on the cylinder axis.
+                assert!(
+                    seg.ellipse.frame.origin.x.abs() < 1e-9,
+                    "arc center should be on Z axis (x=0), got {}",
+                    seg.ellipse.frame.origin.x
+                );
+                assert!(
+                    seg.ellipse.frame.origin.y.abs() < 1e-9,
+                    "arc center should be on Z axis (y=0), got {}",
+                    seg.ellipse.frame.origin.y
+                );
+            }
+            // No `else` — Linear chords also legitimate (cylinder caps are
+            // planes intersecting the box's planes).
+            let _ = bx; // silence unused
+        }
+        let _ = bx; // silence unused-variable lint
+    }
+
+    /// Tier 2 sanity: pure planar booleans must not regress under the new
+    /// kind-aware face_intersections (they should all emit Linear kind).
+    #[test]
+    fn planar_overlap_emits_only_linear_chords() {
+        let a = box_(Vec3::new(2.0, 2.0, 2.0));
+        let b = box_at(Vec3::new(2.0, 2.0, 2.0), Point3::new(1.0, 0.0, 0.0));
+        let result = face_intersections(&a, &b, &Tolerance::default());
+        assert!(!result.is_empty());
+        for seg in &result {
+            assert!(
+                matches!(seg.kind, FaceIntersectionKind::Linear),
+                "expected only Linear, got {:?}",
+                seg.kind
+            );
+        }
     }
 }

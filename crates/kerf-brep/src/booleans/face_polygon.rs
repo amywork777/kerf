@@ -102,6 +102,52 @@ pub fn face_polygon_raw(solid: &Solid, face: FaceId) -> Option<Vec<Point3>> {
     Some(polygon)
 }
 
+/// One step in a curve-aware polygon walk: the start vertex's 3D position,
+/// plus the curve carrying the half-edge that leaves it.
+///
+/// Tier 3-lite (curved-surface stitch wiring): the legacy `face_polygon`
+/// throws away curve identity by emitting only vertex positions. This step
+/// type preserves the underlying `CurveSegment` (Line / Circle / Ellipse)
+/// for downstream consumers — Tier 3 polygon walkers, arc-aware
+/// triangulation, and tests that need to inspect the boolean result's
+/// curved boundaries — without changing the legacy function's signature.
+#[derive(Clone, Debug)]
+pub struct LoopStep {
+    pub origin: Point3,
+    pub curve: Option<crate::geometry::CurveSegment>,
+}
+
+/// Walk a face's outer loop and emit (vertex, edge_curve) pairs.
+///
+/// `curve` is `None` only when the corresponding edge has no edge-geometry
+/// (zero-length seam, vase apex, freshly-stitched degenerate edge). The
+/// `curve` of the step at index `i` describes the segment from `origin[i]`
+/// to `origin[(i+1) % n]`.
+///
+/// Tier 3-lite of the curved-surface stitch wiring: lets a polygon-walking
+/// caller branch on `CurveKind::Line` vs `Circle`/`Ellipse` and emit
+/// arc-aware geometry (e.g., a triangulator that samples cylinder seam
+/// curves at finer resolution than line edges).
+pub fn face_polygon_with_arcs(solid: &Solid, face: FaceId) -> Option<Vec<LoopStep>> {
+    let f = solid.topo.face(face)?;
+    let lp = solid.topo.loop_(f.outer_loop())?;
+    let start = lp.half_edge()?;
+    let mut steps: Vec<LoopStep> = Vec::new();
+    let mut cur = start;
+    loop {
+        let he = solid.topo.half_edge(cur)?;
+        let v = he.origin();
+        let origin = *solid.vertex_geom.get(v)?;
+        let curve = solid.edge_geom.get(he.edge()).cloned();
+        steps.push(LoopStep { origin, curve });
+        cur = he.next();
+        if cur == start {
+            break;
+        }
+    }
+    Some(steps)
+}
+
 /// Signed area times 2 of a 3D polygon projected along the given normal.
 /// Sum over edges of (p_i × p_{i+1}) · n. Positive when polygon is CCW
 /// from the +n viewpoint.
@@ -160,5 +206,67 @@ mod tests {
             .count();
             assert_eq!(const_count, 1, "face must have exactly one constant axis");
         }
+    }
+
+    #[test]
+    fn face_polygon_with_arcs_recovers_arc_curve_for_arc_edge() {
+        // Tier 3-lite: stitch a 2-face mesh whose shared edge is an arc.
+        // face_polygon_with_arcs on either face must return a step whose
+        // curve is `Ellipse` (the underlying conic) — proving the arc
+        // identity threads end-to-end from KeptFace.edge_tags through
+        // stitch's edge_geom assignment to the polygon walker.
+        use crate::booleans::stitch::{EdgeCurveTag, KeptFace, stitch};
+        use crate::geometry::{CurveKind, EllipseSegment, SurfaceKind};
+        use kerf_geom::{Ellipse, Frame, Plane, Point3, Tolerance};
+
+        let p0 = Point3::new(0.0, 0.0, 0.0);
+        let p1 = Point3::new(1.0, 0.0, 0.0);
+        let p2 = Point3::new(0.0, 1.0, 0.0);
+
+        let arc = EllipseSegment::new(
+            Ellipse::new(Frame::world(Point3::new(0.5, 0.0, 0.0)), 0.5, 0.5),
+            0.0,
+            std::f64::consts::PI,
+        );
+        let surf = SurfaceKind::Plane(Plane::new(Frame::world(Point3::origin())));
+
+        let front = KeptFace {
+            polygon: vec![p0, p1, p2],
+            surface: surf.clone(),
+            owner: None,
+            edge_tags: Some(vec![
+                EdgeCurveTag::Arc(0),
+                EdgeCurveTag::Line,
+                EdgeCurveTag::Line,
+            ]),
+            arc_segments: vec![arc.clone()],
+        };
+        let back = KeptFace {
+            polygon: vec![p1, p0, p2],
+            surface: surf,
+            owner: None,
+            edge_tags: Some(vec![
+                EdgeCurveTag::Arc(0),
+                EdgeCurveTag::Line,
+                EdgeCurveTag::Line,
+            ]),
+            arc_segments: vec![arc],
+        };
+        let solid = stitch(&[front, back], &Tolerance::default());
+        let mut found_ellipse_step = false;
+        for face_id in solid.topo.face_ids() {
+            let steps = face_polygon_with_arcs(&solid, face_id).unwrap();
+            for step in &steps {
+                if let Some(c) = &step.curve {
+                    if matches!(c.curve, CurveKind::Ellipse(_)) {
+                        found_ellipse_step = true;
+                    }
+                }
+            }
+        }
+        assert!(
+            found_ellipse_step,
+            "expected at least one polygon-walker step backed by an Ellipse curve"
+        );
     }
 }
