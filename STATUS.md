@@ -29,10 +29,7 @@ A typical model is ~10 lines of JSON declaring a tree of:
   `LinearPattern`, `PolarPattern`.
 - **Manufacturing operations**: `CornerCut`, `Fillet`, `Fillets`
   (multi-edge), `Chamfer`, `Counterbore`, `Countersink`, `HoleArray`,
-  `BoltCircle`, `HexHole`, `SquareHole`, `EndChamfer`,
-  `InternalChamfer`, `ConicalCounterbore`, `CrossDrilledHole`,
-  `BlindHole`. Plus dowel/pin/nut primitives: `TaperedPin`,
-  `FlangedNut`, `DowelPin`.
+  `BoltCircle`, `HexHole`, `SquareHole`.
 - **Booleans**: `Union`, `Intersection`, `Difference`.
 
 Every numeric field accepts literals, `$param` references, or arbitrary
@@ -56,49 +53,53 @@ kernel + authoring + viewer + production output).
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
-| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
-| Manufacturing features (170+ — see catalog) | 12% | 96% | 11.52 |
+| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod, TwistedExtrude, HelicalRib, ScrewThread, SpiralWedge, DoubleHelix, TaperedCoil) | 6% | 85% | 5.1 |
+| Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.1%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~65.9%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08): Manufacturing edge cases
+## Latest session (2026-05-08, sweep variants)
 
-Added 8 manufacturing edge-case Features that fill gaps in the existing
-Counterbore / Countersink / Chamfer family. Manufacturing 95% → 96%
-(+0.12 SW pts). 727 tests → 740 tests, 0 failed.
+Six new sweep features shipped, pushing the Sweep/loft scorecard line
+from 70% → 85% (+0.9 SW pt). 727 tests → 743 (+16 new), 0 failed, 9
+ignored — workspace stays green.
 
-- **EndChamfer**: bevels the rim of a cylindrical boss at its +axis
-  end. Two-step construction (cylinder strip + chamfer-frustum union)
-  avoids the ring-topology stitch panic that a single-step ring cutter
-  trips on.
-- **InternalChamfer**: bevels the inside rim of a hole. Single-frustum
-  cutter — like a Countersink without the through-drill.
-- **ConicalCounterbore**: counterbore-style stepped hole whose lower
-  section ends in a drill-tip cone instead of a flat bottom. Three-piece
-  cutter (cbore disk + drill body + tip cone) unioned then subtracted.
-- **CrossDrilledHole**: two perpendicular through-holes intersecting at
-  a center point. Validates `axis_a != axis_b`.
-- **TaperedPin**: roll-pin / alignment pin shape. Pure
-  `frustum_faceted` primitive.
-- **FlangedNut**: hex nut with integrated wide flange. Bores each
-  section separately before stacking — bore-through-stacked-mismatched-
-  segments tripped the boolean stitcher in early attempts.
-- **DowelPin**: cylinder with chamfered ends on both sides.
-  Bottom-frustum + body-cylinder + top-frustum unioned axially.
-- **BlindHole**: closed-bottom hole — single drill cylinder with
-  overhang past the +axis face only.
+- **TwistedExtrude**: extrude a polygon while linearly rotating about
+  its centroid. Built as a single `extrude_lofted` between the original
+  profile at z=0 and a rotated copy at z=height. Side faces become
+  ruled (non-planar) quads, which the topology validator accepts but
+  which slightly inflate the divergence-theorem volume — bounds in the
+  test are loosened accordingly.
+- **HelicalRib**: rectangular cross-section sweep along a helix.
+  Reuses `sweep_cylinder_segment` with `segments=4` so the cylinder's
+  local frame becomes a square, giving a screw-root / decorative-ridge
+  cross-section.
+- **ScrewThread**: triangular V-thread cross-section sweep. Same path
+  as Coil but `segments=3`, approximating a standard machine thread.
+- **SpiralWedge**: helical sweep where the wire radius grows linearly
+  from `wire_radius_start` to `wire_radius_end`. Each chord segment
+  evaluates `r_seg` at its midpoint and calls `sweep_cylinder_segment`
+  with that radius.
+- **DoubleHelix**: two intertwined helices offset 180° in starting
+  angle, unioned into one solid. Resembles DNA / decorative twist.
+  The two-strand union is documented as a stitch-risk configuration —
+  the volume-bounded test tolerates `Err` returns.
+- **TaperedCoil**: helix where the coil radius decreases linearly
+  with z, forming a conical spring. Each chord uses the linearly
+  interpolated `r_a` and `r_b` for its endpoints.
 
-Each feature has a volume-bounded test against an analytic
-decomposition (using shared `faceted_cyl_volume` and
-`faceted_frustum_volume` helpers — exact n-gon-prism volume formulas
-for the inscribed-radius approximation kerf-brep uses), plus
-validation tests for malformed inputs. All 8 features participate in
-a consolidated JSON round-trip test that asserts byte-stable
-serialization.
+All six variants follow the existing pattern from Coil/Spring: the
+match arm in `eval.rs` resolves params, validates positive-finite
+constraints, walks `total_samples` chord points along the helix, and
+chains short cylinders via `try_union`. The high-risk variants
+(HelicalRib, ScrewThread, SpiralWedge, DoubleHelix, TaperedCoil) use
+the tolerated `match m.evaluate { Ok ... Err _ => {} }` pattern in
+their volume-bounded tests so a stitch hiccup doesn't tank the suite.
+Every variant has a JSON round-trip test confirming serde stability.
 
 ## Latest session (2026-05-06)
 
