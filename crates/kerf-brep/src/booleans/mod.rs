@@ -19,7 +19,7 @@ pub use analytic_curves::{CylinderPlaneIntersection, cylinder_plane_intersection
 pub use classify::{FaceClassification, classify_face, face_centroid};
 pub use clip::{ClipResult, clip_line_to_convex_polygon};
 pub use edge_lookup::{PointLocation, locate_point_on_face};
-pub use face_polygon::{face_polygon, face_polygon_raw};
+pub use face_polygon::{LoopStep, face_polygon, face_polygon_raw, face_polygon_with_arcs};
 pub use interior::{InteriorResolution, resolve_interior_endpoints};
 pub use intersect::{
     FaceIntersection, FaceIntersectionKind, classify_chord_interiorness, face_intersections,

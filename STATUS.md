@@ -56,13 +56,65 @@ kernel + authoring + viewer + production output).
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
 | Manufacturing features (170+ — see catalog, multi-edge Fillets handles 4-corner; chained Fillet handles cross-axis cases via score-based stitch rescue) | 12% | 97% | 11.64 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
-| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases; closed-form Cylinder×Plane intersection lifts to brep-layer EllipseSegment) | 8% | 50% | 4.0 |
+| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases; closed-form Cylinder×Plane intersection lifts to brep-layer EllipseSegment; stitch canonical edge key + face_intersections + face_polygon walker are now arc-aware end-to-end, with arc chords gated behind a feature-flag-style filter awaiting the curve-aware splice/split work) | 8% | 58% | 4.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.2%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~65.8%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08)
+## Latest session (2026-05-08, curved-stitch arc edges)
+
+Tier 1 + Tier 2 of curved-surface stitch wiring shipped on top of GAP D.
+The brep stitcher and face-intersection layer are now arc-aware — the
+pipeline still runs the planar code path for everything that flows
+through to splice/split (Tier 3 deferred), but the data model carries
+arc identity end-to-end and `face_intersections` emits
+`Arc(EllipseSegment)` chords for Cylinder×Plane face pairs.
+~65.2% → ~65.8% (+0.6 SW pt: Curved-surface 50 → 58). 747 → 755 tests
+(8 new), 0 failed, 0 ignored. GAP C/D tests all still pass.
+
+- **Tier 1 — canonical edge key includes curve identity**
+  (`EdgeCurveTag::{Line, Arc(u32)}`). Stitch's `edge_pairs` HashMap is
+  rekeyed from `(v_lo, v_hi)` to `(v_lo, v_hi, EdgeCurveTag)`; line
+  edges (the entire pre-existing universe) hash to the same bucket
+  they did before, so behavior is byte-for-byte unchanged for planar
+  inputs. Arc edges between the same vertex pair as a line edge now
+  live in their own bucket. Stage 1c (drop_orphan_contributors) was
+  also rekeyed so it can't spuriously drop arc-bearing faces. `KeptFace`
+  gains optional `edge_tags: Vec<EdgeCurveTag>` and
+  `arc_segments: Vec<EllipseSegment>` (both default-empty for the
+  legacy path). Stage 5 picks line vs arc edge geometry from the tag
+  and emits `CurveSegment::Ellipse` directly instead of synthesizing
+  a line through the endpoints.
+- **Tier 2 — face_intersections emits Arc kind for Cylinder×Plane**.
+  `FaceIntersection` gains a `kind: FaceIntersectionKind` field
+  (`Linear` for the legacy planar chord, `Arc(EllipseSegment)` for the
+  closed conic from `cylinder_plane_intersection`). The pipeline's
+  `boolean_solid` filters out Arc-kind chords *before* feeding them to
+  `splice_solids_at_intersections` / `add_intersection_edges` — those
+  steps still assume linear chords. The arc list is collected and
+  held; current behavior for planar inputs is byte-for-byte
+  unchanged. This is the brief's "preserve correctness via fallback"
+  safety mechanism: the data-model wiring lands without breaking
+  anything in the planar path.
+- **Tier 3-lite — arc-aware polygon walker**. New
+  `face_polygon_with_arcs` returns `Vec<LoopStep>` where each step has
+  the vertex position AND the underlying `CurveSegment` of the
+  outgoing edge. A consumer that wants to triangulate an arc-bounded
+  face at finer resolution than the stitched polygon can branch on
+  `CurveKind::Line` vs `Circle`/`Ellipse`. Tested via a stitch round-
+  trip that recovers the arc `CurveSegment::Ellipse` from a face built
+  with an `Arc(0)`-tagged edge.
+- **What's still deferred**: routing arc chords *through* splice/split
+  into the eventual stitched solid. Doing this requires teaching mef
+  to add an arc edge (not just a line) and `add_intersection_edges` /
+  `resolve_interior_endpoints` to walk the cylinder face's u-v domain
+  along the conic parameter. That is multi-week and remains outside
+  this session's scope. Today the Cylinder×Plane arc data is detected
+  and packaged but isn't yet woven into the result solid by the
+  boolean engine.
+
+## Earlier session (2026-05-08, GAP D)
 
 GAP D (chained Fillet stitch repair) shipped on top of GAP C. Chaining
 multiple `Fillet` features in sequence now succeeds for both axis-aligned
