@@ -151,6 +151,10 @@ Build the STL files with `cargo run --example cad_gallery`. Render to PNG with `
 - `kerf-geom` — exact analytic curves and surfaces, intersection routines.
 - `kerf-topo` — half-edge topology and Euler operators.
 - `kerf-brep` — the kernel (geometry + topology + booleans + constructors).
+- `kerf-cad` — declarative `Model` / `Feature` layer with JSON save/load and a
+  catalog of 241+ parametric features. See
+  [`docs/FEATURE_CATALOG.md`](docs/FEATURE_CATALOG.md) for the auto-generated
+  reference (regenerate with `cargo run -p kerf-cad --bin extract_catalog`).
 
 ## Library usage
 
