@@ -1,0 +1,14 @@
+{
+  "parameters": {
+    "len": 8.0,
+    "r": 1.5,
+    "h": 4.0
+  },
+  "features": [
+    {"kind": "Slot", "id": "out",
+      "length": "$len",
+      "radius": "$r",
+      "height": "$h",
+      "segments": 24}
+  ]
+}

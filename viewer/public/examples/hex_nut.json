@@ -1,0 +1,16 @@
+{
+  "parameters": {
+    "outer_r": 6.0,
+    "thread_r": 2.5,
+    "thickness": 4.0
+  },
+  "features": [
+    {"kind": "RegularPrism", "id": "body",
+      "radius": "$outer_r", "height": "$thickness", "segments": 6},
+    {"kind": "Cylinder", "id": "thread_raw",
+      "radius": "$thread_r", "height": 12.0, "segments": 24},
+    {"kind": "Translate", "id": "thread", "input": "thread_raw",
+      "offset": [0.0, 0.0, -4.0]},
+    {"kind": "Difference", "id": "out", "inputs": ["body", "thread"]}
+  ]
+}
