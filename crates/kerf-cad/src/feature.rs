@@ -2567,6 +2567,49 @@ pub enum Feature {
         slices: usize,
     },
 
+    /// Bullet: cylindrical body with a conical tip pointing up.
+    /// Apex of the cone is at z = body_height + tip_height.
+    Bullet {
+        id: String,
+        body_radius: Scalar,
+        body_height: Scalar,
+        tip_height: Scalar,
+        slices: usize,
+    },
+
+    /// PointedDome: hemispherical dome with a conical spire on top —
+    /// minaret / orthodox-cathedral cap.
+    PointedDome {
+        id: String,
+        radius: Scalar,
+        spire_height: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// WindBell: a hand-bell — wider frustum body (wider at bottom)
+    /// with a small cylindrical handle on top.
+    WindBell {
+        id: String,
+        bell_radius: Scalar,
+        bell_top_radius: Scalar,
+        bell_height: Scalar,
+        handle_radius: Scalar,
+        handle_height: Scalar,
+        slices: usize,
+    },
+
+    /// PineCone: stack of progressively narrower faceted spheres,
+    /// evoking the layered scales of a pinecone.
+    PineCone {
+        id: String,
+        base_radius: Scalar,
+        scale_overlap: Scalar,
+        scales: usize,
+        stacks: usize,
+        slices: usize,
+    },
+
     /// Volute: a decorative scroll/spiral disk — Archimedean spiral
     /// rod plus a central disk. Used as classical column-capital
     /// ornament.
@@ -2924,6 +2967,10 @@ impl Feature {
             | Feature::Lightbulb { id, .. }
             | Feature::DomedRoof { id, .. }
             | Feature::Beehive { id, .. }
+            | Feature::Bullet { id, .. }
+            | Feature::PointedDome { id, .. }
+            | Feature::WindBell { id, .. }
+            | Feature::PineCone { id, .. }
             | Feature::Volute { id, .. }
             | Feature::ScrollPlate { id, .. }
             | Feature::DovetailSlot { id, .. }
@@ -3157,6 +3204,10 @@ impl Feature {
             | Feature::Lightbulb { .. }
             | Feature::DomedRoof { .. }
             | Feature::Beehive { .. }
+            | Feature::Bullet { .. }
+            | Feature::PointedDome { .. }
+            | Feature::WindBell { .. }
+            | Feature::PineCone { .. }
             | Feature::Volute { .. }
             | Feature::ScrollPlate { .. }
             | Feature::DovetailSlot { .. }

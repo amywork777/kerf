@@ -5239,6 +5239,76 @@ fn build(
             let dome = translate_solid(&dome_raw, Vec3::new(0.0, 0.0, wh));
             wall.try_union(&dome).map_err(|e| EvalError::Boolean { id: id.into(), op: "domed_roof_join", message: e.message })
         }
+        Feature::Bullet { body_radius, body_height, tip_height, slices, .. } => {
+            let r = resolve_one(id, body_radius, params)?;
+            let bh = resolve_one(id, body_height, params)?;
+            let th = resolve_one(id, tip_height, params)?;
+            if r <= 0.0 || bh <= 0.0 || th <= 0.0 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Bullet requires positive dims and slices>=3 (got r={r})") });
+            }
+            let body = cylinder_faceted(r, bh, *slices);
+            let tip_raw = cone_faceted(r, th, *slices);
+            let tip = translate_solid(&tip_raw, Vec3::new(0.0, 0.0, bh - 1e-3));
+            body.try_union(&tip).map_err(|e| EvalError::Boolean { id: id.into(), op: "bullet_join", message: e.message })
+        }
+        Feature::PointedDome { radius, spire_height, stacks, slices, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let sh = resolve_one(id, spire_height, params)?;
+            if r <= 0.0 || sh <= 0.0 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("PointedDome requires positive radius and spire_height (got r={r}, sh={sh})") });
+            }
+            // Full sphere centered at z=0 (its top hemisphere is the dome,
+            // bottom hemisphere is buried under the cone).
+            let dome = sphere_faceted(r, *stacks, *slices);
+            // Cone with base at sphere top — radius slightly less than sphere
+            // to sit cleanly on the equator-pole arc, apex at z = r + sh.
+            let cone_base_r = r * 0.6;
+            let cone_raw = cone_faceted(cone_base_r, sh, *slices);
+            let cone_t = translate_solid(&cone_raw, Vec3::new(0.0, 0.0, r * 0.7));
+            dome.try_union(&cone_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "pointed_dome_join", message: e.message })
+        }
+        Feature::WindBell { bell_radius, bell_top_radius, bell_height, handle_radius, handle_height, slices, .. } => {
+            let br = resolve_one(id, bell_radius, params)?;
+            let btr = resolve_one(id, bell_top_radius, params)?;
+            let bh = resolve_one(id, bell_height, params)?;
+            let hr = resolve_one(id, handle_radius, params)?;
+            let hh = resolve_one(id, handle_height, params)?;
+            if br <= 0.0 || btr <= 0.0 || bh <= 0.0 || hr <= 0.0 || hh <= 0.0
+                || btr >= br || hr >= btr || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("WindBell requires bell_top<bell_radius and handle<bell_top, positive dims (got br={br}, btr={btr}, hr={hr})") });
+            }
+            // Frustum bell (wider at bottom) + cylindrical handle on top.
+            let bell = frustum_faceted(br, btr, bh, *slices);
+            let handle_raw = cylinder_faceted(hr, hh, *slices);
+            let handle = translate_solid(&handle_raw, Vec3::new(0.0, 0.0, bh - 1e-3));
+            bell.try_union(&handle).map_err(|e| EvalError::Boolean { id: id.into(), op: "windbell_join", message: e.message })
+        }
+        Feature::PineCone { base_radius, scale_overlap, scales, stacks, slices, .. } => {
+            let r0 = resolve_one(id, base_radius, params)?;
+            let ov = resolve_one(id, scale_overlap, params)?;
+            if r0 <= 0.0 || ov <= 0.0 || ov >= 1.0 || *scales < 2 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("PineCone requires scales>=2, base_radius>0, scale_overlap in (0,1) (got r0={r0}, ov={ov})") });
+            }
+            // Stack of spheres, each shrinking to 0.4*r0 at the top, with
+            // ov fraction of overlap between consecutive spheres.
+            let mut acc: Option<Solid> = None;
+            for i in 0..*scales {
+                let frac = i as f64 / (*scales as f64 - 1.0).max(1.0);
+                let r_i = r0 * (1.0 - 0.6 * frac);
+                let z_i = r0 * 2.0 * (1.0 - ov) * i as f64;
+                let sphere_raw = sphere_faceted(r_i, *stacks, *slices);
+                let sphere = translate_solid(&sphere_raw, Vec3::new(0.0, 0.0, z_i));
+                acc = Some(match acc {
+                    None => sphere,
+                    Some(prev) => prev.try_union(&sphere).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "pinecone_scale",
+                        message: e.message,
+                    })?,
+                });
+            }
+            Ok(acc.expect("pinecone must have >=2 scales"))
+        }
         Feature::Beehive { base_radius, layer_height, layers, slices, .. } => {
             let r0 = resolve_one(id, base_radius, params)?;
             let lh = resolve_one(id, layer_height, params)?;
