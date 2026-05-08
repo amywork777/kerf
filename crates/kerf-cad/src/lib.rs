@@ -9,6 +9,7 @@ pub mod feature;
 pub mod model;
 pub mod scalar;
 pub mod sketch;
+pub mod solver;
 pub mod transform;
 
 pub use eval::EvalError;
@@ -16,3 +17,4 @@ pub use feature::{Feature, FilletEdge, Profile2D};
 pub use model::{Model, ModelError};
 pub use scalar::{lits, Scalar};
 pub use sketch::{Sketch, SketchConstraint, SketchError, SketchPlane, SketchPrim};
+pub use solver::{SolverConfig, SolverError};
