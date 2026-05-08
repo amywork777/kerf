@@ -196,15 +196,9 @@ fn chained_fillet_four_z_edges_succeeds() {
 
 /// Chained fillets across DIFFERENT axes: one z-edge then one x-edge sharing
 /// a corner. The second wedge meets the first fillet's curved face along a
-/// non-axis-aligned curve.
-///
-/// Marked `#[ignore]` initially. Baseline panics:
-///   non-manifold input to stitch: edge key (32, 39) has 1 half-edges
-/// — i.e., a 1-half-edge orphan that the GAP C rescue does not promote.
-/// Un-ignore once the rescue is extended to handle this curved-meets-curved
-/// configuration.
+/// non-axis-aligned curve. Pre-GAP-D this baseline-panicked with a
+/// 1-half-edge stitch error that the GAP C rescue could not resolve.
 #[test]
-#[ignore = "chained Fillet z-then-x: 1-half-edge orphan rescue does not yet promote curved-face partners across the corner where two fillet curves meet"]
 fn chained_fillet_z_then_x_edge_succeeds() {
     let m = Model::new()
         .add(Feature::Box {
