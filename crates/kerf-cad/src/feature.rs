@@ -2523,6 +2523,233 @@ pub enum Feature {
         slices: usize,
     },
 
+    /// Mushroom: cylindrical stem topped by a wider spherical cap.
+    /// Sphere center is at the top of the stem, so the cap drapes
+    /// outward beyond the stem.
+    Mushroom {
+        id: String,
+        stem_radius: Scalar,
+        stem_height: Scalar,
+        cap_radius: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// Lightbulb: a cylindrical base, frustum neck transition, and
+    /// spherical bulb on top. Three-piece composition.
+    Lightbulb {
+        id: String,
+        base_radius: Scalar,
+        base_height: Scalar,
+        neck_height: Scalar,
+        bulb_radius: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// DomedRoof: a cylinder topped with a hemisphere of the same
+    /// radius — silo, roundhouse, or kiln-cap shape.
+    DomedRoof {
+        id: String,
+        radius: Scalar,
+        wall_height: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// Beehive: a stack of progressively narrower cylinders, evoking
+    /// a traditional skep beehive. Four cylinder layers unioned.
+    Beehive {
+        id: String,
+        base_radius: Scalar,
+        layer_height: Scalar,
+        layers: usize,
+        slices: usize,
+    },
+
+    /// Bullet: cylindrical body with a conical tip pointing up.
+    /// Apex of the cone is at z = body_height + tip_height.
+    Bullet {
+        id: String,
+        body_radius: Scalar,
+        body_height: Scalar,
+        tip_height: Scalar,
+        slices: usize,
+    },
+
+    /// PointedDome: hemispherical dome with a conical spire on top —
+    /// minaret / orthodox-cathedral cap.
+    PointedDome {
+        id: String,
+        radius: Scalar,
+        spire_height: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// WindBell: a hand-bell — wider frustum body (wider at bottom)
+    /// with a small cylindrical handle on top.
+    WindBell {
+        id: String,
+        bell_radius: Scalar,
+        bell_top_radius: Scalar,
+        bell_height: Scalar,
+        handle_radius: Scalar,
+        handle_height: Scalar,
+        slices: usize,
+    },
+
+    /// PineCone: stack of progressively narrower faceted spheres,
+    /// evoking the layered scales of a pinecone.
+    PineCone {
+        id: String,
+        base_radius: Scalar,
+        scale_overlap: Scalar,
+        scales: usize,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// TopHat: a tall cylinder body with a flat disk brim around the
+    /// bottom. Brim radius is wider than body radius.
+    TopHat {
+        id: String,
+        body_radius: Scalar,
+        body_height: Scalar,
+        brim_radius: Scalar,
+        brim_thickness: Scalar,
+        slices: usize,
+    },
+
+    /// WaterTower: a wide cylindrical tank perched on a slimmer
+    /// cylindrical support column.
+    WaterTower {
+        id: String,
+        tank_radius: Scalar,
+        tank_height: Scalar,
+        support_radius: Scalar,
+        support_height: Scalar,
+        slices: usize,
+    },
+
+    /// PlantPot: an inverted frustum (wider at top) with a flat ring
+    /// rim on top — terra-cotta planter shape. Open top for now is
+    /// implied by the silhouette; this is a solid prim, no carve.
+    PlantPot {
+        id: String,
+        rim_radius: Scalar,
+        base_radius: Scalar,
+        height: Scalar,
+        rim_thickness: Scalar,
+        slices: usize,
+    },
+
+    /// Buoy: a spherical float with a cylindrical mast extending
+    /// upward. Used in marine markers, decorative compositions.
+    Buoy {
+        id: String,
+        float_radius: Scalar,
+        mast_radius: Scalar,
+        mast_height: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// Trophy: cylindrical base + slimmer cylindrical stem + bowl cup
+    /// at the top (frustum bowl shape, wider opening above).
+    Trophy {
+        id: String,
+        base_radius: Scalar,
+        base_height: Scalar,
+        stem_radius: Scalar,
+        stem_height: Scalar,
+        bowl_bottom_radius: Scalar,
+        bowl_top_radius: Scalar,
+        bowl_height: Scalar,
+        slices: usize,
+    },
+
+    /// Goblet: a stem with a frustum bowl on top (no base disk).
+    /// Wine glass / chalice silhouette.
+    Goblet {
+        id: String,
+        stem_radius: Scalar,
+        stem_height: Scalar,
+        bowl_bottom_radius: Scalar,
+        bowl_top_radius: Scalar,
+        bowl_height: Scalar,
+        slices: usize,
+    },
+
+    /// TableLamp: cylindrical base + cylindrical stem + frustum shade
+    /// (wider at the bottom of the shade, narrower at top).
+    TableLamp {
+        id: String,
+        base_radius: Scalar,
+        base_height: Scalar,
+        stem_radius: Scalar,
+        stem_height: Scalar,
+        shade_bottom_radius: Scalar,
+        shade_top_radius: Scalar,
+        shade_height: Scalar,
+        slices: usize,
+    },
+
+    /// MushroomCloud: a frustum stem widening upward + a spherical
+    /// cap on top — silhouette of a mushroom cloud.
+    MushroomCloud {
+        id: String,
+        stem_bottom_radius: Scalar,
+        stem_top_radius: Scalar,
+        stem_height: Scalar,
+        cloud_radius: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// TieredCake: three cylindrical tiers of decreasing radius
+    /// stacked on top of each other. Wedding-cake silhouette.
+    TieredCake {
+        id: String,
+        bottom_radius: Scalar,
+        middle_radius: Scalar,
+        top_radius: Scalar,
+        tier_height: Scalar,
+        slices: usize,
+    },
+
+    /// Spindle: a cylinder body with conical caps at both ends.
+    /// Symmetrical, evokes a textile spindle or shuttlecock body.
+    Spindle {
+        id: String,
+        body_radius: Scalar,
+        body_height: Scalar,
+        cap_height: Scalar,
+        slices: usize,
+    },
+
+    /// Ufo: a flat oblate disk (cylinder of small height) with a
+    /// hemispherical dome on top — flying-saucer silhouette.
+    Ufo {
+        id: String,
+        disk_radius: Scalar,
+        disk_height: Scalar,
+        dome_radius: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
+    /// CrowsNest: tall slim pole with a flat circular platform at
+    /// the top — lookout, antenna mast.
+    CrowsNest {
+        id: String,
+        pole_radius: Scalar,
+        pole_height: Scalar,
+        platform_radius: Scalar,
+        platform_thickness: Scalar,
+        slices: usize,
+    },
+
     /// Volute: a decorative scroll/spiral disk — Archimedean spiral
     /// rod plus a central disk. Used as classical column-capital
     /// ornament.
@@ -2876,6 +3103,26 @@ impl Feature {
             | Feature::PrismHole { id, .. }
             | Feature::KeyholeShape { id, .. }
             | Feature::AcornShape { id, .. }
+            | Feature::Mushroom { id, .. }
+            | Feature::Lightbulb { id, .. }
+            | Feature::DomedRoof { id, .. }
+            | Feature::Beehive { id, .. }
+            | Feature::Bullet { id, .. }
+            | Feature::PointedDome { id, .. }
+            | Feature::WindBell { id, .. }
+            | Feature::PineCone { id, .. }
+            | Feature::TopHat { id, .. }
+            | Feature::WaterTower { id, .. }
+            | Feature::PlantPot { id, .. }
+            | Feature::Buoy { id, .. }
+            | Feature::Trophy { id, .. }
+            | Feature::Goblet { id, .. }
+            | Feature::TableLamp { id, .. }
+            | Feature::MushroomCloud { id, .. }
+            | Feature::TieredCake { id, .. }
+            | Feature::Spindle { id, .. }
+            | Feature::Ufo { id, .. }
+            | Feature::CrowsNest { id, .. }
             | Feature::Volute { id, .. }
             | Feature::ScrollPlate { id, .. }
             | Feature::DovetailSlot { id, .. }
@@ -3105,6 +3352,26 @@ impl Feature {
             | Feature::PrismHole { .. }
             | Feature::KeyholeShape { .. }
             | Feature::AcornShape { .. }
+            | Feature::Mushroom { .. }
+            | Feature::Lightbulb { .. }
+            | Feature::DomedRoof { .. }
+            | Feature::Beehive { .. }
+            | Feature::Bullet { .. }
+            | Feature::PointedDome { .. }
+            | Feature::WindBell { .. }
+            | Feature::PineCone { .. }
+            | Feature::TopHat { .. }
+            | Feature::WaterTower { .. }
+            | Feature::PlantPot { .. }
+            | Feature::Buoy { .. }
+            | Feature::Trophy { .. }
+            | Feature::Goblet { .. }
+            | Feature::TableLamp { .. }
+            | Feature::MushroomCloud { .. }
+            | Feature::TieredCake { .. }
+            | Feature::Spindle { .. }
+            | Feature::Ufo { .. }
+            | Feature::CrowsNest { .. }
             | Feature::Volute { .. }
             | Feature::ScrollPlate { .. }
             | Feature::DovetailSlot { .. }

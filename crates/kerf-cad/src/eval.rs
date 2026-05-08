@@ -5185,6 +5185,331 @@ fn build(
             let stem = cylinder_along_axis(sr, sl + 1e-3, *slices, 2, br - 1e-3, 0.0, 0.0);
             body.try_union(&stem).map_err(|e| EvalError::Boolean { id: id.into(), op: "acorn_join", message: e.message })
         }
+        Feature::Mushroom { stem_radius, stem_height, cap_radius, stacks, slices, .. } => {
+            let sr = resolve_one(id, stem_radius, params)?;
+            let sh = resolve_one(id, stem_height, params)?;
+            let cr = resolve_one(id, cap_radius, params)?;
+            if sr <= 0.0 || sh <= 0.0 || cr <= 0.0 || cr <= sr || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Mushroom requires cap_radius>stem_radius, positive dims (got sr={sr}, cr={cr})") });
+            }
+            // Three pieces: stem cylinder + frustum collar (stem→cap radius)
+            // + spherical cap. The collar avoids the sharp radius jump that
+            // trips stitch when sphere sits directly on stem.
+            let collar_h = (cr - sr).min(sh * 0.5).max(1e-2);
+            let stem = cylinder_faceted(sr, sh, *slices);
+            let collar_raw = frustum_faceted(sr, cr, collar_h, *slices);
+            let collar = translate_solid(&collar_raw, Vec3::new(0.0, 0.0, sh - 1e-3));
+            let cap_raw = sphere_faceted(cr, *stacks, *slices);
+            let cap = translate_solid(&cap_raw, Vec3::new(0.0, 0.0, sh + collar_h - 1e-3));
+            let stem_collar = stem.try_union(&collar).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "mushroom_collar",
+                message: e.message,
+            })?;
+            stem_collar.try_union(&cap).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "mushroom_cap",
+                message: e.message,
+            })
+        }
+        Feature::Lightbulb { base_radius, base_height, neck_height, bulb_radius, stacks, slices, .. } => {
+            let basr = resolve_one(id, base_radius, params)?;
+            let bash = resolve_one(id, base_height, params)?;
+            let nh = resolve_one(id, neck_height, params)?;
+            let br = resolve_one(id, bulb_radius, params)?;
+            if basr <= 0.0 || bash <= 0.0 || nh <= 0.0 || br <= 0.0 || br <= basr || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Lightbulb requires bulb_radius>base_radius, positive dims (got basr={basr}, br={br})") });
+            }
+            let base = cylinder_faceted(basr, bash, *slices);
+            let neck_raw = frustum_faceted(basr, br, nh, *slices);
+            let neck = translate_solid(&neck_raw, Vec3::new(0.0, 0.0, bash));
+            let bulb_raw = sphere_faceted(br, *stacks, *slices);
+            let bulb = translate_solid(&bulb_raw, Vec3::new(0.0, 0.0, bash + nh));
+            let lower = base.try_union(&neck).map_err(|e| EvalError::Boolean { id: id.into(), op: "lightbulb_neck", message: e.message })?;
+            lower.try_union(&bulb).map_err(|e| EvalError::Boolean { id: id.into(), op: "lightbulb_bulb", message: e.message })
+        }
+        Feature::DomedRoof { radius, wall_height, stacks, slices, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let wh = resolve_one(id, wall_height, params)?;
+            if r <= 0.0 || wh <= 0.0 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("DomedRoof requires positive radius and wall_height (got r={r}, wh={wh})") });
+            }
+            let wall = cylinder_faceted(r, wh, *slices);
+            let dome_raw = sphere_faceted(r, *stacks, *slices);
+            let dome = translate_solid(&dome_raw, Vec3::new(0.0, 0.0, wh));
+            wall.try_union(&dome).map_err(|e| EvalError::Boolean { id: id.into(), op: "domed_roof_join", message: e.message })
+        }
+        Feature::Bullet { body_radius, body_height, tip_height, slices, .. } => {
+            let r = resolve_one(id, body_radius, params)?;
+            let bh = resolve_one(id, body_height, params)?;
+            let th = resolve_one(id, tip_height, params)?;
+            if r <= 0.0 || bh <= 0.0 || th <= 0.0 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Bullet requires positive dims and slices>=3 (got r={r})") });
+            }
+            let body = cylinder_faceted(r, bh, *slices);
+            let tip_raw = cone_faceted(r, th, *slices);
+            let tip = translate_solid(&tip_raw, Vec3::new(0.0, 0.0, bh - 1e-3));
+            body.try_union(&tip).map_err(|e| EvalError::Boolean { id: id.into(), op: "bullet_join", message: e.message })
+        }
+        Feature::PointedDome { radius, spire_height, stacks, slices, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let sh = resolve_one(id, spire_height, params)?;
+            if r <= 0.0 || sh <= 0.0 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("PointedDome requires positive radius and spire_height (got r={r}, sh={sh})") });
+            }
+            // Full sphere centered at z=0 (its top hemisphere is the dome,
+            // bottom hemisphere is buried under the cone).
+            let dome = sphere_faceted(r, *stacks, *slices);
+            // Cone with base at sphere top — radius slightly less than sphere
+            // to sit cleanly on the equator-pole arc, apex at z = r + sh.
+            let cone_base_r = r * 0.6;
+            let cone_raw = cone_faceted(cone_base_r, sh, *slices);
+            let cone_t = translate_solid(&cone_raw, Vec3::new(0.0, 0.0, r * 0.7));
+            dome.try_union(&cone_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "pointed_dome_join", message: e.message })
+        }
+        Feature::WindBell { bell_radius, bell_top_radius, bell_height, handle_radius, handle_height, slices, .. } => {
+            let br = resolve_one(id, bell_radius, params)?;
+            let btr = resolve_one(id, bell_top_radius, params)?;
+            let bh = resolve_one(id, bell_height, params)?;
+            let hr = resolve_one(id, handle_radius, params)?;
+            let hh = resolve_one(id, handle_height, params)?;
+            if br <= 0.0 || btr <= 0.0 || bh <= 0.0 || hr <= 0.0 || hh <= 0.0
+                || btr >= br || hr >= btr || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("WindBell requires bell_top<bell_radius and handle<bell_top, positive dims (got br={br}, btr={btr}, hr={hr})") });
+            }
+            // Frustum bell (wider at bottom) + cylindrical handle on top.
+            let bell = frustum_faceted(br, btr, bh, *slices);
+            let handle_raw = cylinder_faceted(hr, hh, *slices);
+            let handle = translate_solid(&handle_raw, Vec3::new(0.0, 0.0, bh - 1e-3));
+            bell.try_union(&handle).map_err(|e| EvalError::Boolean { id: id.into(), op: "windbell_join", message: e.message })
+        }
+        Feature::PineCone { base_radius, scale_overlap, scales, stacks, slices, .. } => {
+            let r0 = resolve_one(id, base_radius, params)?;
+            let ov = resolve_one(id, scale_overlap, params)?;
+            if r0 <= 0.0 || ov <= 0.0 || ov >= 1.0 || *scales < 2 || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("PineCone requires scales>=2, base_radius>0, scale_overlap in (0,1) (got r0={r0}, ov={ov})") });
+            }
+            // Stack of spheres, each shrinking to 0.4*r0 at the top, with
+            // ov fraction of overlap between consecutive spheres.
+            let mut acc: Option<Solid> = None;
+            for i in 0..*scales {
+                let frac = i as f64 / (*scales as f64 - 1.0).max(1.0);
+                let r_i = r0 * (1.0 - 0.6 * frac);
+                let z_i = r0 * 2.0 * (1.0 - ov) * i as f64;
+                let sphere_raw = sphere_faceted(r_i, *stacks, *slices);
+                let sphere = translate_solid(&sphere_raw, Vec3::new(0.0, 0.0, z_i));
+                acc = Some(match acc {
+                    None => sphere,
+                    Some(prev) => prev.try_union(&sphere).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "pinecone_scale",
+                        message: e.message,
+                    })?,
+                });
+            }
+            Ok(acc.expect("pinecone must have >=2 scales"))
+        }
+        Feature::TopHat { body_radius, body_height, brim_radius, brim_thickness, slices, .. } => {
+            let br = resolve_one(id, body_radius, params)?;
+            let bh = resolve_one(id, body_height, params)?;
+            let bmr = resolve_one(id, brim_radius, params)?;
+            let bmt = resolve_one(id, brim_thickness, params)?;
+            if br <= 0.0 || bh <= 0.0 || bmr <= br || bmt <= 0.0 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("TopHat requires brim_radius>body_radius, positive dims (got br={br}, bmr={bmr})") });
+            }
+            // Brim disk at z=0, body cylinder above with 1e-3 overlap.
+            let brim = cylinder_faceted(bmr, bmt, *slices);
+            let body = cylinder_along_axis(br, bh, *slices, 2, bmt - 1e-3, 0.0, 0.0);
+            brim.try_union(&body).map_err(|e| EvalError::Boolean { id: id.into(), op: "tophat_join", message: e.message })
+        }
+        Feature::WaterTower { tank_radius, tank_height, support_radius, support_height, slices, .. } => {
+            let tr = resolve_one(id, tank_radius, params)?;
+            let th = resolve_one(id, tank_height, params)?;
+            let sr = resolve_one(id, support_radius, params)?;
+            let sh = resolve_one(id, support_height, params)?;
+            if tr <= 0.0 || th <= 0.0 || sr <= 0.0 || sh <= 0.0 || sr >= tr || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("WaterTower requires support_radius<tank_radius, positive dims (got tr={tr}, sr={sr})") });
+            }
+            // Slim support column at z=0, wide tank perched on top.
+            let support = cylinder_faceted(sr, sh, *slices);
+            let tank = cylinder_along_axis(tr, th, *slices, 2, sh - 1e-3, 0.0, 0.0);
+            support.try_union(&tank).map_err(|e| EvalError::Boolean { id: id.into(), op: "water_tower_join", message: e.message })
+        }
+        Feature::PlantPot { rim_radius, base_radius, height, rim_thickness, slices, .. } => {
+            let rr = resolve_one(id, rim_radius, params)?;
+            let bar = resolve_one(id, base_radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            let rt = resolve_one(id, rim_thickness, params)?;
+            if rr <= 0.0 || bar <= 0.0 || h <= 0.0 || rt <= 0.0 || rr <= bar || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("PlantPot requires rim_radius>base_radius, positive dims (got bar={bar}, rr={rr})") });
+            }
+            // Inverted frustum (wider at top) + a flat ring rim at the top.
+            let body = frustum_faceted(bar, rr, h, *slices);
+            // Rim is a flat annulus we approximate with a thin wider cylinder
+            // on top of the frustum opening.
+            let rim_outer_r = rr * 1.05;
+            let rim = cylinder_along_axis(rim_outer_r, rt, *slices, 2, h - 1e-3, 0.0, 0.0);
+            body.try_union(&rim).map_err(|e| EvalError::Boolean { id: id.into(), op: "plant_pot_rim", message: e.message })
+        }
+        Feature::Buoy { float_radius, mast_radius, mast_height, stacks, slices, .. } => {
+            let fr = resolve_one(id, float_radius, params)?;
+            let mr = resolve_one(id, mast_radius, params)?;
+            let mh = resolve_one(id, mast_height, params)?;
+            if fr <= 0.0 || mr <= 0.0 || mh <= 0.0 || mr >= fr || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Buoy requires mast_radius<float_radius, positive dims (got fr={fr}, mr={mr})") });
+            }
+            // Float sphere centered at origin; mast cylinder rising from the
+            // top of the sphere with 1e-3 overlap (same pattern as AcornShape).
+            let float = sphere_faceted(fr, *stacks, *slices);
+            let mast = cylinder_along_axis(mr, mh + 1e-3, *slices, 2, fr - 1e-3, 0.0, 0.0);
+            float.try_union(&mast).map_err(|e| EvalError::Boolean { id: id.into(), op: "buoy_join", message: e.message })
+        }
+        Feature::Trophy { base_radius, base_height, stem_radius, stem_height, bowl_bottom_radius, bowl_top_radius, bowl_height, slices, .. } => {
+            let bar = resolve_one(id, base_radius, params)?;
+            let bah = resolve_one(id, base_height, params)?;
+            let sr = resolve_one(id, stem_radius, params)?;
+            let sh = resolve_one(id, stem_height, params)?;
+            let bbr = resolve_one(id, bowl_bottom_radius, params)?;
+            let btr = resolve_one(id, bowl_top_radius, params)?;
+            let bh = resolve_one(id, bowl_height, params)?;
+            if bar <= 0.0 || bah <= 0.0 || sr <= 0.0 || sh <= 0.0 || bbr <= 0.0
+                || btr <= 0.0 || bh <= 0.0 || sr >= bar || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Trophy requires stem<base, all-positive (got bar={bar}, sr={sr})") });
+            }
+            let base = cylinder_faceted(bar, bah, *slices);
+            let stem = cylinder_along_axis(sr, sh, *slices, 2, bah - 1e-3, 0.0, 0.0);
+            let bowl_raw = frustum_faceted(bbr, btr, bh, *slices);
+            let bowl = translate_solid(&bowl_raw, Vec3::new(0.0, 0.0, bah + sh - 1e-3));
+            let lower = base.try_union(&stem).map_err(|e| EvalError::Boolean { id: id.into(), op: "trophy_stem", message: e.message })?;
+            lower.try_union(&bowl).map_err(|e| EvalError::Boolean { id: id.into(), op: "trophy_bowl", message: e.message })
+        }
+        Feature::Goblet { stem_radius, stem_height, bowl_bottom_radius, bowl_top_radius, bowl_height, slices, .. } => {
+            let sr = resolve_one(id, stem_radius, params)?;
+            let sh = resolve_one(id, stem_height, params)?;
+            let bbr = resolve_one(id, bowl_bottom_radius, params)?;
+            let btr = resolve_one(id, bowl_top_radius, params)?;
+            let bh = resolve_one(id, bowl_height, params)?;
+            if sr <= 0.0 || sh <= 0.0 || bbr <= 0.0 || btr <= 0.0 || bh <= 0.0 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Goblet requires positive dims (got sr={sr})") });
+            }
+            let stem = cylinder_faceted(sr, sh, *slices);
+            let bowl_raw = frustum_faceted(bbr, btr, bh, *slices);
+            let bowl = translate_solid(&bowl_raw, Vec3::new(0.0, 0.0, sh - 1e-3));
+            stem.try_union(&bowl).map_err(|e| EvalError::Boolean { id: id.into(), op: "goblet_join", message: e.message })
+        }
+        Feature::TableLamp { base_radius, base_height, stem_radius, stem_height, shade_bottom_radius, shade_top_radius, shade_height, slices, .. } => {
+            let bar = resolve_one(id, base_radius, params)?;
+            let bah = resolve_one(id, base_height, params)?;
+            let sr = resolve_one(id, stem_radius, params)?;
+            let sh = resolve_one(id, stem_height, params)?;
+            let sbr = resolve_one(id, shade_bottom_radius, params)?;
+            let str_ = resolve_one(id, shade_top_radius, params)?;
+            let shh = resolve_one(id, shade_height, params)?;
+            if bar <= 0.0 || bah <= 0.0 || sr <= 0.0 || sh <= 0.0 || sbr <= 0.0
+                || str_ <= 0.0 || shh <= 0.0 || sr >= bar || sbr <= sr || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("TableLamp requires stem<base, shade_bottom>stem (got bar={bar}, sr={sr}, sbr={sbr})") });
+            }
+            let base = cylinder_faceted(bar, bah, *slices);
+            let stem = cylinder_along_axis(sr, sh, *slices, 2, bah - 1e-3, 0.0, 0.0);
+            let shade_raw = frustum_faceted(sbr, str_, shh, *slices);
+            let shade = translate_solid(&shade_raw, Vec3::new(0.0, 0.0, bah + sh - 1e-3));
+            let lower = base.try_union(&stem).map_err(|e| EvalError::Boolean { id: id.into(), op: "table_lamp_stem", message: e.message })?;
+            lower.try_union(&shade).map_err(|e| EvalError::Boolean { id: id.into(), op: "table_lamp_shade", message: e.message })
+        }
+        Feature::MushroomCloud { stem_bottom_radius, stem_top_radius, stem_height, cloud_radius, stacks, slices, .. } => {
+            let sbr = resolve_one(id, stem_bottom_radius, params)?;
+            let str_ = resolve_one(id, stem_top_radius, params)?;
+            let sh = resolve_one(id, stem_height, params)?;
+            let cr = resolve_one(id, cloud_radius, params)?;
+            if sbr <= 0.0 || str_ <= 0.0 || sh <= 0.0 || cr <= 0.0 || str_ <= sbr || cr <= str_ || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("MushroomCloud requires stem_top>stem_bottom and cloud_radius>stem_top (got sbr={sbr}, str={str_}, cr={cr})") });
+            }
+            let stem = frustum_faceted(sbr, str_, sh, *slices);
+            let cloud_raw = sphere_faceted(cr, *stacks, *slices);
+            let cloud = translate_solid(&cloud_raw, Vec3::new(0.0, 0.0, sh + cr * 0.5));
+            stem.try_union(&cloud).map_err(|e| EvalError::Boolean { id: id.into(), op: "mushroom_cloud_join", message: e.message })
+        }
+        Feature::TieredCake { bottom_radius, middle_radius, top_radius, tier_height, slices, .. } => {
+            let br = resolve_one(id, bottom_radius, params)?;
+            let mr = resolve_one(id, middle_radius, params)?;
+            let tr = resolve_one(id, top_radius, params)?;
+            let h = resolve_one(id, tier_height, params)?;
+            if br <= 0.0 || mr <= 0.0 || tr <= 0.0 || h <= 0.0
+                || mr >= br || tr >= mr || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("TieredCake requires top<middle<bottom (got br={br}, mr={mr}, tr={tr})") });
+            }
+            let bottom = cylinder_faceted(br, h, *slices);
+            let middle = cylinder_along_axis(mr, h, *slices, 2, h - 1e-3, 0.0, 0.0);
+            let top = cylinder_along_axis(tr, h, *slices, 2, 2.0 * h - 2e-3, 0.0, 0.0);
+            let lower = bottom.try_union(&middle).map_err(|e| EvalError::Boolean { id: id.into(), op: "tiered_cake_middle", message: e.message })?;
+            lower.try_union(&top).map_err(|e| EvalError::Boolean { id: id.into(), op: "tiered_cake_top", message: e.message })
+        }
+        Feature::Spindle { body_radius, body_height, cap_height, slices, .. } => {
+            let r = resolve_one(id, body_radius, params)?;
+            let bh = resolve_one(id, body_height, params)?;
+            let ch = resolve_one(id, cap_height, params)?;
+            if r <= 0.0 || bh <= 0.0 || ch <= 0.0 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Spindle requires positive dims (got r={r})") });
+            }
+            // Bottom cone (apex pointing down means we use a frustum with
+            // a tiny bottom radius), body cylinder, top cone (apex up).
+            let bot_raw = frustum_faceted(r * 0.05, r, ch, *slices);
+            let bot = bot_raw;
+            let body = cylinder_along_axis(r, bh, *slices, 2, ch - 1e-3, 0.0, 0.0);
+            let top_raw = cone_faceted(r, ch, *slices);
+            let top = translate_solid(&top_raw, Vec3::new(0.0, 0.0, ch + bh - 1e-3));
+            let lower = bot.try_union(&body).map_err(|e| EvalError::Boolean { id: id.into(), op: "spindle_body", message: e.message })?;
+            lower.try_union(&top).map_err(|e| EvalError::Boolean { id: id.into(), op: "spindle_top_cap", message: e.message })
+        }
+        Feature::Ufo { disk_radius, disk_height, dome_radius, stacks, slices, .. } => {
+            let dr = resolve_one(id, disk_radius, params)?;
+            let dh = resolve_one(id, disk_height, params)?;
+            let domr = resolve_one(id, dome_radius, params)?;
+            if dr <= 0.0 || dh <= 0.0 || domr <= 0.0 || domr >= dr || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Ufo requires dome_radius<disk_radius, positive dims (got dr={dr}, domr={domr})") });
+            }
+            let disk = cylinder_faceted(dr, dh, *slices);
+            let dome_raw = sphere_faceted(domr, *stacks, *slices);
+            let dome = translate_solid(&dome_raw, Vec3::new(0.0, 0.0, dh));
+            disk.try_union(&dome).map_err(|e| EvalError::Boolean { id: id.into(), op: "ufo_join", message: e.message })
+        }
+        Feature::CrowsNest { pole_radius, pole_height, platform_radius, platform_thickness, slices, .. } => {
+            let pr = resolve_one(id, pole_radius, params)?;
+            let ph = resolve_one(id, pole_height, params)?;
+            let plr = resolve_one(id, platform_radius, params)?;
+            let plt = resolve_one(id, platform_thickness, params)?;
+            if pr <= 0.0 || ph <= 0.0 || plr <= 0.0 || plt <= 0.0 || plr <= pr || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("CrowsNest requires platform_radius>pole_radius, positive dims (got pr={pr}, plr={plr})") });
+            }
+            let pole = cylinder_faceted(pr, ph, *slices);
+            let platform_raw = cylinder_faceted(plr, plt, *slices);
+            let platform = translate_solid(&platform_raw, Vec3::new(0.0, 0.0, ph - 1e-3));
+            pole.try_union(&platform).map_err(|e| EvalError::Boolean { id: id.into(), op: "crows_nest_join", message: e.message })
+        }
+        Feature::Beehive { base_radius, layer_height, layers, slices, .. } => {
+            let r0 = resolve_one(id, base_radius, params)?;
+            let lh = resolve_one(id, layer_height, params)?;
+            if r0 <= 0.0 || lh <= 0.0 || *layers < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Beehive requires layers>=2, positive base_radius and layer_height (got r0={r0}, layers={layers})") });
+            }
+            // Each layer's radius shrinks linearly to 0.4*r0 at the top.
+            let mut acc: Option<Solid> = None;
+            for i in 0..*layers {
+                let frac = i as f64 / (*layers as f64 - 1.0).max(1.0);
+                let r_i = r0 * (1.0 - 0.6 * frac);
+                let z_i = lh * i as f64;
+                let layer = cylinder_along_axis(r_i, lh + 1e-3, *slices, 2, z_i, 0.0, 0.0);
+                acc = Some(match acc {
+                    None => layer,
+                    Some(prev) => prev.try_union(&layer).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "beehive_layer",
+                        message: e.message,
+                    })?,
+                });
+            }
+            Ok(acc.expect("beehive must have >=2 layers"))
+        }
         Feature::Volute { max_radius, revolutions, rod_radius, center_disk_radius, thickness, segments_per_revolution, center_segments, .. } => {
             let r_max = resolve_one(id, max_radius, params)?;
             let revs = resolve_one(id, revolutions, params)?;
