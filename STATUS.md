@@ -56,13 +56,79 @@ kernel + authoring + viewer + production output).
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
 | Manufacturing features (170+ — see catalog, multi-edge Fillets handles 4-corner; chained Fillet handles cross-axis cases via score-based stitch rescue) | 12% | 97% | 11.64 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
-| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases; closed-form Cylinder×Plane intersection lifts to brep-layer EllipseSegment; stitch canonical edge key + face_intersections + face_polygon walker are now arc-aware end-to-end, with arc chords gated behind a feature-flag-style filter awaiting the curve-aware splice/split work) | 8% | 58% | 4.6 |
+| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases; closed-form Cylinder×Plane, Sphere×Plane, and Cylinder×Cylinder analytic intersections lift to brep-layer EllipseSegment / sampled polylines; face_intersections emits Arc-kind chords for both Cylinder×Plane and Sphere×Plane face pairs; stitch canonical edge key + face_polygon walker remain arc-aware end-to-end, with arc chords gated behind a feature-flag-style filter awaiting the curve-aware splice/split work) | 8% | 65% | 5.2 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
 | **Solidworks-tier total**                 | **100%**  |          | **~65.8%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08, curved-stitch arc edges)
+## Latest session (2026-05-08, curved-tier-3-plus — Tier A)
+
+Tier A of the curved-tier-3-plus session shipped on top of curved-stitch
+arc edges (PR #13). Two more closed-form analytic surface×surface
+intersections lifted into the brep layer, plus brep-level wiring for one
+of them. Curved-surface jumps 58 → 65% (+0.6 SW pt), 755 → 764 tests (9
+new), 0 failed, 8 ignored (no new ignored). GAP C/D fillet tests all
+still pass. Tier B (routing arc chords through splice/split) was
+deferred — the existing infrastructure assumes line-chord endpoints with
+distinct vertices, and Cylinder/Sphere×Plane both produce closed conic
+loops where `start == end`. Teaching mef + interior resolution + classify
+to handle that correctly is multi-week.
+
+- **Sphere×Plane analytic intersection** (`sphere_plane_intersection`,
+  `SpherePlaneIntersection { Empty | Tangent(Point3) | Circle(EllipseSegment) }`).
+  Wraps `kerf_geom::intersect::intersect_plane_sphere`; the circle case
+  is lifted to a degenerate full ellipse so it shares one curve type
+  with Cylinder×Plane downstream. Math: distance d from sphere center
+  to plane; |d| > r → Empty, |d| = r → Tangent at center − d·n,
+  |d| < r → Circle of radius √(r² − d²) centered there.
+- **Cylinder×Cylinder analytic intersection** (`cylinder_cylinder_intersection`,
+  `CylinderCylinderIntersection { Empty | Tangent(Line) | TwoLines(Line, Line) | Polyline(Vec<Point3>) }`).
+  Three regimes: parallel-axis (closed-form: empty/disjoint, tangent
+  external/internal, two ruling lines via cross-section circle-circle
+  intersection); non-parallel (perpendicular or skew) axes (sampled
+  polyline of 32 angular steps along cylinder A's surface, with
+  cylinder B-surface roots solved via the analytic poly::solve_quadratic
+  per sample). For two unit cylinders meeting at right angles
+  (Steinmetz solid) this recovers the saddle curves up to sample
+  resolution; every sample lies on both cylinders to better than 1e-6.
+- **face_intersections wiring for Sphere×Plane**. New
+  `intersect_sphere_plane_pair` mirrors PR #13's `intersect_cylinder_plane_pair`:
+  Sphere/Plane face pairs emit `FaceIntersectionKind::Arc(EllipseSegment)`
+  closed-loop chords, gated by the existing pipeline's arc filter
+  exactly the same way Cylinder×Plane is. No regression on planar paths.
+- **Why Cylinder×Cylinder isn't yet wired into face_intersections**:
+  the polyline result doesn't fit the closed-loop EllipseSegment
+  abstraction the rest of the brep layer uses. Adding it would either
+  need a new `Polyline(Vec<Point3>)` variant of `FaceIntersectionKind`
+  (filtered out the same way Arc is today) or proper polyline-segment
+  half-edges through stitch — that crosses into Tier-B territory and
+  was deferred to keep the session green.
+- **Tests added (6+)**:
+  `sphere_plane_intersection_perp_origin`,
+  `sphere_plane_intersection_offset_below_returns_empty`,
+  `sphere_plane_intersection_intersects_returns_circle`,
+  `cylinder_cylinder_parallel_offset_returns_empty`,
+  `cylinder_cylinder_parallel_overlap_returns_two_lines`,
+  `cylinder_cylinder_parallel_external_tangent_returns_one_line`,
+  `cylinder_cylinder_perpendicular_returns_4th_degree_polyline`,
+  `cylinder_cylinder_skew_axes_returns_polyline_or_empty`,
+  `face_intersection_returns_arc_for_sphere_plane`. Each verifies both
+  the regime classification and that sample points lie on both surfaces.
+- **What Tier B would have shipped (and why it didn't)**: removing the
+  `is_linear()` filter in pipeline.rs and routing closed-conic chords
+  through a `splice_arc_chord` helper. The blocker is that today's
+  splice/split assumes distinct start/end vertices to feed `mef`; a
+  closed conic has `start == end`, which mef rejects. A correct fix
+  needs: (a) injecting a synthetic "split point" on the arc parameter,
+  (b) `mef_arc` that accepts a `CurveSegment::Ellipse` and the
+  parametric range it covers, (c) `resolve_interior_endpoints`
+  extended to walk the cylinder/sphere u-v domain along the conic
+  parameter, and (d) `classify_chord_interiorness` taught that
+  arc chords aren't single line crossings of a face. That's a
+  multi-week project, well outside the session budget.
+
+## Earlier session (2026-05-08, curved-stitch arc edges)
 
 Tier 1 + Tier 2 of curved-surface stitch wiring shipped on top of GAP D.
 The brep stitcher and face-intersection layer are now arc-aware — the
