@@ -7,8 +7,10 @@ import init, {
   evaluate_with_face_ids,
   parameters_of,
   target_ids_of,
+  render_drawing_svg,
 } from "./wasm/kerf_cad_wasm.js";
 import { exportThreeViewPng } from "./drawings.js";
+import { DimensionsPanel } from "./dimensions.js";
 
 await init();
 
@@ -29,6 +31,7 @@ const actions2El = document.getElementById("actions2")!;
 const featureTreeEl = document.getElementById("feature-tree")!;
 const featureListEl = document.getElementById("feature-list")!;
 const featureCountEl = document.getElementById("feature-count")!;
+const dimensionsPanelEl = document.getElementById("dimensions-panel") as HTMLElement;
 
 // --- three.js scene ---
 const scene = new THREE.Scene();
@@ -196,7 +199,31 @@ function pickFaceAt(clientX: number, clientY: number): number {
   return tri < currentFaceIds.length ? currentFaceIds[tri]! : -1;
 }
 
+/**
+ * Cast a ray and return the WORLD-space hit point, or null if the click
+ * missed the mesh. Used by the dimensions panel for point picking.
+ */
+function pickWorldPointAt(clientX: number, clientY: number): THREE.Vector3 | null {
+  if (!currentMesh) return null;
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  const hits = raycaster.intersectObject(currentMesh, false);
+  if (hits.length === 0) return null;
+  return hits[0]!.point.clone();
+}
+
 renderer.domElement.addEventListener("click", (e) => {
+  // If the dimensions panel is in pick-mode, route the click there (and
+  // skip the normal face-selection effect so highlighting doesn't clobber
+  // the pick markers).
+  if (dimensionsPanel?.isPicking()) {
+    const p = pickWorldPointAt(e.clientX, e.clientY);
+    if (p) dimensionsPanel.onScenePick(p);
+    else ok("missed — click on the model");
+    return;
+  }
   const fid = pickFaceAt(e.clientX, e.clientY);
   highlightedFace = fid;
   refreshFaceColors();
@@ -232,6 +259,25 @@ type ModelState = {
 let model: ModelState | null = null;
 
 const SEGMENTS = 24;
+
+// --- dimensions panel ---
+const dimensionsPanel = new DimensionsPanel(dimensionsPanelEl, {
+  getModel: () =>
+    model
+      ? { json: model.json, targetId: model.targetId, parameters: model.parameters }
+      : null,
+  renderSvg: (args) =>
+    render_drawing_svg(
+      args.json,
+      args.targetId,
+      args.paramsJson,
+      args.view,
+      args.dimensionsJson,
+      args.viewportJson,
+    ),
+  scene,
+  setStatus: (msg, isError) => (isError ? err(msg) : ok(msg)),
+});
 
 function ok(msg: string) {
   status.classList.remove("error");
@@ -432,6 +478,7 @@ function loadJson(json: string) {
     actionsEl.hidden = false;
     actions2El.hidden = false;
     viewsEl.hidden = false;
+    dimensionsPanelEl.hidden = false;
     rebuild(true);
   } catch (e) {
     err(String(e));
