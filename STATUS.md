@@ -54,34 +54,52 @@ kernel + authoring + viewer + production output).
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
-| Manufacturing features (170+ — see catalog, multi-edge Fillets now handles 4-corner) | 12% | 96% | 11.52 |
+| Manufacturing features (170+ — see catalog, multi-edge Fillets handles 4-corner; chained Fillet handles cross-axis cases via score-based stitch rescue) | 12% | 97% | 11.64 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.1%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~65.2%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
 ## Latest session (2026-05-08)
 
-GAP C (multi-edge fillet stitch repair) shipped. The 4-corner z-edge
-Fillets ignored test (`fillets_all_four_z_corners_succeeds`) now
-passes; sequential subtract chain on a box body produces a valid
-filleted solid. ~65.0% → ~65.1% (+0.1 SW pt: small Manufacturing
-sub-bump). 727 tests → 731 (one previously-ignored, plus three new
-prune unit tests).
+GAP D (chained Fillet stitch repair) shipped on top of GAP C. Chaining
+multiple `Fillet` features in sequence now succeeds for both axis-aligned
+chains (z-z-z-z, the same family handled by the plural `Fillets` feature)
+and cross-axis chains (z-then-x sharing a corner, where the second
+fillet's wedge cutter meets the first fillet's cylindrical face). The
+two new chained-Fillet failure modes that pre-GAP-D panicked at the
+stitch step now pass. ~65.1% → ~65.2% (+0.1 SW pt: Manufacturing 96 → 97).
+731 tests → 736 (4 new chained_fillet tests + 1 un-ignored).
 
-- **Stitch rescue + prune**: `stitch_with_rescue(kept, dropped, tol)`
-  added a two-stage repair before the manifold check. Stage 1d (excursion
-  vertex prune) removes detour vertices that intersection-edge
-  propagation thread into a kept polygon — vertices unique to one
-  polygon whose adjacent edges have no twin elsewhere. Stage 1e
-  (dropped-pile rescue) promotes a dropped face whose polygon contains
-  the reverse of a 1-half-edge orphan, with a relaxed coplanarity
-  gate (coplanar partners preferred, non-coplanar accepted on second
-  pass for cylinder-facet seam edges). pipeline.rs's `boolean_solid`
-  passes the dropped pool through. **Manufacturing category bumps 95%
-  → 96%.**
+- **Score-based stitch rescue (GAP D)**: replaced the GAP C greedy
+  first-match dropped-pile rescue with a single best-candidate-per-
+  iteration selection. For each available dropped face we compute
+  `closed - created` where `closed` counts directed edges that match a
+  current 1-half-edge orphan and `created` counts edges that would
+  introduce a same-direction conflict (2× weight) or a permanent
+  orphan with no future partner in the pool (1× weight). Promote the
+  highest-scoring candidate when the score is positive, stop when no
+  candidate scores. Coplanarity preference (small tiebreak boost)
+  preserved from GAP C. The chained Fillet z-then-x failure was
+  caused by greedy promotion exhausting the dropped pool with
+  same-direction duplicates instead of true reverse-direction
+  partners — the score gate rejects those candidates outright.
+  **Manufacturing category bumps 96% → 97%.**
+
+- **Earlier in session: Stitch rescue + prune (GAP C)**:
+  `stitch_with_rescue(kept, dropped, tol)` added a two-stage repair
+  before the manifold check. Stage 1d (excursion vertex prune) removes
+  detour vertices that intersection-edge propagation thread into a
+  kept polygon — vertices unique to one polygon whose adjacent edges
+  have no twin elsewhere. Stage 1e (dropped-pile rescue) promotes a
+  dropped face whose polygon contains the reverse of a 1-half-edge
+  orphan, with a relaxed coplanarity gate (coplanar partners
+  preferred, non-coplanar accepted on second pass for cylinder-facet
+  seam edges). pipeline.rs's `boolean_solid` passes the dropped pool
+  through. The 4-corner z-edge Fillets ignored test
+  (`fillets_all_four_z_corners_succeeds`) un-ignored at this stage.
 
 ## Earlier session (2026-05-06)
 
@@ -172,7 +190,7 @@ real kernel additions:
 - **Decorative composites**: Arrow, Funnel, TruncatedPyramid.
 - **Transforms**: ScaleXYZ.
 
-731 tests pass, 8 ignored. 220+ Features in catalog.
+736 tests pass, 8 ignored. 220+ Features in catalog.
 
 The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
 are real manufacturing features even if multi-edge fillet is still
@@ -194,7 +212,8 @@ multi-week engineering projects in their own right:
   bidirectional constraint solver is its own discipline.
 - **Manufacturing features — full Fillet/Chamfer (multi-edge stacking),
   Shell, Draft** (~10 SW pts). Single-edge axis-aligned Fillet/Chamfer
-  ship today; stacking multiple Fillets on the same body trips the
+  and chained Fillet (axis-aligned + cross-axis) both ship today;
+  stacking multiple Fillets on the same body trips the
   boolean engine where the second fillet's wedge cutter meets the first
   fillet's curved face. Shell + Draft both need true offset-surface math
   the kernel doesn't have. Each is multi-week work.
@@ -251,13 +270,18 @@ proprietary product): years.
 **Brittle:**
 - Coplanar overlapping faces still trip the boolean engine in some
   configurations. Not all multi-cylinder unions work.
-- Stacking multiple chained `Fillet`s on the same body still fails
-  at the second fillet whose wedge cutter meets the first fillet's
-  rounded face — but the **plural `Fillets`** feature now handles
-  4-corner z-edge configurations via stitch rescue (dropped-pile
-  partner promotion + excursion-vertex prune). Designs that want
-  multiple fillets should use `Fillets` rather than chained
-  `Fillet`s where possible.
+- Stacking multiple chained `Fillet`s now works for both axis-aligned
+  chains (z-z-z-z) and cross-axis chains (z-then-x sharing a corner)
+  via the GAP D score-based stitch rescue. The plural `Fillets`
+  feature handles the same configurations and remains the more
+  expressive option for "round all four z-corners at once". Untested
+  edge cases that *might* still be brittle: chains of 5+ fillets,
+  fillets whose curved faces have very different segment counts, and
+  fillets that share BOTH endpoints (a corner where three filleted
+  edges meet — the body becomes a curvilinear tetrahedron at that
+  vertex). The score-based rescue is more conservative than greedy
+  GAP C in failure modes, so it won't make things worse, but it may
+  decline to repair these untested configurations.
 - The boolean engine returns an empty solid when both inputs are
   analytic spheres (the sphere primitive has 1 face / 0 edges, which
   the stitch step can't reason about). That's why `HollowSphere` was

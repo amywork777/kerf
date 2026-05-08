@@ -717,71 +717,193 @@ fn rescue_one_half_edge_orphans(
         if singles.is_empty() {
             return kept;
         }
-        // Find a dropped face whose polygon walks the reverse of any single
-        // edge AND whose surface is coplanar with at least one currently-kept
-        // face that touches that edge (avoids promoting unrelated geometry
-        // that happens to share two vertex positions).
-        let mut promoted = false;
-        for ((u, v), present_forward) in singles {
-            // Reverse directed edge in 3D.
-            let p_u = positions[u];
-            let p_v = positions[v];
-            let (ra, rb) = if present_forward { (p_v, p_u) } else { (p_u, p_v) };
-            // Identify a kept face that owns this edge so we know the
-            // coplanarity reference.
-            let mut ref_surface: Option<SurfaceKind> = None;
-            'outer: for (fi, vidx) in face_vidx.iter().enumerate() {
-                let n = vidx.len();
-                for i in 0..n {
-                    let a = vidx[i];
-                    let b = vidx[(i + 1) % n];
-                    if (a, b) == (u, v) || (a, b) == (v, u) {
-                        ref_surface = Some(kept[fi].surface.clone());
-                        break 'outer;
+        // GAP D (chained Fillet): score-based promotion. The greedy first-match
+        // strategy used by the original GAP C rescue works for axis-aligned
+        // chains where the first reverse-direction partner found is
+        // typically the right one — but on chained-Fillet across different
+        // axes (z-then-x), the first match tends to be a "duplicate" face
+        // walking the SAME direction as the existing kept half-edge or
+        // sharing a corner with several other faces; promoting it explodes
+        // the orphan count instead of reducing it.
+        //
+        // Score each available dropped candidate by:
+        //   closed  = # of its directed edges that are in `singles_set`
+        //             (i.e. close an existing 1-half-edge orphan)
+        //   created = # of its directed edges that match a kept directed
+        //             edge in the SAME direction (creates a 2-forward
+        //             same-direction conflict pick_twin_pair can't resolve),
+        //             counted with a 2× penalty.
+        //           + # of its directed edges with no reverse twin available
+        //             anywhere (creates a permanent orphan).
+        //
+        // Promote the candidate with highest score that closes ≥1 orphan AND
+        // has score > 0. Coplanarity gives a small tiebreak boost (preserves
+        // chord_merge-style preference for coplanar partners).
+        //
+        // The four chained-Fillet z-edge tests (covered by GAP C) keep
+        // passing because their candidates score positively (closes 1,
+        // creates 0 → score 1, with coplanar boost → 2). The chained
+        // Fillet-z-then-x case finds a candidate that scores positive
+        // instead of running into an over-promoted dead-end.
+
+        let mut singles_set: std::collections::HashSet<(usize, usize)> =
+            std::collections::HashSet::new();
+        for &((u, v), present_forward) in &singles {
+            let needed = if present_forward { (v, u) } else { (u, v) };
+            singles_set.insert(needed);
+        }
+
+        let mut existing_dir: HashMap<(usize, usize), usize> = HashMap::new();
+        for vidx in &face_vidx {
+            let n = vidx.len();
+            for i in 0..n {
+                let a = vidx[i];
+                let b = vidx[(i + 1) % n];
+                if a == b {
+                    continue;
+                }
+                *existing_dir.entry((a, b)).or_insert(0) += 1;
+            }
+        }
+
+        // Pre-resolve each dropped candidate's vertex indices in the current
+        // global positions table.
+        let mut dropped_vidx: Vec<Option<Vec<usize>>> = vec![None; dropped.len()];
+        for di in 0..dropped.len() {
+            if !available[di] {
+                continue;
+            }
+            let mut idxs = Vec::with_capacity(dropped[di].polygon.len());
+            let mut ok = true;
+            for p in &dropped[di].polygon {
+                let mut found = None;
+                for (idx, q) in positions.iter().enumerate() {
+                    if (*p - *q).norm() <= pt_tol {
+                        found = Some(idx);
+                        break;
+                    }
+                }
+                match found {
+                    Some(i) => idxs.push(i),
+                    None => {
+                        ok = false;
+                        break;
                     }
                 }
             }
-            let Some(ref_surface) = ref_surface else {
-                continue;
-            };
-            // First pass: prefer a coplanar partner (chord_merge style).
-            for di in 0..dropped.len() {
-                if !available[di] {
-                    continue;
-                }
-                if !surfaces_coplanar(&dropped[di].surface, &ref_surface, tol) {
-                    continue;
-                }
-                if polygon_has_directed_edge(&dropped[di].polygon, ra, rb, pt_tol) {
-                    kept.push(dropped[di].clone());
-                    available[di] = false;
-                    promoted = true;
-                    break;
-                }
-            }
-            if promoted {
-                break;
-            }
-            // Second pass: directed-edge match WITHOUT coplanarity. This
-            // covers cylinder-facet seam edges where the partner is the
-            // adjacent (non-coplanar) lateral facet that got
-            // misclassified. Specificity is preserved because a directed
-            // edge only matches when both endpoints AND order line up.
-            for di in 0..dropped.len() {
-                if !available[di] {
-                    continue;
-                }
-                if polygon_has_directed_edge(&dropped[di].polygon, ra, rb, pt_tol) {
-                    kept.push(dropped[di].clone());
-                    available[di] = false;
-                    promoted = true;
-                    break;
-                }
-            }
-            if promoted {
-                break;
+            if ok {
+                dropped_vidx[di] = Some(idxs);
             }
         }
+
+        // Build dropped-pool reverse-direction presence so we can decide
+        // whether a candidate's "introduced" forward edge has a future
+        // pair available.
+        let mut dropped_pool_dir: HashMap<(usize, usize), usize> = HashMap::new();
+        for (di, vidx) in dropped_vidx.iter().enumerate() {
+            if !available[di] {
+                continue;
+            }
+            let Some(vidx) = vidx else {
+                continue;
+            };
+            let n = vidx.len();
+            for i in 0..n {
+                let a = vidx[i];
+                let b = vidx[(i + 1) % n];
+                if a == b {
+                    continue;
+                }
+                *dropped_pool_dir.entry((a, b)).or_insert(0) += 1;
+            }
+        }
+
+        let mut best: Option<(i64, usize)> = None; // (score, di)
+        for di in 0..dropped.len() {
+            if !available[di] {
+                continue;
+            }
+            let Some(vidx) = &dropped_vidx[di] else {
+                continue;
+            };
+            let n = vidx.len();
+            let mut closed = 0i64;
+            let mut created = 0i64;
+            for i in 0..n {
+                let a = vidx[i];
+                let b = vidx[(i + 1) % n];
+                if a == b {
+                    continue;
+                }
+                if singles_set.contains(&(a, b)) {
+                    closed += 1;
+                    continue;
+                }
+                // SAME-direction conflict with an existing kept edge.
+                if existing_dir.get(&(a, b)).copied().unwrap_or(0) >= 1 {
+                    created += 2;
+                    continue;
+                }
+                // Reverse already paired (kept has 2+ in the opposite
+                // direction means our forward over-pairs).
+                if existing_dir.get(&(b, a)).copied().unwrap_or(0) >= 2 {
+                    created += 2;
+                    continue;
+                }
+                // Brand-new edge for kept. Check if pool can provide a
+                // future reverse partner; otherwise it'll be a permanent
+                // orphan.
+                let reverse_in_pool = dropped_pool_dir.get(&(b, a)).copied().unwrap_or(0);
+                if reverse_in_pool == 0 {
+                    created += 1;
+                }
+            }
+            if closed == 0 {
+                continue;
+            }
+            let mut score = closed - created;
+            if score <= 0 {
+                continue;
+            }
+            // Coplanarity tiebreak: small boost when the candidate's plane
+            // matches a kept face that owns one of the closed orphans.
+            'tie: for i in 0..n {
+                let a = vidx[i];
+                let b = vidx[(i + 1) % n];
+                if !singles_set.contains(&(a, b)) {
+                    continue;
+                }
+                for (fi, kvidx) in face_vidx.iter().enumerate() {
+                    let kn = kvidx.len();
+                    for j in 0..kn {
+                        let p = kvidx[j];
+                        let q = kvidx[(j + 1) % kn];
+                        if (p, q) == (b, a)
+                            && surfaces_coplanar(
+                                &dropped[di].surface,
+                                &kept[fi].surface,
+                                tol,
+                            )
+                        {
+                            score += 1;
+                            break 'tie;
+                        }
+                    }
+                }
+            }
+            if best.map(|(s, _)| score > s).unwrap_or(true) {
+                best = Some((score, di));
+            }
+        }
+
+        let promoted = if let Some((_, di)) = best {
+            kept.push(dropped[di].clone());
+            available[di] = false;
+            true
+        } else {
+            false
+        };
+
         if !promoted {
             return kept;
         }
@@ -806,17 +928,6 @@ fn surfaces_coplanar(s1: &SurfaceKind, s2: &SurfaceKind, tol: &Tolerance) -> boo
         }
         _ => false,
     }
-}
-
-/// Does `poly` contain the directed edge (a → b) within point-tolerance?
-fn polygon_has_directed_edge(poly: &[Point3], a: Point3, b: Point3, pt_tol: f64) -> bool {
-    let n = poly.len();
-    for i in 0..n {
-        if (poly[i] - a).norm() <= pt_tol && (poly[(i + 1) % n] - b).norm() <= pt_tol {
-            return true;
-        }
-    }
-    false
 }
 
 #[cfg(test)]
