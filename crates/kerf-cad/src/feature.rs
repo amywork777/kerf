@@ -2652,6 +2652,165 @@ pub enum Feature {
         total_angle_deg: Scalar,
     },
 
+    // -------------------------------------------------------------------
+    // Reference geometry batch 3 (5 features) — ship 2026-05-08.
+    // -------------------------------------------------------------------
+
+    /// Midplane reference: a thin RefPlane-style box marker placed
+    /// halfway between two world-space points along a chosen axis. The
+    /// midplane's normal is `axis` ("x"|"y"|"z"); its position sits at
+    /// the midpoint of `position_a` and `position_b`. `extents` is the
+    /// (width, height) of the rectangular marker (in the perpendicular
+    /// axes); `marker_thickness` is the thickness along the normal.
+    MidPlaneRef {
+        id: String,
+        position_a: [Scalar; 3],
+        position_b: [Scalar; 3],
+        axis: String,
+        extents: [Scalar; 2],
+        marker_thickness: Scalar,
+    },
+
+    /// Reference plane perpendicular to a named axis ("x"|"y"|"z"),
+    /// passing through `point`. Same visual as RefPlane (a thin
+    /// rectangular slab) — the axis IS the plane normal. `extents` and
+    /// `marker_thickness` work identically to RefPlane.
+    PerpRefPlane {
+        id: String,
+        axis: String,
+        point: [Scalar; 3],
+        extents: [Scalar; 2],
+        marker_thickness: Scalar,
+    },
+
+    /// Reference plane parallel to a base plane, offset by `offset`
+    /// along its normal (`axis`). `base_position` defines the base
+    /// plane's center. The result is a RefPlane-like marker centered at
+    /// `base_position + offset * axis_unit`.
+    OffsetRefPlane {
+        id: String,
+        base_position: [Scalar; 3],
+        axis: String,
+        offset: Scalar,
+        extents: [Scalar; 2],
+        marker_thickness: Scalar,
+    },
+
+    /// Coordinate-axis triad at the origin. Three thin cylinders along
+    /// the x, y, z axes, each spanning [-length, +length] (centered on
+    /// origin). Visual scaffolding for orienting a model. Built using
+    /// the same robust 3-bar union as Marker3D: bars have slightly
+    /// different lengths and offsets along their own axis so their
+    /// caps never sit coplanar with another bar's lateral surface.
+    /// `head_length` is unused and kept for backward compatibility.
+    CoordinateAxes {
+        id: String,
+        length: Scalar,
+        bar_radius: Scalar,
+        head_length: Scalar,
+        segments: usize,
+    },
+
+    /// Origin point marker: a tiny faceted sphere at world origin (0,0,0).
+    /// Specialization of RefPoint with implicit position = origin —
+    /// useful for declaring "this part is meant to be aligned to the
+    /// world origin" without spelling out the position.
+    OriginPoint {
+        id: String,
+        marker_radius: Scalar,
+    },
+
+    // -------------------------------------------------------------------
+    // Manufacturing batch 4 (5 features) — ship 2026-05-08.
+    // -------------------------------------------------------------------
+
+    /// CenterDrill: a starter feature for drilling — a small cone (the
+    /// "spot" portion) topped by an inverted frustum (the chamfer that
+    /// guides the drill bit). Built as a standalone primitive (no
+    /// `input`) — acts as the cutter shape that would be subtracted
+    /// from a body. The chamfer frustum sits at z ∈ [0, chamfer_depth]
+    /// (radius `chamfer_radius` at top, `drill_radius` at bottom). The
+    /// drill cone tapers from `drill_radius` at z=0 down to a point at
+    /// z=-drill_depth.
+    CenterDrill {
+        id: String,
+        drill_radius: Scalar,
+        drill_depth: Scalar,
+        chamfer_radius: Scalar,
+        chamfer_depth: Scalar,
+        segments: usize,
+    },
+
+    /// OilHole: a body with a thin oil-passage hole drilled at an
+    /// angle. Body is a cylinder along +z (radius `body_radius`,
+    /// height `body_height`). The oil hole is a thin cylinder of
+    /// `hole_radius` whose axis runs from `entry` to `exit` (both in
+    /// world space). Built standalone (geometry shows the body
+    /// MINUS the angled cylinder).
+    OilHole {
+        id: String,
+        body_radius: Scalar,
+        body_height: Scalar,
+        hole_radius: Scalar,
+        entry: [Scalar; 3],
+        exit: [Scalar; 3],
+        body_segments: usize,
+        hole_segments: usize,
+    },
+
+    /// ReliefCut: a stepped cylindrical shaft with a relief groove cut
+    /// at the base of the shoulder. Geometry: a "small" cylinder
+    /// (`small_radius`, height `small_height`) sitting on top of a
+    /// "large" cylinder (`large_radius`, height `large_height`); a
+    /// thin annular relief groove of depth `relief_depth` and width
+    /// `relief_width` is cut into the large cylinder right at the
+    /// shoulder (at z = large_height, radially undercutting the
+    /// transition). Standalone — used as a manufacturing shape ref.
+    ReliefCut {
+        id: String,
+        small_radius: Scalar,
+        small_height: Scalar,
+        large_radius: Scalar,
+        large_height: Scalar,
+        relief_width: Scalar,
+        relief_depth: Scalar,
+        segments: usize,
+    },
+
+    /// WrenchFlats: a cylindrical shaft with two flat machined faces on
+    /// opposite sides (a "double-D" / hex/square wrench fitting). The
+    /// shaft is +z aligned (radius `shaft_radius`, length
+    /// `shaft_length`). Two flats are subtracted at z ∈
+    /// [flats_z_start, flats_z_start + flats_length] — each flat is
+    /// machined to leave `flat_distance` between the two opposite
+    /// flat faces (i.e. flat_distance < 2*shaft_radius). Standalone
+    /// primitive (no `input`).
+    WrenchFlats {
+        id: String,
+        shaft_radius: Scalar,
+        shaft_length: Scalar,
+        flats_z_start: Scalar,
+        flats_length: Scalar,
+        flat_distance: Scalar,
+        segments: usize,
+    },
+
+    /// Knurl: a knurled cylindrical grip — visual approximation of a
+    /// knurl pattern by carving many shallow axial grooves into a
+    /// cylinder. Cylinder is +z aligned (radius `radius`, height
+    /// `height`); `groove_count` axial grooves of `groove_depth` and
+    /// `groove_width` are cut at evenly-spaced angles around the
+    /// circumference. Built directly via an extruded star-style
+    /// profile (alternating outer-radius arcs and notch-radius
+    /// notches), so no booleans are required and the result is robust.
+    Knurl {
+        id: String,
+        radius: Scalar,
+        height: Scalar,
+        groove_depth: Scalar,
+        groove_count: usize,
+    },
+
     Union {
         id: String,
         inputs: Vec<String>,
@@ -2890,6 +3049,16 @@ impl Feature {
             | Feature::BoltCircle { id, .. }
             | Feature::HexHole { id, .. }
             | Feature::SquareHole { id, .. }
+            | Feature::MidPlaneRef { id, .. }
+            | Feature::PerpRefPlane { id, .. }
+            | Feature::OffsetRefPlane { id, .. }
+            | Feature::CoordinateAxes { id, .. }
+            | Feature::OriginPoint { id, .. }
+            | Feature::CenterDrill { id, .. }
+            | Feature::OilHole { id, .. }
+            | Feature::ReliefCut { id, .. }
+            | Feature::WrenchFlats { id, .. }
+            | Feature::Knurl { id, .. }
             | Feature::Translate { id, .. }
             | Feature::Scale { id, .. }
             | Feature::ScaleXYZ { id, .. }
@@ -3114,7 +3283,17 @@ impl Feature {
             | Feature::Nut { .. }
             | Feature::Washer { .. }
             | Feature::RoundBoss { .. }
-            | Feature::RectBoss { .. } => Vec::new(),
+            | Feature::RectBoss { .. }
+            | Feature::MidPlaneRef { .. }
+            | Feature::PerpRefPlane { .. }
+            | Feature::OffsetRefPlane { .. }
+            | Feature::CoordinateAxes { .. }
+            | Feature::OriginPoint { .. }
+            | Feature::CenterDrill { .. }
+            | Feature::OilHole { .. }
+            | Feature::ReliefCut { .. }
+            | Feature::WrenchFlats { .. }
+            | Feature::Knurl { .. } => Vec::new(),
             Feature::HoleArray { input, .. }
             | Feature::BoltCircle { input, .. }
             | Feature::HexHole { input, .. }
