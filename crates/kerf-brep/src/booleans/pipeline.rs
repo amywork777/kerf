@@ -149,7 +149,7 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
             .get(face_id)
             .or_else(|| a.face_owner_tag.get(ancestor))
             .cloned();
-        let face = KeptFace { polygon, surface, owner };
+        let face = KeptFace::new_line(polygon, surface, owner);
         if keep_a_face(cls, op) {
             kept.push(face);
             kept_source.push(0);
@@ -186,7 +186,7 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
             .get(face_id)
             .or_else(|| b.face_owner_tag.get(ancestor))
             .cloned();
-        let face = KeptFace { polygon, surface, owner };
+        let face = KeptFace::new_line(polygon, surface, owner);
         if face_kept {
             kept.push(face);
             kept_source.push(1);
