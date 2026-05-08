@@ -9,7 +9,8 @@ use kerf_topo::FaceId;
 
 use crate::Solid;
 use crate::booleans::analytic_curves::{
-    CylinderPlaneIntersection, cylinder_plane_intersection,
+    CylinderPlaneIntersection, SpherePlaneIntersection, cylinder_plane_intersection,
+    sphere_plane_intersection,
 };
 use crate::booleans::{
     BooleanOp, ClipResult, FaceClassification, classify_face, clip_line_to_convex_polygon,
@@ -98,6 +99,20 @@ pub fn face_intersections(a: &Solid, b: &Solid, tol: &Tolerance) -> Vec<FaceInte
                         results.push(seg);
                     }
                 }
+                (SurfaceKind::Sphere(sp), SurfaceKind::Plane(pl)) => {
+                    if let Some(seg) =
+                        intersect_sphere_plane_pair(fa_id, sp, fb_id, pl, false, tol)
+                    {
+                        results.push(seg);
+                    }
+                }
+                (SurfaceKind::Plane(pl), SurfaceKind::Sphere(sp)) => {
+                    if let Some(seg) =
+                        intersect_sphere_plane_pair(fa_id, sp, fb_id, pl, true, tol)
+                    {
+                        results.push(seg);
+                    }
+                }
                 _ => {
                     // Other curved-surface combinations (Cylinder×Cylinder,
                     // Sphere×Plane, Torus×anything) aren't yet typed at the
@@ -143,6 +158,40 @@ fn intersect_cylinder_plane_pair(
                 (face_plane, face_cyl)
             } else {
                 (face_cyl, face_plane)
+            };
+            Some(FaceIntersection {
+                face_a,
+                face_b,
+                start: p,
+                end: p,
+                kind: FaceIntersectionKind::Arc(seg),
+            })
+        }
+    }
+}
+
+fn intersect_sphere_plane_pair(
+    face_sphere: FaceId,
+    sphere: &kerf_geom::Sphere,
+    face_plane: FaceId,
+    plane: &Plane,
+    sphere_is_b: bool,
+    tol: &Tolerance,
+) -> Option<FaceIntersection> {
+    // Closed-form Sphere×Plane: emits Arc(EllipseSegment::full) for the
+    // circle case. Tangent-point and Empty regimes return None for the
+    // same reasons as Cylinder×Plane: there's no sane brep-layer chord
+    // to feed downstream stitch when the intersection is a single point
+    // (and the sphere-face's u-v rectangular domain isn't yet available
+    // for clipping).
+    match sphere_plane_intersection(sphere, plane, tol) {
+        SpherePlaneIntersection::Empty | SpherePlaneIntersection::Tangent(_) => None,
+        SpherePlaneIntersection::Circle(seg) => {
+            let p = seg.start_point();
+            let (face_a, face_b) = if sphere_is_b {
+                (face_plane, face_sphere)
+            } else {
+                (face_sphere, face_plane)
             };
             Some(FaceIntersection {
                 face_a,
@@ -312,7 +361,7 @@ mod tests {
     use super::*;
     use kerf_geom::{Point3, Vec3};
 
-    use crate::primitives::{box_, box_at, cylinder};
+    use crate::primitives::{box_, box_at, cylinder, sphere};
 
     #[test]
     fn disjoint_boxes_have_no_face_intersections() {
@@ -409,6 +458,50 @@ mod tests {
             let _ = bx; // silence unused
         }
         let _ = bx; // silence unused-variable lint
+    }
+
+    /// Tier A (curved-tier-3-plus): Sphere×Plane face pairs must emit
+    /// `Arc(EllipseSegment)`-kind chords — same routing pattern as
+    /// Cylinder×Plane. The intersection of a unit sphere with a plane at
+    /// z=0.5 is a circle of radius √0.75; we verify a face pair produces
+    /// at least one Arc chord with that radius.
+    #[test]
+    fn face_intersection_returns_arc_for_sphere_plane() {
+        let sp = sphere(1.0);
+        // Box [−2,2]×[−2,2]×[−1,0.5]: top face at z=0.5 cuts the unit sphere.
+        let plate = box_at(
+            Vec3::new(4.0, 4.0, 1.5),
+            Point3::new(-2.0, -2.0, -1.0), // top face at z = 0.5
+        );
+
+        let result = face_intersections(&sp, &plate, &Tolerance::default());
+        let arc_count = result.iter().filter(|i| !i.is_linear()).count();
+        assert!(
+            arc_count > 0,
+            "expected at least one Arc-kind chord from Sphere×Plane, got {} total",
+            result.len()
+        );
+        // The arc closer to the slicing plane (z=0.5) should be the
+        // expected √0.75-radius circle. Other arcs (from the box's
+        // remaining 5 planes) may also fire — that's fine.
+        let mut found_expected = false;
+        for inter in &result {
+            if let FaceIntersectionKind::Arc(seg) = &inter.kind {
+                assert!(
+                    seg.is_full(),
+                    "Sphere×Plane arc must be a full closed loop"
+                );
+                if (seg.ellipse.semi_major - 0.75_f64.sqrt()).abs() < 1e-6 {
+                    found_expected = true;
+                    // Center on z=0.5 plane.
+                    assert!((seg.ellipse.frame.origin.z - 0.5).abs() < 1e-6);
+                }
+            }
+        }
+        assert!(
+            found_expected,
+            "expected an arc with radius √0.75 from the z=0.5 cut"
+        );
     }
 
     /// Tier 2 sanity: pure planar booleans must not regress under the new
