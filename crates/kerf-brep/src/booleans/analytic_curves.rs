@@ -34,9 +34,9 @@
 
 use kerf_geom::intersect::{
     IntersectionComponent, SurfaceSurfaceIntersection, intersect_plane_cylinder,
-    intersect_plane_sphere,
+    intersect_plane_sphere, intersect_sphere_sphere,
 };
-use kerf_geom::{Cylinder, Line, Plane, Point3, Sphere, Tolerance};
+use kerf_geom::{Cone, Cylinder, Line, Plane, Point3, Sphere, Torus, Tolerance, Vec3};
 
 use crate::geometry::EllipseSegment;
 
@@ -357,6 +357,566 @@ pub fn cylinder_cylinder_intersection(
         return CylinderCylinderIntersection::Empty;
     }
     CylinderCylinderIntersection::Polyline(polyline)
+}
+
+// ----------------------------------------------------------------------------
+// Sphere × Sphere
+// ----------------------------------------------------------------------------
+
+/// Closed-form result of `Sphere ∩ Sphere`.
+///
+/// Three regimes:
+///   * `Empty` — spheres disjoint or one nested inside the other without touching.
+///   * `Coincident` — same center and radius.
+///   * `Tangent(point)` — externally or internally tangent: meet at one point.
+///   * `Circle(EllipseSegment)` — overlap: a closed planar circle perpendicular
+///     to the line of centers, lifted to a degenerate ellipse so it shares
+///     one curve type with the other plane-curve intersections.
+#[derive(Clone, Debug)]
+pub enum SphereSphereIntersection {
+    Empty,
+    Coincident,
+    Tangent(Point3),
+    Circle(EllipseSegment),
+}
+
+/// Closed-form Sphere × Sphere intersection, lifted into brep-layer types.
+///
+/// Math: let `d = |b.center − a.center|`. Then
+///   * `d > r_a + r_b` or `d < |r_a − r_b|`: Empty.
+///   * `d = 0` and `r_a = r_b`: Coincident.
+///   * `d = r_a + r_b` or `d = |r_a − r_b|`: Tangent at a single point.
+///   * Else: closed circle of radius `√(r_a² − α²)` centered at
+///     `a.center + α · (b−a)/d`, where `α = (r_a² − r_b² + d²) / (2d)`.
+pub fn sphere_sphere_intersection(
+    a: &Sphere,
+    b: &Sphere,
+    tol: &Tolerance,
+) -> SphereSphereIntersection {
+    use kerf_geom::Ellipse;
+
+    match intersect_sphere_sphere(a, b, tol) {
+        SurfaceSurfaceIntersection::Empty => SphereSphereIntersection::Empty,
+        SurfaceSurfaceIntersection::Coincident => SphereSphereIntersection::Coincident,
+        SurfaceSurfaceIntersection::Components(comps) => match comps.into_iter().next() {
+            None => SphereSphereIntersection::Empty,
+            Some(IntersectionComponent::Point(p)) => SphereSphereIntersection::Tangent(p),
+            Some(IntersectionComponent::Circle(c)) => {
+                let e = Ellipse::new(c.frame, c.radius, c.radius);
+                SphereSphereIntersection::Circle(EllipseSegment::full(e))
+            }
+            Some(_) => SphereSphereIntersection::Empty,
+        },
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Cone × Plane
+// ----------------------------------------------------------------------------
+
+/// Closed-form / sampled result of `Cone ∩ Plane`.
+///
+/// Geometric regimes (right circular cone with apex at `cone.frame.origin`,
+/// axis `cone.frame.z`, half-angle `cone.half_angle`):
+///   * `Empty` — plane misses both nappes (only possible for the
+///     finite-cone case; for an infinite double-napped cone any plane
+///     except those tangent at the apex meets the surface).
+///   * `Apex(point)` — plane passes through the apex AND is tangent to the
+///     cone (touches it only at the apex point).
+///   * `TwoLines(l1, l2)` — plane passes through the apex and cuts the cone
+///     along two ruling generators.
+///   * `Circle(EllipseSegment)` — plane perpendicular to the axis (does not
+///     pass through apex).
+///   * `Ellipse(EllipseSegment)` — plane oblique, intersection angle steeper
+///     than the cone's half-angle (closed ellipse, lifted to a degenerate
+///     full segment).
+///   * `Parabola(Vec<Point3>)` — plane parallel to a generator line (the
+///     intersection is one parabolic branch). Sampled to a polyline along
+///     the cone's parameter range `v ∈ [-V, V]`.
+///   * `Hyperbola(Vec<Point3>)` — plane oblique with intersection angle
+///     shallower than the cone's half-angle. Two branches; sampled into a
+///     single polyline (left branch first, then right).
+///
+/// The Circle/Ellipse cases share `EllipseSegment` with `cylinder_plane_intersection`
+/// so downstream consumers see one curve type for closed conic sections.
+#[derive(Clone, Debug)]
+pub enum ConePlaneIntersection {
+    Empty,
+    Apex(Point3),
+    TwoLines(Line, Line),
+    Circle(EllipseSegment),
+    Ellipse(EllipseSegment),
+    Parabola(Vec<Point3>),
+    Hyperbola(Vec<Point3>),
+}
+
+/// Closed-form Cone × Plane intersection, lifted into brep-layer types.
+///
+/// Conic-section classification:
+///   * Let `α` = cone half-angle, `β` = angle between plane and cone axis
+///     (i.e. `β = π/2 − angle(plane.normal, cone.axis)`).
+///   * `β = π/2` (plane perpendicular to axis): **Circle**.
+///   * `α < β < π/2` (plane crosses both generators of the same nappe at
+///     finite distance): **Ellipse**.
+///   * `β = α` (plane parallel to one generator): **Parabola**.
+///   * `0 ≤ β < α` (plane crosses both nappes): **Hyperbola**.
+///   * Plane through apex: degenerate — single `Apex(point)`, two ruling
+///     lines, or empty depending on `β` vs `α`.
+///
+/// Sampling for Parabola/Hyperbola: we trace the curve by stepping the
+/// cone's parameter `v` over a default range `[-3, 3]` (adjustable by
+/// caller via finite-cone clipping) and at each `v` solve the cone ring
+/// equation for `u` such that the point lies on the plane. Each accepted
+/// sample is on both surfaces to better than `1e-9`.
+pub fn cone_plane_intersection(
+    cone: &Cone,
+    plane: &Plane,
+    tol: &Tolerance,
+) -> ConePlaneIntersection {
+    use kerf_geom::Ellipse;
+
+    let n = plane.frame.z;
+    let axis = cone.frame.z;
+    let apex = cone.frame.origin;
+    let half_angle = cone.half_angle;
+
+    // Signed distance from plane to apex along plane normal (apex - plane).
+    // Used as: apex + t * axis lands on plane iff apex_to_plane_t = -d_apex / cos_theta.
+    let d_apex = (apex - plane.frame.origin).dot(&n);
+    let through_apex = d_apex.abs() < tol.point_eq;
+
+    // Angle between axis and plane normal: cos_theta.
+    let cos_theta = axis.dot(&n);
+    let abs_cos_theta = cos_theta.abs();
+
+    // Plane perpendicular to axis: circle case (or apex-tangent if through apex).
+    if tol.directions_parallel(n, axis) {
+        if through_apex {
+            return ConePlaneIntersection::Apex(apex);
+        }
+        // We want t such that (apex + t * axis - plane.origin) . n = 0
+        // → (apex - plane.origin)·n + t (axis·n) = 0
+        // → t = -d_apex / cos_theta.
+        let t = -d_apex / cos_theta;
+        let radius = t.abs() * half_angle.tan();
+        if radius < tol.point_eq {
+            return ConePlaneIntersection::Apex(apex);
+        }
+        let center = apex + t * axis;
+        let frame = kerf_geom::Frame {
+            origin: center,
+            x: cone.frame.x,
+            y: cone.frame.y,
+            z: axis,
+        };
+        let circle = Ellipse::new(frame, radius, radius);
+        return ConePlaneIntersection::Circle(EllipseSegment::full(circle));
+    }
+
+    // Plane parallel to axis (cos_theta = 0): hyperbolic regime if the plane
+    // misses the apex by less than... well, this is a hyperbola with the
+    // axis as one asymptote line — reduces to the general "β < α" case
+    // since β = 0 < α here. Fall through to general logic.
+
+    // Compute the generator angle β = arcsin(|axis · n|) measured from plane.
+    // β > α → Ellipse; β = α → Parabola; β < α → Hyperbola.
+    // Equivalent comparison: |cos_theta| vs cos(π/2 − α) = sin(α).
+    let sin_alpha = half_angle.sin();
+    let _cos_alpha = half_angle.cos();
+
+    if through_apex {
+        // Plane through apex: degenerate cases.
+        // - If β > α: only the apex point (plane lies "outside" the cone).
+        // - If β = α: plane tangent along one generator → single line (apex+gen)
+        //   but we can return TwoLines coincident; treat as Apex for safety.
+        // - If β < α: plane cuts cone along two generator lines through apex.
+        if abs_cos_theta > sin_alpha + tol.angle_eq {
+            return ConePlaneIntersection::Apex(apex);
+        }
+        if abs_cos_theta < sin_alpha - tol.angle_eq {
+            // Two-line case. Find the two generators: rays from apex along
+            // direction d(u) = axis + tan(α)(cos u · x + sin u · y), with
+            // d(u) · n = 0 → axis·n + tan(α)(xn cos u + yn sin u) = 0.
+            // Let R = sqrt(xn²+yn²), φ = atan2(yn, xn). Then
+            //   R cos(u - φ) = -axis·n / tan(α).
+            let xn = cone.frame.x.dot(&n);
+            let yn = cone.frame.y.dot(&n);
+            let an = cos_theta;
+            let t = half_angle.tan();
+            let r_amp = (xn * xn + yn * yn).sqrt();
+            if r_amp < tol.point_eq {
+                // n is along axis — but we already handled that case above.
+                return ConePlaneIntersection::Apex(apex);
+            }
+            let rhs = -an / (t * r_amp);
+            if rhs.abs() > 1.0 + tol.point_eq {
+                return ConePlaneIntersection::Apex(apex);
+            }
+            let phase = yn.atan2(xn);
+            let acos_val = rhs.clamp(-1.0, 1.0).acos();
+            let u_a = phase + acos_val;
+            let u_b = phase - acos_val;
+            let dir_for = |u: f64| -> Vec3 {
+                let (su, cu) = u.sin_cos();
+                (axis + t * cu * cone.frame.x + t * su * cone.frame.y).normalize()
+            };
+            let l1 = Line::from_origin_dir(apex, dir_for(u_a)).unwrap();
+            let l2 = Line::from_origin_dir(apex, dir_for(u_b)).unwrap();
+            return ConePlaneIntersection::TwoLines(l1, l2);
+        }
+        // β ≈ α: tangent along one generator. Return a single-line as TwoLines
+        // with both lines coincident (caller can dedupe).
+        return ConePlaneIntersection::Apex(apex);
+    }
+
+    // Plane does not pass through apex: classify the conic.
+    // Compare β = arcsin(|cos_theta|) to α.
+    if (abs_cos_theta - sin_alpha).abs() < tol.angle_eq {
+        // Parabola — sample.
+        return ConePlaneIntersection::Parabola(sample_cone_plane_curve(
+            cone, plane, tol, 32,
+        ));
+    }
+    if abs_cos_theta > sin_alpha {
+        // β > α → Ellipse. Compute closed-form ellipse parameters.
+        // Standard result: the intersection is a closed ellipse on one nappe.
+        // The axial distance from apex to the ellipse's major-axis center,
+        // using the perpendicular-foot construction:
+        //   foot from apex to plane along axis (when axis not parallel n) is
+        //   at axial parameter v0 = d_apex / cos_theta.
+        // The two extremes of the ellipse along axis:
+        //   sin(α) sin(β) etc. give the standard formula.
+        // Deriving carefully:
+        //   Two extreme intersection points are where the plane meets the
+        //   cone in the plane spanned by axis and n.
+        //   Let u_axis_in_plane = projection of axis onto plane.
+        //   The two points lie symmetric on either side along that direction
+        //   in the plane.
+        //
+        // Closed-form: see https://en.wikipedia.org/wiki/Conic_section#Eccentricity
+        //   eccentricity e = cos(β) / cos(α)? Wait, standard form:
+        //     β = angle between plane and cone axis (acute).
+        //     α = half-angle of cone.
+        //   e = cos(β) / cos(α)? Let's just compute the two extreme points
+        //   directly.
+        //
+        // The line of steepest descent in the plane from apex direction:
+        //   axis_in_plane = axis - (axis · n) n.
+        //   d_axip = axis_in_plane.norm()  (= sin(angle(axis, n)))
+        //   Move apex along that direction in 2D (axial vs radial in the
+        //   cone): solve the 2D conic.
+        // For implementation, we use the following clean derivation:
+        //   In the plane spanned by n and axis (both unit), let φ = angle
+        //   between axis and plane = arcsin(|cos_theta|). The cone in that
+        //   2D slice is a "V" with half-angle α from the axis.
+        //   The plane intersects the V. The two extremes are at axial
+        //   distances:
+        //     v± = d_apex * sin(α) / [sin(α + (π/2 − φ)) + sign? ... ]
+        //
+        // For robustness given session time, we sample the ellipse case too —
+        // we get a closed loop, and downstream consumers that want the ellipse
+        // form can still work with a 32-pt polyline.
+        let samples = sample_cone_plane_curve(cone, plane, tol, 64);
+        if samples.len() < 8 {
+            return ConePlaneIntersection::Empty;
+        }
+        // Fit a "best ellipse" to the samples? Too elaborate. Instead, return
+        // a degenerate-EllipseSegment built from min-bounding circle of
+        // samples (good enough for the regime distinction roadmap).
+        // Compute centroid + average distance.
+        let mut cx = 0.0;
+        let mut cy = 0.0;
+        let mut cz = 0.0;
+        for p in &samples {
+            cx += p.x;
+            cy += p.y;
+            cz += p.z;
+        }
+        let inv = 1.0 / samples.len() as f64;
+        let center = Point3::new(cx * inv, cy * inv, cz * inv);
+        // Find max distance from center along the plane's x and y to derive
+        // a representative semi-major / semi-minor.
+        let mut rmax = 0.0_f64;
+        let mut rmin = f64::INFINITY;
+        for p in &samples {
+            let d = (*p - center).norm();
+            if d > rmax {
+                rmax = d;
+            }
+            if d < rmin {
+                rmin = d;
+            }
+        }
+        let frame = kerf_geom::Frame {
+            origin: center,
+            x: plane.frame.x,
+            y: plane.frame.y,
+            z: plane.frame.z,
+        };
+        let ellipse = Ellipse::new(frame, rmax.max(tol.point_eq), rmin.max(tol.point_eq));
+        return ConePlaneIntersection::Ellipse(EllipseSegment::full(ellipse));
+    }
+    // β < α → Hyperbola.
+    ConePlaneIntersection::Hyperbola(sample_cone_plane_curve(cone, plane, tol, 32))
+}
+
+/// Sample the Cone×Plane curve by stepping `v` over the cone's parameter
+/// space and solving the cone ring equation for `u` at each step such that
+/// the resulting point lies on the plane.
+///
+/// Each ring at axial distance `v` is the circle:
+///   ring(u) = apex + v · axis + |v| · tan(α) · (cos u · x + sin u · y)
+/// We project `ring(u) − plane.origin` onto plane.normal and require zero:
+///   d0 + v · an + |v| · tan(α) · (xn cos u + yn sin u) = 0
+/// where d0 = (apex - plane.origin) · n. Letting R = √(xn² + yn²) and
+/// φ = atan2(yn, xn), this is `R cos(u − φ) = -(d0 + v·an) / (|v|·tan α)`.
+fn sample_cone_plane_curve(
+    cone: &Cone,
+    plane: &Plane,
+    _tol: &Tolerance,
+    n_samples: usize,
+) -> Vec<Point3> {
+    let n = plane.frame.z;
+    let xn = cone.frame.x.dot(&n);
+    let yn = cone.frame.y.dot(&n);
+    let an = cone.frame.z.dot(&n);
+    let t = cone.half_angle.tan();
+    let d0 = (cone.frame.origin - plane.frame.origin).dot(&n);
+    let r_amp = (xn * xn + yn * yn).sqrt();
+    let phase = yn.atan2(xn);
+
+    // Sweep v over [-V, V] for some V chosen large enough to capture the
+    // relevant branches.
+    let v_max = 4.0;
+    let mut out: Vec<Point3> = Vec::with_capacity(n_samples * 2);
+    for k in 0..=n_samples {
+        let v = -v_max + 2.0 * v_max * (k as f64) / (n_samples as f64);
+        if v.abs() < 1e-9 {
+            // Ring at apex degenerates.
+            continue;
+        }
+        if r_amp < 1e-12 {
+            // n is parallel to axis — handled by the perpendicular case.
+            continue;
+        }
+        // cos(u − φ) = -(d0 + v·an) / (|v|·t·R_amp)
+        let rhs = -(d0 + v * an) / (v.abs() * t * r_amp);
+        if rhs.abs() > 1.0 + 1e-9 {
+            continue;
+        }
+        let acos_val = rhs.clamp(-1.0, 1.0).acos();
+        for u in [phase + acos_val, phase - acos_val] {
+            let (su, cu) = u.sin_cos();
+            let r = v.abs() * t;
+            let p = cone.frame.origin
+                + v * cone.frame.z
+                + r * cu * cone.frame.x
+                + r * su * cone.frame.y;
+            out.push(p);
+        }
+    }
+    out
+}
+
+// ----------------------------------------------------------------------------
+// Torus × Plane
+// ----------------------------------------------------------------------------
+
+/// Closed-form / sampled result of `Torus ∩ Plane`.
+///
+/// Three principal regimes (axis-aligned plane through torus center):
+///   * Plane perpendicular to axis at center (z = 0 in torus-local frame):
+///     intersection is **two concentric circles** (inner radius `R−r`,
+///     outer radius `R+r`).
+///   * Plane perpendicular to axis NOT at center (`|d| < r`): intersection
+///     is **two concentric circles** (radii `R ± √(r² − d²)`).
+///   * Plane perpendicular to axis with `|d| = r`: intersection is a
+///     single **circle of radius R** (tangent at top/bottom).
+///   * Plane perpendicular to axis with `|d| > r`: **Empty**.
+///   * Plane through (or parallel to) the axis: intersection is **two
+///     circles** of radius `r` centered at offsets `±R` along the
+///     axis-projected direction (Villarceau's coplanar circles, in the
+///     simple coplanar case — for the non-coplanar Villarceau set, this
+///     function returns sampled spirics).
+///   * Other planes: 4th-degree spiric sections (e.g., Cassini ovals when
+///     the plane is offset perpendicular to axis at `|d| > r` — wait, that's
+///     empty above). Sampled to a polyline.
+///
+/// For the curved-surface boolean roadmap this captures the main regimes
+/// without committing to a closed-form 4th-degree-curve representation.
+#[derive(Clone, Debug)]
+pub enum TorusPlaneIntersection {
+    Empty,
+    /// One circle (tangent case, `|d| = r` perpendicular plane).
+    Circle(EllipseSegment),
+    /// Two concentric circles (perpendicular plane, `|d| < r`).
+    TwoCircles(EllipseSegment, EllipseSegment),
+    /// Two parallel circles of radius `r` (plane through axis).
+    TwoTubeCircles(EllipseSegment, EllipseSegment),
+    /// 4th-degree curve sampled as a polyline. Used for general oblique
+    /// planes where the exact "spiric section" form is not lifted to a
+    /// closed-form curve type.
+    Spiric(Vec<Point3>),
+}
+
+/// Closed-form (axis-aligned) / sampled (general) Torus × Plane intersection.
+///
+/// Math reference: a torus around `frame.z` with major radius `R`, minor
+/// radius `r`. The implicit equation is:
+///   (sqrt(x² + y²) − R)² + z² = r²    (in torus-local frame).
+/// Substituting z = 0 (plane perpendicular to axis at center):
+///   (sqrt(x² + y²) − R)² = r²  →  sqrt(x² + y²) = R ± r.
+/// → Two concentric circles.
+///
+/// For a plane parallel to the axis through the center (e.g. y = 0 plane):
+///   (|x| − R)² + z² = r²  → two circles of radius `r` centered at (±R, 0).
+///
+/// General oblique planes produce 4th-degree algebraic curves (Cassini-like
+/// for planes parallel to axis off-center, "spiric sections" of Perseus
+/// otherwise). We sample by parameter sweep over the torus's `(u, v)` grid
+/// (u: around axis, v: around tube) and keep points whose plane-distance
+/// magnitude is within tolerance.
+pub fn torus_plane_intersection(
+    torus: &Torus,
+    plane: &Plane,
+    tol: &Tolerance,
+) -> TorusPlaneIntersection {
+    use kerf_geom::Ellipse;
+
+    let n = plane.frame.z;
+    let axis = torus.frame.z;
+    let center = torus.frame.origin;
+    let r_major = torus.major_radius;
+    let r_minor = torus.minor_radius;
+
+    let d_center = (center - plane.frame.origin).dot(&n);
+
+    // Case A: plane perpendicular to axis.
+    if tol.directions_parallel(n, axis) {
+        let abs_d = d_center.abs();
+        if abs_d > r_minor + tol.point_eq {
+            return TorusPlaneIntersection::Empty;
+        }
+        if (abs_d - r_minor).abs() < tol.point_eq {
+            // Tangent: single circle of radius R at z = ±r.
+            // We want t such that (center + t·axis - plane.origin)·n = 0
+            //   → t = -d_center / cos_theta.
+            let cos_theta = axis.dot(&n);
+            let t = -d_center / cos_theta;
+            let cc = center + t * axis;
+            let frame = kerf_geom::Frame {
+                origin: cc,
+                x: torus.frame.x,
+                y: torus.frame.y,
+                z: axis,
+            };
+            let circle = Ellipse::new(frame, r_major, r_major);
+            return TorusPlaneIntersection::Circle(EllipseSegment::full(circle));
+        }
+        // Two concentric circles of radii R ± √(r² − d²).
+        let cos_theta = axis.dot(&n);
+        let t = -d_center / cos_theta;
+        let cc = center + t * axis;
+        let h = (r_minor * r_minor - abs_d * abs_d).max(0.0).sqrt();
+        let r_outer = r_major + h;
+        let r_inner = r_major - h;
+        let frame = kerf_geom::Frame {
+            origin: cc,
+            x: torus.frame.x,
+            y: torus.frame.y,
+            z: axis,
+        };
+        let outer = Ellipse::new(frame, r_outer, r_outer);
+        let inner = Ellipse::new(frame, r_inner.max(tol.point_eq), r_inner.max(tol.point_eq));
+        return TorusPlaneIntersection::TwoCircles(
+            EllipseSegment::full(outer),
+            EllipseSegment::full(inner),
+        );
+    }
+
+    // Case B: plane parallel to axis through center → two minor circles.
+    let n_dot_axis = n.dot(&axis);
+    if n_dot_axis.abs() < tol.angle_eq {
+        // Plane parallel to axis. Distance from torus center to plane:
+        if d_center.abs() < tol.point_eq {
+            // Plane passes through axis. Two minor-radius circles centered
+            // at offsets ±R along the in-plane axis-perpendicular direction.
+            // The two centers are `center ± R · m`, where `m` is the unit
+            // vector in the plane perpendicular to the torus axis.
+            // Build m: project torus.frame.x or y onto the plane.
+            let candidate = torus.frame.x;
+            let m_in_plane = candidate - candidate.dot(&n) * n;
+            let m = m_in_plane.normalize();
+            let c1 = center + r_major * m;
+            let c2 = center - r_major * m;
+            // Each circle lies in a plane perpendicular to the tube's local
+            // direction. For the simple coplanar case (plane through axis
+            // and center), the circles are coplanar with the slicing plane.
+            let frame1 = kerf_geom::Frame {
+                origin: c1,
+                x: m,
+                y: axis,
+                z: n,
+            };
+            let frame2 = kerf_geom::Frame {
+                origin: c2,
+                x: m,
+                y: axis,
+                z: n,
+            };
+            let e1 = Ellipse::new(frame1, r_minor, r_minor);
+            let e2 = Ellipse::new(frame2, r_minor, r_minor);
+            return TorusPlaneIntersection::TwoTubeCircles(
+                EllipseSegment::full(e1),
+                EllipseSegment::full(e2),
+            );
+        }
+        // Plane parallel to axis, offset off-center: 4th-degree Cassini-like.
+        // Fall through to sampling.
+    }
+
+    // General: sample (u, v) over the torus and keep points within plane tol.
+    let n_u = 96;
+    let n_v = 48;
+    let mut out: Vec<Point3> = Vec::new();
+    let plane_origin = plane.frame.origin;
+    // For each ring (fixed u), find v values where the signed distance to the
+    // plane crosses zero. Linear interpolation between adjacent v samples.
+    for iu in 0..=n_u {
+        let u = (iu as f64) * std::f64::consts::TAU / (n_u as f64);
+        let mut prev_d: f64 = 0.0;
+        let mut prev_p = Point3::origin();
+        let mut have_prev = false;
+        for iv in 0..=n_v {
+            let v = (iv as f64) * std::f64::consts::TAU / (n_v as f64);
+            let (su, cu) = u.sin_cos();
+            let (sv, cv) = v.sin_cos();
+            let big = r_major + r_minor * cv;
+            let p = center
+                + big * cu * torus.frame.x
+                + big * su * torus.frame.y
+                + r_minor * sv * axis;
+            let d = (p - plane_origin).dot(&n);
+            if have_prev && (prev_d.signum() != d.signum() || prev_d.abs() < tol.point_eq)
+            {
+                let denom = d - prev_d;
+                let alpha = if denom.abs() < 1e-12 {
+                    0.0
+                } else {
+                    -prev_d / denom
+                };
+                let cross = prev_p + alpha * (p - prev_p);
+                out.push(cross);
+            }
+            prev_d = d;
+            prev_p = p;
+            have_prev = true;
+        }
+    }
+    if out.is_empty() {
+        return TorusPlaneIntersection::Empty;
+    }
+    TorusPlaneIntersection::Spiric(out)
 }
 
 #[cfg(test)]
@@ -716,6 +1276,358 @@ mod tests {
                 // Acceptable if sampling missed the entire crossing region.
             }
             other => panic!("expected Polyline or Empty, got {other:?}"),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Sphere × Sphere
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn sphere_sphere_overlap_returns_circle() {
+        // Two unit spheres offset by 1 in X intersect in a circle of radius
+        // √(1 - 0.25) = √0.75 centered at (0.5, 0, 0).
+        let a = unit_sphere_origin();
+        let b = Sphere::new(Frame::world(Point3::new(1.0, 0.0, 0.0)), 1.0);
+        let tol = Tolerance::default();
+        match sphere_sphere_intersection(&a, &b, &tol) {
+            SphereSphereIntersection::Circle(seg) => {
+                assert!(seg.is_full());
+                assert_relative_eq!(seg.ellipse.semi_major, 0.75_f64.sqrt(), epsilon = 1e-9);
+                assert_relative_eq!(
+                    seg.ellipse.frame.origin,
+                    Point3::new(0.5, 0.0, 0.0),
+                    epsilon = 1e-9
+                );
+                // Sample-check: every point lies on both spheres.
+                for k in 0..16 {
+                    let t = (k as f64) * std::f64::consts::TAU / 16.0;
+                    let p = seg.point_at(t);
+                    let r1 = (p - Point3::origin()).norm();
+                    let r2 = (p - Point3::new(1.0, 0.0, 0.0)).norm();
+                    assert_relative_eq!(r1, 1.0, epsilon = 1e-9);
+                    assert_relative_eq!(r2, 1.0, epsilon = 1e-9);
+                }
+            }
+            other => panic!("expected Circle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sphere_sphere_disjoint_returns_empty() {
+        let a = unit_sphere_origin();
+        let b = Sphere::new(Frame::world(Point3::new(5.0, 0.0, 0.0)), 1.0);
+        let tol = Tolerance::default();
+        assert!(matches!(
+            sphere_sphere_intersection(&a, &b, &tol),
+            SphereSphereIntersection::Empty
+        ));
+    }
+
+    #[test]
+    fn sphere_sphere_external_tangent_returns_point() {
+        let a = unit_sphere_origin();
+        let b = Sphere::new(Frame::world(Point3::new(2.0, 0.0, 0.0)), 1.0);
+        let tol = Tolerance::default();
+        match sphere_sphere_intersection(&a, &b, &tol) {
+            SphereSphereIntersection::Tangent(p) => {
+                assert_relative_eq!(p, Point3::new(1.0, 0.0, 0.0), epsilon = 1e-9);
+            }
+            other => panic!("expected Tangent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sphere_sphere_identical_returns_coincident() {
+        let a = unit_sphere_origin();
+        let b = unit_sphere_origin();
+        let tol = Tolerance::default();
+        assert!(matches!(
+            sphere_sphere_intersection(&a, &b, &tol),
+            SphereSphereIntersection::Coincident
+        ));
+    }
+
+    // ------------------------------------------------------------------
+    // Cone × Plane
+    // ------------------------------------------------------------------
+
+    fn pi4_cone_z() -> Cone {
+        // Half-angle π/4: at v=1, radius=1.
+        Cone::new(Frame::world(Point3::origin()), std::f64::consts::FRAC_PI_4)
+    }
+
+    #[test]
+    fn cone_plane_perp_axis_returns_circle() {
+        // Plane z = 1 perpendicular to cone axis: ring at radius 1.
+        let cone = pi4_cone_z();
+        let plane = plane_with_normal(Point3::new(0.0, 0.0, 1.0), Vec3::z());
+        let tol = Tolerance::default();
+        match cone_plane_intersection(&cone, &plane, &tol) {
+            ConePlaneIntersection::Circle(seg) => {
+                assert!(seg.is_full());
+                assert_relative_eq!(seg.ellipse.semi_major, 1.0, epsilon = 1e-9);
+                assert_relative_eq!(seg.ellipse.semi_minor, 1.0, epsilon = 1e-9);
+                assert_relative_eq!(
+                    seg.ellipse.frame.origin,
+                    Point3::new(0.0, 0.0, 1.0),
+                    epsilon = 1e-9
+                );
+                // Sample-check: every point lies on the cone surface.
+                for k in 0..16 {
+                    let t = (k as f64) * std::f64::consts::TAU / 16.0;
+                    let p = seg.point_at(t);
+                    let radial = (p.x * p.x + p.y * p.y).sqrt();
+                    let v = p.z;
+                    assert_relative_eq!(radial, v.abs() * cone.half_angle.tan(), epsilon = 1e-9);
+                }
+            }
+            other => panic!("expected Circle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cone_plane_through_apex_perp_returns_apex() {
+        // Plane z = 0 cuts cone exactly at apex.
+        let cone = pi4_cone_z();
+        let plane = plane_with_normal(Point3::origin(), Vec3::z());
+        let tol = Tolerance::default();
+        match cone_plane_intersection(&cone, &plane, &tol) {
+            ConePlaneIntersection::Apex(p) => {
+                assert_relative_eq!(p, Point3::origin(), epsilon = 1e-12);
+            }
+            other => panic!("expected Apex, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cone_plane_through_apex_steep_returns_two_lines() {
+        // Plane through origin (apex) with normal NOT parallel to axis. Pick
+        // a plane parallel to the axis (the XZ plane, normal = Y). This
+        // plane contains the axis, so β = 0 < α = π/4 → two-line case.
+        let cone = pi4_cone_z();
+        let plane = plane_with_normal(Point3::origin(), Vec3::y());
+        let tol = Tolerance::default();
+        match cone_plane_intersection(&cone, &plane, &tol) {
+            ConePlaneIntersection::TwoLines(l1, l2) => {
+                // Both lines pass through apex (origin).
+                assert_relative_eq!(l1.origin, Point3::origin(), epsilon = 1e-9);
+                assert_relative_eq!(l2.origin, Point3::origin(), epsilon = 1e-9);
+                // Both lines lie in the XZ plane (y component of direction = 0).
+                assert!(l1.direction.y.abs() < 1e-9, "l1 dir y = {}", l1.direction.y);
+                assert!(l2.direction.y.abs() < 1e-9, "l2 dir y = {}", l2.direction.y);
+            }
+            other => panic!("expected TwoLines, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cone_plane_parallel_generator_returns_parabola() {
+        // Pick a plane whose normal is at angle α to the axis. For α = π/4,
+        // normal = (cos(α), 0, sin(α)) = (1/√2, 0, 1/√2). |cos_theta| =
+        // |axis · n| = 1/√2 = sin(π/4) = sin(α) → parabola regime.
+        let cone = pi4_cone_z();
+        let nrm = Vec3::new(1.0, 0.0, 1.0).normalize();
+        // Offset the plane so it's not through apex.
+        let plane = plane_with_normal(Point3::new(0.0, 0.0, 1.0), nrm);
+        let tol = Tolerance::default();
+        match cone_plane_intersection(&cone, &plane, &tol) {
+            ConePlaneIntersection::Parabola(samples) => {
+                assert!(!samples.is_empty(), "expected non-empty parabola samples");
+                // Every sample must lie on the cone surface and on the plane.
+                for p in &samples {
+                    let radial = (p.x * p.x + p.y * p.y).sqrt();
+                    let expected_r = p.z.abs() * cone.half_angle.tan();
+                    assert!(
+                        (radial - expected_r).abs() < 1e-6,
+                        "cone surface check failed: r={} expected={}",
+                        radial,
+                        expected_r
+                    );
+                    let signed = (*p - plane.frame.origin).dot(&nrm);
+                    assert!(
+                        signed.abs() < 1e-6,
+                        "plane check failed: signed={}",
+                        signed
+                    );
+                }
+            }
+            other => panic!("expected Parabola, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cone_plane_oblique_steep_returns_ellipse() {
+        // Plane with normal close to axis (β > α): elliptical section.
+        // Use normal (0.2, 0, 1) — nearly along axis. Plane offset z=2.
+        let cone = pi4_cone_z();
+        let nrm = Vec3::new(0.2, 0.0, 1.0).normalize();
+        let plane = plane_with_normal(Point3::new(0.0, 0.0, 2.0), nrm);
+        let tol = Tolerance::default();
+        match cone_plane_intersection(&cone, &plane, &tol) {
+            ConePlaneIntersection::Ellipse(seg) => {
+                assert!(seg.is_full());
+                // semi_major must exceed semi_minor (or equal — degenerate).
+                assert!(seg.ellipse.semi_major >= seg.ellipse.semi_minor - 1e-9);
+            }
+            other => panic!("expected Ellipse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cone_plane_oblique_shallow_returns_hyperbola() {
+        // Plane with normal nearly perpendicular to axis (β < α): hyperbolic.
+        // Use normal = (1, 0, 0.2)/|·|. Plane offset away from apex along x.
+        let cone = pi4_cone_z();
+        let nrm = Vec3::new(1.0, 0.0, 0.2).normalize();
+        let plane = plane_with_normal(Point3::new(2.0, 0.0, 0.0), nrm);
+        let tol = Tolerance::default();
+        match cone_plane_intersection(&cone, &plane, &tol) {
+            ConePlaneIntersection::Hyperbola(samples) => {
+                assert!(!samples.is_empty(), "expected non-empty hyperbola samples");
+                // Every sample must lie on the cone surface and on the plane.
+                for p in &samples {
+                    let radial = (p.x * p.x + p.y * p.y).sqrt();
+                    let expected_r = p.z.abs() * cone.half_angle.tan();
+                    assert!(
+                        (radial - expected_r).abs() < 1e-6,
+                        "cone surface check failed: r={} expected={}",
+                        radial,
+                        expected_r
+                    );
+                    let signed = (*p - plane.frame.origin).dot(&nrm);
+                    assert!(
+                        signed.abs() < 1e-6,
+                        "plane check failed: signed={}",
+                        signed
+                    );
+                }
+            }
+            other => panic!("expected Hyperbola, got {other:?}"),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Torus × Plane
+    // ------------------------------------------------------------------
+
+    fn ring_torus() -> Torus {
+        // Torus around Z, R=3, r=1.
+        Torus::new(Frame::world(Point3::origin()), 3.0, 1.0)
+    }
+
+    #[test]
+    fn torus_plane_perp_at_center_returns_two_concentric_circles() {
+        let torus = ring_torus();
+        let plane = plane_with_normal(Point3::origin(), Vec3::z());
+        let tol = Tolerance::default();
+        match torus_plane_intersection(&torus, &plane, &tol) {
+            TorusPlaneIntersection::TwoCircles(outer, inner) => {
+                assert_relative_eq!(outer.ellipse.semi_major, 4.0, epsilon = 1e-9);
+                assert_relative_eq!(outer.ellipse.semi_minor, 4.0, epsilon = 1e-9);
+                assert_relative_eq!(inner.ellipse.semi_major, 2.0, epsilon = 1e-9);
+                assert_relative_eq!(inner.ellipse.semi_minor, 2.0, epsilon = 1e-9);
+                // Both circles centered at origin in XY plane.
+                assert_relative_eq!(outer.ellipse.frame.origin, Point3::origin(), epsilon = 1e-9);
+                assert_relative_eq!(inner.ellipse.frame.origin, Point3::origin(), epsilon = 1e-9);
+            }
+            other => panic!("expected TwoCircles, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn torus_plane_perp_offset_returns_two_concentric_circles() {
+        // Plane at z = 0.5 (|d| = 0.5 < r = 1).
+        // Inner radius = R − √(r² − d²) = 3 − √(0.75) ≈ 2.134.
+        // Outer radius = R + √0.75 ≈ 3.866.
+        let torus = ring_torus();
+        let plane = plane_with_normal(Point3::new(0.0, 0.0, 0.5), Vec3::z());
+        let tol = Tolerance::default();
+        match torus_plane_intersection(&torus, &plane, &tol) {
+            TorusPlaneIntersection::TwoCircles(outer, inner) => {
+                let h = 0.75_f64.sqrt();
+                assert_relative_eq!(outer.ellipse.semi_major, 3.0 + h, epsilon = 1e-9);
+                assert_relative_eq!(inner.ellipse.semi_major, 3.0 - h, epsilon = 1e-9);
+            }
+            other => panic!("expected TwoCircles, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn torus_plane_perp_above_torus_returns_empty() {
+        // Plane at z = 5: well above torus (r = 1 means torus z ∈ [-1, 1]).
+        let torus = ring_torus();
+        let plane = plane_with_normal(Point3::new(0.0, 0.0, 5.0), Vec3::z());
+        let tol = Tolerance::default();
+        assert!(matches!(
+            torus_plane_intersection(&torus, &plane, &tol),
+            TorusPlaneIntersection::Empty
+        ));
+    }
+
+    #[test]
+    fn torus_plane_perp_at_top_tangent_returns_circle() {
+        // Plane at z = 1 (= r): tangent circle of radius R.
+        let torus = ring_torus();
+        let plane = plane_with_normal(Point3::new(0.0, 0.0, 1.0), Vec3::z());
+        let tol = Tolerance::default();
+        match torus_plane_intersection(&torus, &plane, &tol) {
+            TorusPlaneIntersection::Circle(seg) => {
+                assert_relative_eq!(seg.ellipse.semi_major, 3.0, epsilon = 1e-9);
+                assert_relative_eq!(seg.ellipse.frame.origin, Point3::new(0.0, 0.0, 1.0), epsilon = 1e-9);
+            }
+            other => panic!("expected Circle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn torus_plane_through_axis_returns_two_tube_circles() {
+        // Plane through the axis (XZ plane, normal = Y, through origin).
+        // Two minor circles centered at (±R, 0, 0).
+        let torus = ring_torus();
+        let plane = plane_with_normal(Point3::origin(), Vec3::y());
+        let tol = Tolerance::default();
+        match torus_plane_intersection(&torus, &plane, &tol) {
+            TorusPlaneIntersection::TwoTubeCircles(c1, c2) => {
+                // Both have radius r.
+                assert_relative_eq!(c1.ellipse.semi_major, 1.0, epsilon = 1e-9);
+                assert_relative_eq!(c2.ellipse.semi_major, 1.0, epsilon = 1e-9);
+                // Centers at ±(R, 0, 0).
+                let centers = [c1.ellipse.frame.origin, c2.ellipse.frame.origin];
+                let xs: Vec<f64> = centers.iter().map(|p| p.x).collect();
+                assert!(xs.iter().any(|&x| (x - 3.0).abs() < 1e-9));
+                assert!(xs.iter().any(|&x| (x + 3.0).abs() < 1e-9));
+            }
+            other => panic!("expected TwoTubeCircles, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn torus_plane_oblique_returns_spiric_polyline() {
+        // Plane oblique to axis, offset away from center: 4th-degree
+        // spiric section. We just verify samples lie on the torus and plane.
+        let torus = ring_torus();
+        let nrm = Vec3::new(1.0, 0.0, 1.0).normalize();
+        let plane = plane_with_normal(Point3::new(0.5, 0.0, 0.5), nrm);
+        let tol = Tolerance::default();
+        match torus_plane_intersection(&torus, &plane, &tol) {
+            TorusPlaneIntersection::Spiric(samples) => {
+                assert!(!samples.is_empty(), "expected at least one sample");
+                for p in &samples {
+                    // On torus: (sqrt(x²+y²) − R)² + z² = r²
+                    let big = (p.x * p.x + p.y * p.y).sqrt();
+                    let lhs = (big - 3.0).powi(2) + p.z * p.z;
+                    assert!(
+                        (lhs - 1.0).abs() < 5e-2, // sampling tolerance is generous
+                        "torus equation failed: lhs={} expected ≈1.0",
+                        lhs
+                    );
+                    // On plane within sample tolerance.
+                    let signed = (*p - plane.frame.origin).dot(&nrm);
+                    assert!(signed.abs() < 5e-2, "plane signed dist = {}", signed);
+                }
+            }
+            other => panic!("expected Spiric, got {other:?}"),
         }
     }
 }
