@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use kerf_geom::{Line, Point3, Tolerance};
+use kerf_geom::{Frame, Line, Plane, Point3, Tolerance, Vec3};
 use kerf_topo::{validate, FaceId};
 
 use crate::Solid;
@@ -165,6 +165,33 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
     // the unpaired loop, which requires the original surface geometry.
     // Tracked as deferred work in the e2e_scenarios bug commentary.
     let (kept, face_to_vidx) = drop_one_sided_boundary(kept, face_to_vidx);
+
+    // Stage 1e (synthesise-patch-face): if any one-sided directed half-edges
+    // remain after 1d, walk them into closed loops and synthesise a new
+    // planar patch face per loop so each canonical edge ends up with exactly
+    // two half-edges. The patch face's polygon is the reverse of the loop
+    // walk so its half-edges twin the existing one-sided ones.
+    //
+    // This is the proper fix for the failures 1d's face-dropping can't
+    // close (LBracket + Counterbore, 4-corner z-edge Fillet chain). Loops
+    // that aren't planar within tolerance are left alone — stage 5 will
+    // still panic for those, surfacing the bug. Synthesised faces inherit
+    // no picking owner.
+    let (kept, face_to_vidx) = {
+        let mut k = kept;
+        let mut fv = face_to_vidx;
+        let diag = synthesise_planar_patches_diag(&mut k, &mut fv, &positions, tol);
+        if std::env::var("KERF_STITCH_SYNTH_DEBUG").is_ok() {
+            eprintln!(
+                "stitch synth: one_sided={} loops={} added={} rejected={}",
+                diag.one_sided_directed_edges,
+                diag.loops_found,
+                diag.planar_patches_added,
+                diag.loops_rejected
+            );
+        }
+        (k, fv)
+    };
     let kept: Vec<&KeptFace> = kept.iter().collect();
 
     // Stage 2: create vertices in the kerf-topo solid.
@@ -630,6 +657,429 @@ fn drop_one_sided_boundary(
     (kept, face_to_vidx)
 }
 
+/// Outcome of a synthesise pass — returned for testing visibility, even
+/// though the public `stitch` API just folds the synthesised faces into the
+/// kept list.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct SynthResult {
+    /// How many one-sided directed half-edges were identified at entry.
+    pub one_sided_directed_edges: usize,
+    /// How many closed loops the one-sided edges decomposed into.
+    pub loops_found: usize,
+    /// How many loops were successfully closed with a planar patch face.
+    pub planar_patches_added: usize,
+    /// How many loops were rejected because they weren't planar within
+    /// tolerance, weren't closeable into a single cycle, or had < 3
+    /// distinct vertices.
+    pub loops_rejected: usize,
+}
+
+/// Stage 1e core: walk unpaired (one-sided) directed half-edges into closed
+/// loops and synthesise a planar patch face per loop. Loops that fit a single
+/// plane get one patch; non-planar polyhedral loops (e.g. wrapping around
+/// an L-shaped corner) are segmented into runs of consecutive coplanar
+/// vertices and patched per run, with chord edges between adjacent runs
+/// twinning each other automatically. Loops that fail both routes are left
+/// alone — stage 5 will still panic for those, surfacing the bug.
+///
+/// `kept` and `face_to_vidx` are mutated in place: any synthesised faces
+/// are appended, so vertex indices in `face_to_vidx` continue to refer
+/// to entries in `positions`.
+pub(super) fn synthesise_planar_patches_diag(
+    kept: &mut Vec<KeptFace>,
+    face_to_vidx: &mut Vec<Vec<usize>>,
+    positions: &[Point3],
+    tol: &Tolerance,
+) -> SynthResult {
+    let mut diag = SynthResult::default();
+    if kept.is_empty() {
+        return diag;
+    }
+
+    // Step 1: count directed half-edges. (v_start, v_end) -> count. A canonical
+    // edge has 2 half-edges (one each direction); a one-sided directed edge
+    // appears in (a, b) with no matching (b, a) entry. We work in DIRECTED
+    // form here because the synthesised patch needs to twin specific
+    // directions — its polygon goes b->a wherever the existing kept faces
+    // contribute a->b.
+    let mut directed: HashMap<(usize, usize), usize> = HashMap::new();
+    for vidx in face_to_vidx.iter() {
+        let n = vidx.len();
+        for i in 0..n {
+            let a = vidx[i];
+            let b = vidx[(i + 1) % n];
+            if a == b {
+                continue;
+            }
+            *directed.entry((a, b)).or_insert(0) += 1;
+        }
+    }
+
+    // Collect one-sided directed half-edges: those (a,b) with no (b,a) entry.
+    // (We treat (a,b) with `directed[(a,b)] >= 1 && directed[(b,a)] == 0` as
+    // one-sided. If both directions exist, twin pairing handles them in
+    // stage 5; if either side has count >= 2 the orphan-contributor pass
+    // already pruned them.)
+    let mut one_sided: Vec<(usize, usize)> = Vec::new();
+    for (&(a, b), &count) in &directed {
+        if count >= 1 && !directed.contains_key(&(b, a)) {
+            // Each occurrence is one one-sided half-edge. We only walk one
+            // representative per directed key — multiplicity > 1 means
+            // duplicate kept faces share the same directed edge, which the
+            // earlier passes should have collapsed; we err on the side of
+            // a single patch and skip the duplicates.
+            one_sided.push((a, b));
+        }
+    }
+    diag.one_sided_directed_edges = one_sided.len();
+    if one_sided.is_empty() {
+        return diag;
+    }
+
+    // Step 2: walk one-sided directed edges into closed loops.
+    //
+    // For a manifold patch, every one-sided edge ending at vertex `b` has
+    // exactly one one-sided edge starting at `b`. If multiple successors
+    // exist (branching), the loop is ambiguous; we abort that walk.
+    let mut successors: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+    for &(a, b) in &one_sided {
+        successors.entry(a).or_default().push((a, b));
+    }
+
+    let mut visited: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    let mut loops: Vec<Vec<usize>> = Vec::new();
+
+    for &start_edge in &one_sided {
+        if visited.contains(&start_edge) {
+            continue;
+        }
+        let (start_a, _) = start_edge;
+        let mut chain: Vec<usize> = vec![start_a]; // vertex indices in order
+        let mut cur = start_edge;
+        let mut ok = true;
+        let mut local_visited: Vec<(usize, usize)> = Vec::new();
+        loop {
+            if local_visited.contains(&cur) {
+                // Cycle closed (or we hit a previously-visited node in this
+                // walk that isn't the start — treat as closure failure).
+                break;
+            }
+            local_visited.push(cur);
+            chain.push(cur.1);
+            // Successor: a one-sided edge starting at cur.1.
+            let next_candidates = successors.get(&cur.1).cloned().unwrap_or_default();
+            // Filter out the reversed (b, a) — we already know it's not in
+            // the directed map. But avoid revisiting an already-walked edge.
+            let unwalked: Vec<(usize, usize)> = next_candidates
+                .into_iter()
+                .filter(|e| !local_visited.contains(e))
+                .collect();
+            if unwalked.is_empty() {
+                // Did we get back to the start? chain[last] == start_a means
+                // we just walked an edge ending at the loop's start vertex.
+                if cur.1 == start_a {
+                    // Loop closes. chain currently is [start_a, ..., start_a];
+                    // drop the trailing duplicate to make it a clean cycle.
+                    chain.pop();
+                    break;
+                }
+                ok = false;
+                break;
+            }
+            if unwalked.len() > 1 {
+                // Branching: ambiguous loop. Skip.
+                ok = false;
+                break;
+            }
+            cur = unwalked[0];
+        }
+        if ok && chain.len() >= 3 {
+            // Mark all walked edges as visited globally so we don't restart
+            // the same loop from a different entry point.
+            for e in &local_visited {
+                visited.insert(*e);
+            }
+            loops.push(chain);
+        } else {
+            // Even on failure, mark the visited edges so we don't infinite-
+            // loop. This means a malformed walk consumes its edges; their
+            // gap will surface as a stitch panic, which is acceptable —
+            // we documented this as the visible-bug fallback.
+            for e in &local_visited {
+                visited.insert(*e);
+            }
+        }
+    }
+    diag.loops_found = loops.len();
+
+    // Step 3: for each loop, try to synthesise patch faces.
+    //
+    // First attempt: fit a single plane (Newell's method) through the entire
+    // loop. If the loop is planar within tolerance, emit one patch face whose
+    // polygon is the reverse of the walk so its half-edges twin the
+    // existing one-sided ones.
+    //
+    // Second attempt: if the loop isn't planar, segment it into runs of
+    // consecutive edges that share a common plane and emit one patch per
+    // run, joined by chord half-edges. The chords are by construction
+    // mutual twins (sub-patch i's closing chord goes p_end → p_start, and
+    // sub-patch i+1's opening edge enters at p_start; together with another
+    // chord from sub-patch back, we get a closed cycle).
+    //
+    // Specifically: a non-planar polyhedral loop wrapping around an inner
+    // L-corner (LBracket+Counterbore) is two planar quads meeting at a
+    // shared chord edge. Segmenting and closing recovers the missing
+    // bracket faces.
+    let plan_tol = (tol.point_eq * 1.0e6).max(1e-6);
+    for loop_vidx in loops {
+        let n = loop_vidx.len();
+        let pts: Vec<Point3> = loop_vidx.iter().map(|&i| positions[i]).collect();
+
+        if try_emit_single_planar(
+            &loop_vidx,
+            &pts,
+            plan_tol,
+            tol,
+            kept,
+            face_to_vidx,
+        ) {
+            diag.planar_patches_added += 1;
+            continue;
+        }
+
+        // Single plane failed. Try a 2-way split: brute-force every
+        // pair (i, j) and check whether splitting the loop there gives
+        // two planar sub-quads. The sub-quads share an implicit chord
+        // (v_i ↔ v_j) which becomes mutual twin half-edges in the two
+        // patches, so no new vertex is introduced.
+        //
+        // This is the polyhedral L-corner case (LBracket+Counterbore):
+        // a 6-vertex loop wrapping around a 90° interior step splits
+        // into two 4-vertex quads on the bracket's two interior planes,
+        // joined by a chord on the corner edge.
+        //
+        // We restrict to MIN_SEGMENT_VERTICES=4 per sub-quad (rules out
+        // accidental triangulation of truly non-planar loops) and
+        // total loop size up to MAX_LOOP_FOR_SPLIT (the search is O(n^2)
+        // but n is typically tiny — booleans on prismatic shapes don't
+        // produce huge unpaired loops).
+        const MAX_LOOP_FOR_SPLIT: usize = 32;
+        const MIN_SEG_VERTICES: usize = 4;
+        let mut split_segments: Option<Vec<Vec<usize>>> = None;
+        if n <= MAX_LOOP_FOR_SPLIT && n >= 2 * MIN_SEG_VERTICES - 2 {
+            // For each (i, j) where 0 <= i < n and j = i + len_a - 1 (mod n)
+            // and len_a in [MIN, n+2-MIN]:
+            //   sub-loop A is the cyclic slice [v_i, v_{i+1}, ..., v_j];
+            //   sub-loop B is the cyclic slice [v_j, ..., v_i].
+            //   They share endpoints v_i and v_j (the implicit chord).
+            //   len_a + len_b = n + 2.
+            //
+            // Enumerate i in 0..n and len_a in MIN..=(n+2-MIN); test each.
+            'split_search: for i in 0..n {
+                for len_a in MIN_SEG_VERTICES..=(n + 2 - MIN_SEG_VERTICES) {
+                    let len_b = n + 2 - len_a;
+                    if len_b < MIN_SEG_VERTICES {
+                        continue;
+                    }
+                    // Sub-loop A: starts at i, len_a vertices.
+                    let mut a: Vec<usize> = Vec::with_capacity(len_a);
+                    for k in 0..len_a {
+                        a.push((i + k) % n);
+                    }
+                    // Sub-loop B: starts at the last vertex of A (i + len_a - 1),
+                    // walks backward: actually walks forward through vertices
+                    // (j, j+1, ..., j + len_b - 1) where j = i + len_a - 1.
+                    // Note: B's last vertex is i (closing the cycle).
+                    let j = (i + len_a - 1) % n;
+                    let mut b: Vec<usize> = Vec::with_capacity(len_b);
+                    for k in 0..len_b {
+                        b.push((j + k) % n);
+                    }
+                    let a_pts: Vec<Point3> = a.iter().map(|&k| pts[k]).collect();
+                    let b_pts: Vec<Point3> = b.iter().map(|&k| pts[k]).collect();
+                    if is_planar(&a_pts, plan_tol) && is_planar(&b_pts, plan_tol) {
+                        split_segments = Some(vec![a, b]);
+                        break 'split_search;
+                    }
+                }
+            }
+        }
+
+        let segments = match split_segments {
+            Some(s) => s,
+            None => {
+                if std::env::var("KERF_STITCH_SYNTH_DEBUG").is_ok() {
+                    eprintln!(
+                        "stitch synth: rejected non-planar loop, n={n} (no 2-way planar split)",
+                    );
+                    for p in &pts {
+                        eprintln!("  ({:.4}, {:.4}, {:.4})", p.x, p.y, p.z);
+                    }
+                }
+                diag.loops_rejected += 1;
+                continue;
+            }
+        };
+
+        // Emit one patch per segment. Each segment is a sub-loop: walk
+        // through `seg` then back along the chord (last_vertex → first_vertex
+        // in the sub-loop). The chord is reused between adjacent segments —
+        // sub-loop A closes with chord (last_A → first_A) and sub-loop B
+        // opens at first_A which equals last_A in the previous loop's
+        // boundary (overlap by 1 vertex). The chord half-edges in adjacent
+        // patches twin each other.
+        let mut emitted_any = false;
+        for seg in segments {
+            // seg is a list of indices INTO `loop_vidx`. The vertices are
+            // already in walk order. To twin the originals, reverse.
+            let seg_vidx: Vec<usize> = seg.iter().map(|&i| loop_vidx[i]).collect();
+            let seg_pts: Vec<Point3> = seg.iter().map(|&i| pts[i]).collect();
+            let Some((centroid, normal)) = fit_plane_newell(&seg_pts) else {
+                continue;
+            };
+            let Some(frame) = build_frame(centroid, normal, &seg_pts, tol) else {
+                continue;
+            };
+            let plane = Plane::new(frame);
+            let surface = SurfaceKind::Plane(plane);
+
+            // Reverse to twin originals.
+            let mut reversed: Vec<usize> = seg_vidx.iter().rev().copied().collect();
+            while reversed.len() >= 2 && reversed.first() == reversed.last() {
+                reversed.pop();
+            }
+            if reversed.len() < 3 {
+                continue;
+            }
+            let polygon: Vec<Point3> = reversed.iter().map(|&i| positions[i]).collect();
+            kept.push(KeptFace {
+                polygon,
+                surface,
+                owner: None,
+            });
+            face_to_vidx.push(reversed);
+            emitted_any = true;
+        }
+        if emitted_any {
+            diag.planar_patches_added += 1;
+        } else {
+            diag.loops_rejected += 1;
+        }
+    }
+
+    diag
+}
+
+fn is_planar(pts: &[Point3], tol: f64) -> bool {
+    if pts.len() < 3 {
+        return true;
+    }
+    let Some((centroid, normal)) = fit_plane_newell(pts) else {
+        return false;
+    };
+    for p in pts {
+        if (p - centroid).dot(&normal).abs() > tol {
+            return false;
+        }
+    }
+    true
+}
+
+/// Build an orthonormal frame anchored at `centroid` with z = normal,
+/// picking some non-degenerate in-plane direction for x. None if all
+/// points are too close to the centroid (degenerate).
+fn build_frame(centroid: Point3, normal: Vec3, pts: &[Point3], tol: &Tolerance) -> Option<Frame> {
+    let mut x_hint: Option<Vec3> = None;
+    for p in pts {
+        let d = p - centroid;
+        if d.norm() > tol.point_eq * 10.0 {
+            x_hint = Some(d);
+            break;
+        }
+    }
+    let x_hint = x_hint?;
+    let x_in_plane = x_hint - x_hint.dot(&normal) * normal;
+    let x = x_in_plane.try_normalize(0.0)?;
+    let y = normal.cross(&x);
+    Some(Frame {
+        origin: centroid,
+        x,
+        y,
+        z: normal,
+    })
+}
+
+/// Try to emit a single planar patch for the loop. Returns true on success.
+/// `loop_vidx` is the loop's vertex indices in walk order; `pts` is the
+/// corresponding world-coordinate points (same length as `loop_vidx`).
+fn try_emit_single_planar(
+    loop_vidx: &[usize],
+    pts: &[Point3],
+    plan_tol: f64,
+    tol: &Tolerance,
+    kept: &mut Vec<KeptFace>,
+    face_to_vidx: &mut Vec<Vec<usize>>,
+) -> bool {
+    let Some((centroid, normal)) = fit_plane_newell(pts) else {
+        return false;
+    };
+    if !is_planar(pts, plan_tol) {
+        return false;
+    }
+    let Some(frame) = build_frame(centroid, normal, pts, tol) else {
+        return false;
+    };
+    let plane = Plane::new(frame);
+    let surface = SurfaceKind::Plane(plane);
+    let mut reversed_vidx: Vec<usize> = loop_vidx.iter().rev().copied().collect();
+    let mut reversed_pts: Vec<Point3> = pts.iter().rev().copied().collect();
+    while reversed_vidx.len() >= 2 && reversed_vidx.first() == reversed_vidx.last() {
+        reversed_vidx.pop();
+        reversed_pts.pop();
+    }
+    if reversed_vidx.len() < 3 {
+        return false;
+    }
+    kept.push(KeptFace {
+        polygon: reversed_pts,
+        surface,
+        owner: None,
+    });
+    face_to_vidx.push(reversed_vidx);
+    true
+}
+
+/// Newell's method for the unit normal of a (possibly non-convex) planar
+/// polygon. Returns (centroid, unit_normal) or None for degenerate inputs.
+/// Robust against arbitrary winding direction; the returned normal is
+/// determined by the polygon's traversal orientation.
+fn fit_plane_newell(pts: &[Point3]) -> Option<(Point3, Vec3)> {
+    let n = pts.len();
+    if n < 3 {
+        return None;
+    }
+    let mut nx = 0.0;
+    let mut ny = 0.0;
+    let mut nz = 0.0;
+    let mut cx = 0.0;
+    let mut cy = 0.0;
+    let mut cz = 0.0;
+    for i in 0..n {
+        let a = pts[i];
+        let b = pts[(i + 1) % n];
+        nx += (a.y - b.y) * (a.z + b.z);
+        ny += (a.z - b.z) * (a.x + b.x);
+        nz += (a.x - b.x) * (a.y + b.y);
+        cx += a.x;
+        cy += a.y;
+        cz += a.z;
+    }
+    let normal = Vec3::new(nx, ny, nz);
+    let normal = normal.try_normalize(0.0)?;
+    let centroid = Point3::new(cx / n as f64, cy / n as f64, cz / n as f64);
+    Some((centroid, normal))
+}
+
 fn find_or_add(positions: &mut Vec<Point3>, p: Point3, tol: &Tolerance) -> usize {
     for (i, q) in positions.iter().enumerate() {
         if (p - *q).norm() < tol.point_eq {
@@ -665,5 +1115,282 @@ mod tests {
         assert_eq!(new_s.edge_count(), 12);
         assert_eq!(new_s.face_count(), 6);
         validate(&new_s.topo).unwrap();
+    }
+
+    /// Helper: construct a single triangular kept face from three points.
+    /// Carries a placeholder Plane(world) — the surface geometry doesn't
+    /// matter for synthesise_planar_patches_diag tests, which only exercise
+    /// the directed-edge → loop → patch logic.
+    fn tri_face(a: Point3, b: Point3, c: Point3) -> KeptFace {
+        KeptFace {
+            polygon: vec![a, b, c],
+            surface: SurfaceKind::Plane(Plane::new(kerf_geom::Frame::world(Point3::origin()))),
+            owner: None,
+        }
+    }
+
+    /// Helper: build (kept, face_to_vidx, positions) from a list of
+    /// KeptFaces, deduping vertices by position. Mirrors stage 1's
+    /// `find_or_add` so the same vertex indices appear in multiple faces.
+    fn build_indices(kept: &[KeptFace]) -> (Vec<Vec<usize>>, Vec<Point3>) {
+        let mut positions: Vec<Point3> = Vec::new();
+        let mut face_to_vidx: Vec<Vec<usize>> = Vec::with_capacity(kept.len());
+        let tol = Tolerance::default();
+        for kf in kept {
+            let mut indices = Vec::with_capacity(kf.polygon.len());
+            for p in &kf.polygon {
+                let mut found = None;
+                for (i, q) in positions.iter().enumerate() {
+                    if (p - q).norm() < tol.point_eq {
+                        found = Some(i);
+                        break;
+                    }
+                }
+                let idx = match found {
+                    Some(i) => i,
+                    None => {
+                        positions.push(*p);
+                        positions.len() - 1
+                    }
+                };
+                indices.push(idx);
+            }
+            face_to_vidx.push(indices);
+        }
+        (face_to_vidx, positions)
+    }
+
+    #[test]
+    fn synth_no_op_when_already_2_manifold() {
+        // Round-tripping a closed cube means every directed half-edge has
+        // its reverse partner. The synthesise pass should add zero patches
+        // and report zero one-sided edges.
+        let s = box_(Vec3::new(1.0, 1.0, 1.0));
+        let mut kept = Vec::new();
+        for face_id in s.topo.face_ids() {
+            let polygon = face_polygon(&s, face_id).unwrap();
+            let surface = s.face_geom.get(face_id).cloned().unwrap();
+            kept.push(KeptFace { polygon, surface, owner: None });
+        }
+        let (mut face_to_vidx, positions) = build_indices(&kept);
+        let mut kept_owned = kept.clone();
+        let diag = synthesise_planar_patches_diag(
+            &mut kept_owned,
+            &mut face_to_vidx,
+            &positions,
+            &Tolerance::default(),
+        );
+        assert_eq!(diag.one_sided_directed_edges, 0);
+        assert_eq!(diag.loops_found, 0);
+        assert_eq!(diag.planar_patches_added, 0);
+        assert_eq!(diag.loops_rejected, 0);
+        assert_eq!(kept_owned.len(), 6, "no patches added on closed cube");
+    }
+
+    #[test]
+    fn synth_planar_patch_closes_open_box_top() {
+        // A box minus its top face: the bottom + 4 walls form a half-open
+        // shell. The 4 top vertices form a square loop of one-sided edges
+        // (one per wall, all going around the top in the same direction).
+        // Stage 1e should fit a plane through those 4 points and add a
+        // single quad patch — restoring the cube's manifold-ness.
+        let s = box_(Vec3::new(1.0, 1.0, 1.0));
+        let mut kept = Vec::new();
+        // The cube primitive's faces are in arbitrary order. Skip the face
+        // whose centroid has the largest z (the top).
+        let mut face_geom: Vec<(FaceId, Point3, Vec<Point3>, SurfaceKind)> = s
+            .topo
+            .face_ids()
+            .map(|fid| {
+                let poly = face_polygon(&s, fid).unwrap();
+                let centroid: Point3 = {
+                    let mut sx = 0.0;
+                    let mut sy = 0.0;
+                    let mut sz = 0.0;
+                    for p in &poly {
+                        sx += p.x;
+                        sy += p.y;
+                        sz += p.z;
+                    }
+                    let n = poly.len() as f64;
+                    Point3::new(sx / n, sy / n, sz / n)
+                };
+                let surface = s.face_geom.get(fid).cloned().unwrap();
+                (fid, centroid, poly, surface)
+            })
+            .collect();
+        face_geom.sort_by(|a, b| b.1.z.partial_cmp(&a.1.z).unwrap());
+        // First face is the top — drop it.
+        for (_fid, _c, poly, surface) in face_geom.iter().skip(1) {
+            kept.push(KeptFace {
+                polygon: poly.clone(),
+                surface: surface.clone(),
+                owner: None,
+            });
+        }
+        assert_eq!(kept.len(), 5);
+        let (mut face_to_vidx, positions) = build_indices(&kept);
+        let mut kept_owned = kept.clone();
+        let diag = synthesise_planar_patches_diag(
+            &mut kept_owned,
+            &mut face_to_vidx,
+            &positions,
+            &Tolerance::default(),
+        );
+        assert_eq!(diag.one_sided_directed_edges, 4, "open top has 4 one-sided edges");
+        assert_eq!(diag.loops_found, 1);
+        assert_eq!(diag.planar_patches_added, 1);
+        assert_eq!(diag.loops_rejected, 0);
+        assert_eq!(kept_owned.len(), 6, "patch closes the box");
+
+        // The patch's polygon should have 4 vertices, all at z = 1.0
+        // (or whatever the top face was) — the box primitive uses extents
+        // half-extents, so check a planar polygon.
+        let patch = kept_owned.last().unwrap();
+        assert_eq!(patch.polygon.len(), 4);
+        let z0 = patch.polygon[0].z;
+        for p in &patch.polygon {
+            assert!((p.z - z0).abs() < 1e-9, "patch should be planar in z");
+        }
+    }
+
+    #[test]
+    fn synth_full_stitch_open_box_round_trips() {
+        // End-to-end: feed an open-top cube into stitch() itself. The 1e
+        // pass should synthesise the missing top, then stage 5 should
+        // succeed without panic, yielding a valid 8V/12E/6F solid.
+        let s = box_(Vec3::new(1.0, 1.0, 1.0));
+        let mut kept = Vec::new();
+        let mut face_geom: Vec<(FaceId, Point3, Vec<Point3>, SurfaceKind)> = s
+            .topo
+            .face_ids()
+            .map(|fid| {
+                let poly = face_polygon(&s, fid).unwrap();
+                let centroid: Point3 = {
+                    let mut sx = 0.0;
+                    let mut sy = 0.0;
+                    let mut sz = 0.0;
+                    for p in &poly {
+                        sx += p.x;
+                        sy += p.y;
+                        sz += p.z;
+                    }
+                    let n = poly.len() as f64;
+                    Point3::new(sx / n, sy / n, sz / n)
+                };
+                let surface = s.face_geom.get(fid).cloned().unwrap();
+                (fid, centroid, poly, surface)
+            })
+            .collect();
+        face_geom.sort_by(|a, b| b.1.z.partial_cmp(&a.1.z).unwrap());
+        for (_fid, _c, poly, surface) in face_geom.iter().skip(1) {
+            kept.push(KeptFace {
+                polygon: poly.clone(),
+                surface: surface.clone(),
+                owner: None,
+            });
+        }
+        let new_s = stitch(&kept, &Tolerance::default());
+        assert_eq!(new_s.vertex_count(), 8);
+        assert_eq!(new_s.edge_count(), 12);
+        assert_eq!(new_s.face_count(), 6, "synthesised patch makes it 6 faces");
+        validate(&new_s.topo).unwrap();
+    }
+
+    #[test]
+    fn synth_rejects_non_planar_loop() {
+        // Build a deliberately twisted, non-planar loop where no contiguous
+        // run of vertices is coplanar — segmentation can't recover it. Six
+        // tetrahedral side faces share an apex; the base loop has every
+        // other vertex offset in z (a saddle), so no 3 consecutive vertices
+        // share a plane.
+        let mut base: Vec<Point3> = Vec::new();
+        for k in 0..6 {
+            let theta = (k as f64) * std::f64::consts::FRAC_PI_3;
+            // Alternate z so no 3 consecutive points are coplanar.
+            let z = if k % 2 == 0 { 0.0 } else { 0.7 };
+            base.push(Point3::new(theta.cos(), theta.sin(), z));
+        }
+        let apex = Point3::new(0.0, 0.0, 2.0);
+        let mut kept = Vec::new();
+        for k in 0..6 {
+            kept.push(tri_face(apex, base[k], base[(k + 1) % 6]));
+        }
+        let (mut face_to_vidx, positions) = build_indices(&kept);
+        let mut kept_owned = kept.clone();
+        let diag = synthesise_planar_patches_diag(
+            &mut kept_owned,
+            &mut face_to_vidx,
+            &positions,
+            &Tolerance::default(),
+        );
+        assert_eq!(diag.one_sided_directed_edges, 6);
+        assert_eq!(diag.loops_found, 1);
+        assert_eq!(
+            diag.planar_patches_added, 0,
+            "saddle loop with no coplanar runs must NOT be patched"
+        );
+        assert_eq!(diag.loops_rejected, 1);
+        assert_eq!(kept_owned.len(), 6, "no synthesised patch added");
+    }
+
+    #[test]
+    fn synth_handles_two_disjoint_loops() {
+        // Two cubes both with their top removed — two independent open
+        // loops. Stage 1e should walk them separately and add 2 patches.
+        let s1 = box_(Vec3::new(1.0, 1.0, 1.0));
+        // Translate the second box far in x so positions don't collide.
+        let mut kept = Vec::new();
+        let mut face_geom: Vec<(FaceId, Point3, Vec<Point3>, SurfaceKind)> = s1
+            .topo
+            .face_ids()
+            .map(|fid| {
+                let poly = face_polygon(&s1, fid).unwrap();
+                let centroid: Point3 = {
+                    let mut sx = 0.0;
+                    let mut sy = 0.0;
+                    let mut sz = 0.0;
+                    for p in &poly {
+                        sx += p.x;
+                        sy += p.y;
+                        sz += p.z;
+                    }
+                    let n = poly.len() as f64;
+                    Point3::new(sx / n, sy / n, sz / n)
+                };
+                let surface = s1.face_geom.get(fid).cloned().unwrap();
+                (fid, centroid, poly, surface)
+            })
+            .collect();
+        face_geom.sort_by(|a, b| b.1.z.partial_cmp(&a.1.z).unwrap());
+        for (_fid, _c, poly, surface) in face_geom.iter().skip(1) {
+            kept.push(KeptFace {
+                polygon: poly.clone(),
+                surface: surface.clone(),
+                owner: None,
+            });
+        }
+        // Second open box, shifted 10 in x.
+        let shift = Vec3::new(10.0, 0.0, 0.0);
+        for (_fid, _c, poly, surface) in face_geom.iter().skip(1) {
+            let shifted: Vec<Point3> = poly.iter().map(|p| p + shift).collect();
+            kept.push(KeptFace {
+                polygon: shifted,
+                surface: surface.clone(),
+                owner: None,
+            });
+        }
+        let (mut face_to_vidx, positions) = build_indices(&kept);
+        let mut kept_owned = kept.clone();
+        let diag = synthesise_planar_patches_diag(
+            &mut kept_owned,
+            &mut face_to_vidx,
+            &positions,
+            &Tolerance::default(),
+        );
+        assert_eq!(diag.one_sided_directed_edges, 8, "4 + 4 one-sided edges");
+        assert_eq!(diag.loops_found, 2, "two disjoint loops");
+        assert_eq!(diag.planar_patches_added, 2);
+        assert_eq!(kept_owned.len(), 12, "10 walls + 2 patches");
     }
 }

@@ -62,6 +62,40 @@ kernel + authoring + viewer + production output).
 | **Solidworks-tier total**                 | **100%**  |          | **~79.6%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
+## Latest session (2026-05-08, part 6 — synthesise-patch-face)
+
+Stage 1e in `crates/kerf-brep/src/booleans/stitch.rs`: after the existing
+GAP C/D/E + 1c/1d rescues, walk any remaining one-sided directed
+half-edges into closed loops, fit a plane (Newell's method) through
+each loop, and synthesise a planar patch face whose polygon is the
+reverse of the walk so its half-edges twin the existing one-sided ones.
+
+Two paths:
+
+  - **Single-plane fit** (loop is planar within `100 * point_eq * 1e3`):
+    one quad/n-gon patch; closes the 4-corner-fillet and open-box-top
+    cases.
+  - **2-way planar split** (loop wraps a polyhedral L-corner):
+    brute-force every (i, j) split with both sub-loops ≥ 4 vertices
+    and ≤ 32-vertex outer loop; accept the first split where both
+    sub-quads are planar. Implicit chord between v_i and v_j becomes
+    mutual twin half-edges in the two patches. Closes
+    LBracket+Counterbore.
+
+Loops that satisfy neither route are left alone — stage 5 still
+panics for those, surfacing the bug.
+
+Tests: 5 new in `stitch.rs::tests` (no-op on closed cube, planar
+patch closes open-top cube, full-stitch round-trip, rejects truly
+non-planar saddle, two-disjoint-loops). Plus 2 e2e scenarios
+un-ignored (`scenario_08_lbracket_with_counterbore_bug`,
+`scenario_09_picking_drives_fillet_chain`). **799 → 806 passed, 0
+failed, 11 → 9 ignored.**
+
+The `KERF_STITCH_SYNTH_DEBUG=1` env var dumps a one-line per-call
+summary of `(one_sided, loops, added, rejected)` for future
+diagnostics — production is silent.
+
 ## Latest session (2026-05-08, part 5 — e2e scenarios)
 
 End-to-end CAD scenario tests: 12 new scenarios in
@@ -110,28 +144,26 @@ claimed at 100% rather than shipping new capability.
   profile, patterned 5× along x, subtracted from a 20×5 plate. Volume
   matches analytic to 2% (`scenario_12`).
 
-### Bugs found
+### Bugs fixed since the last cut
 
-- **`scenario_08_lbracket_with_counterbore_bug` (filed, `#[ignore]`d)**:
-  `Counterbore` applied to an `LBracket` panics inside the kernel with
-  `non-manifold input to stitch: edge key (...) has 1 half-edges
-  (expected 2)`. Surfaces from `eval` as `EvalError::Boolean`. Same
-  Counterbore composes fine on a plain `Box`. Likely root cause: the
-  LBracket's interior corner exposes a face whose boundary the
-  counterbore cutter splits in a way the stitcher's adjacency map can't
-  reconcile. **The scorecard claims Manufacturing features at 95%, but
-  any composite-cutter manufacturing feature applied to a non-convex
-  body trips this.** Worth a real fix before claiming Manufacturing
-  parity above 95%.
-- **`scenario_09_picking_drives_fillet_chain` (re-confirmed, `#[ignore]`d)**:
-  Picking pipeline (walk topology to find z-edges, feed into `Fillets`)
-  works perfectly. The kernel can't union four adjacent z-corner
-  wedges — same limitation as
-  `tests/fillets_plural.rs::fillets_all_four_z_corners_succeeds`. The
-  scenario_09b stand-in confirms the picking + 2-corner fillet flow
-  works end-to-end. **`Picking 100%` is honest for the picking flow
-  itself; the gating constraint is the 4-corner Fillets kernel
-  limitation, not picking.**
+- **`scenario_08_lbracket_with_counterbore_bug`** — fixed by the
+  synthesise-patch-face pass (Stage 1e in
+  `crates/kerf-brep/src/booleans/stitch.rs`). The LBracket's interior
+  concave corner produced a 6-vertex unpaired-half-edge loop wrapping
+  two interior faces that share an edge on the corner; Stage 1e
+  detects the loop, brute-force searches every (i, j) pair for a
+  2-way planar split, and synthesises one planar patch per sub-quad
+  joined by an implicit chord half-edge. Test un-ignored.
+- **`scenario_09_picking_drives_fillet_chain`** — same fix. The
+  4-corner z-edge fillet leaves small planar quad gaps where each
+  wedge meets the body's lateral faces; Stage 1e closes them with
+  single-plane patches (no split needed). Test un-ignored. The
+  companion `tests/fillets_plural.rs::fillets_all_four_z_corners_succeeds`
+  is independent; that one is still ignored because it expects the
+  full union to round-trip a known volume — distinct test infra,
+  same kernel pass underneath.
+
+### Bugs found
 - **`solid_volume(Revolve)` returns 0**: not new — already documented in
   STATUS.md "Brittle" — but `scenario_06` verifies the symptom is
   unchanged after final-polish.
