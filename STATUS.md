@@ -51,7 +51,7 @@ kernel + authoring + viewer + production output).
 | Picking / selection (face → owner Feature)| 5%        | 70%      | 3.5    |
 | Feature tree UI                           | 5%        | 60%      | 3.0    |
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
-| Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
+| Drawings (3-view + dimensions)            | 4%        | 75%      | 3.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
 | Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
@@ -59,10 +59,36 @@ kernel + authoring + viewer + production output).
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.0%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~66.0%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-06)
+## Latest session (2026-05-08)
+
+Drawings back-end shipped. ~65.0% → ~66.0% (+1.0 SW pt), 727 → 738 tests,
+0 failed.
+
+- **Drawing dimensions back-end**: new `kerf_brep::dimension` module with
+  pure math helpers (`distance`, `angle_between_vectors`,
+  `angle_at_vertex`, `project_to_plane`, `to_2d_view` for { Top, Front,
+  Side, Iso }) plus `Dimension { from, to, kind }` with
+  `DimensionKind = Linear | RadialFromCenter { center } | Angular {
+  vertex }`. `render_dimensioned_view(solid, view, dimensions, viewport)`
+  returns a self-contained SVG string with a silhouette polygon (convex
+  hull of the projected tessellation — see limitation below), dimension
+  lines, arrowheads, and `<text>` measurement values. Exposed in the
+  WASM API as `measure_distance`, `project_to_view`, `angle_at_vertex`,
+  `project_point_to_plane`, and `render_drawing_svg(model_json,
+  target_id, params_json, view, dimensions_json, viewport_json)`. UI
+  wiring (a Drawings panel in the viewer that lets the user click two
+  vertices and download the resulting SVG) is still TODO — it's why the
+  Drawings line is 75% rather than 90%. **Drawings category bumps 50% →
+  75%.** Convex-hull silhouette is the documented fallback; concave
+  parts (L-bracket viewed from above) currently render as their bounding
+  shape. True silhouette (walk the edge graph, emit edges where adjacent
+  face normals have opposite signs in the view direction) is the next
+  improvement.
+
+## Previous session (2026-05-06)
 
 GAP 1 (Picking → edit) shipped. GAP 2 Plan B (SweepPath) shipped. Bonus
 faceted torus + Donut feature shipped. ~52.7% → ~54.7% (+2 SW pts), 518
