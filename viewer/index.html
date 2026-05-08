@@ -78,6 +78,31 @@
   .examples { margin-top: 12px; font-size: 12px; color: var(--muted); }
   .examples a { color: var(--accent); text-decoration: none; cursor: pointer; }
   .examples a:hover { text-decoration: underline; }
+  #dimensions-panel { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+  #dimensions-panel label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 12px; }
+  #dimensions-panel select { width: 100%; padding: 6px 8px; background: var(--bg);
+    color: var(--fg); border: 1px solid var(--line); border-radius: 4px; }
+  #dimensions-panel .dim-row { display: flex; gap: 6px; margin-bottom: 8px; }
+  #dimensions-panel .dim-row > * { flex: 1; }
+  #dimensions-panel .dim-actions { display: flex; gap: 6px; margin-top: 6px; }
+  #dim-pick-btn.active { border-color: #ffb84d; color: #ffb84d; }
+  #dim-hint { color: var(--muted); font-size: 11px; margin: 6px 0 8px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  #dim-list { margin: 6px 0 0; padding: 0; list-style: none;
+    max-height: 160px; overflow-y: auto;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10.5px; }
+  #dim-list li { display: flex; align-items: center; gap: 6px;
+    padding: 3px 4px; border-radius: 3px; line-height: 1.4; }
+  #dim-list li:hover { background: var(--bg); }
+  #dim-list .dim-label { flex: 1; color: var(--fg); }
+  #dim-list .dim-del { color: var(--muted); padding: 0 4px; cursor: pointer;
+    border-radius: 3px; visibility: hidden; }
+  #dim-list li:hover .dim-del { visibility: visible; }
+  #dim-list .dim-del:hover { color: #ff7b72; background: rgba(255,123,114,0.1); }
+  #dim-list:empty::before { content: "No dimensions yet."; color: var(--muted);
+    font-style: italic; font-size: 11px; }
+  #dim-download-btn:disabled { opacity: 0.45; cursor: default; }
+  #dim-download-btn:disabled:hover { border-color: var(--line); color: var(--fg); }
 </style>
 </head>
 <body>
@@ -113,6 +138,31 @@
     </div>
     <div id="actions2" hidden>
       <button id="drawing-btn">Export 3-view PNG</button>
+    </div>
+    <div id="dimensions-panel" hidden>
+      <label>Dimensions</label>
+      <div class="dim-row">
+        <select id="dim-kind" title="Dimension type">
+          <option value="linear">Linear</option>
+          <option value="radial">Radial</option>
+          <option value="angular">Angular</option>
+        </select>
+        <select id="dim-view" title="Projection view">
+          <option value="top">Top</option>
+          <option value="front">Front</option>
+          <option value="side">Side</option>
+          <option value="iso">Iso</option>
+        </select>
+      </div>
+      <div class="dim-actions">
+        <button id="dim-pick-btn">Pick points</button>
+        <button id="dim-clear-btn">Clear</button>
+      </div>
+      <div id="dim-hint">Pick 2 linear points.</div>
+      <ol id="dim-list"></ol>
+      <div class="dim-actions">
+        <button id="dim-download-btn" disabled>Download SVG</button>
+      </div>
     </div>
     <div id="views" hidden>
       <label>View</label>

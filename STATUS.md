@@ -51,7 +51,7 @@ kernel + authoring + viewer + production output).
 | Picking / selection (face → owner Feature)| 5%        | 70%      | 3.5    |
 | Feature tree UI                           | 5%        | 60%      | 3.0    |
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
-| Drawings (3-view + dimensions)            | 4%        | 75%      | 3.0    |
+| Drawings (3-view + dimensions)            | 4%        | 90%      | 3.6    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
 | Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
@@ -59,10 +59,32 @@ kernel + authoring + viewer + production output).
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~66.0%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~66.6%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08)
+## Latest session (2026-05-08, part 2)
+
+Drawings UI wiring shipped. ~66.0% → ~66.6% (+0.6 SW pt). cargo workspace
+738 tests still passing; viewer-side gains 8 vitest tests covering the
+dimensions-panel state → JSON-model conversion and the
+`render_drawing_svg` call shape.
+
+- **Dimensions panel** (`viewer/src/dimensions.ts` + `#dimensions-panel`
+  in index.html). Wired into `main.ts`'s existing raycaster click flow:
+  when picking mode is on, clicks return `hits[0].point` (world-space)
+  instead of falling through to face-id selection. State machine accumulates
+  picks until the chosen kind has enough (2 for Linear/Radial, 3 for
+  Angular), then commits a `Dimension` to the live list. Each pick drops
+  a sphere marker in the scene (orange while pending, blue once committed).
+  "Download SVG" calls the WASM `render_drawing_svg(model_json, target_id,
+  params_json, view, dimensions_json, viewport_json)` and saves the
+  result as `<target>.<view>.dimensioned.svg`. **Drawings category bumps
+  75% → 90%.** The remaining 10% is the convex-hull silhouette
+  limitation (not a UI gap) and the lack of "click two vertices" snapping
+  — picks land wherever the ray hits the tessellation, which is fine for
+  most edges/corners but not pixel-exact on curved faces.
+
+## Previous session (2026-05-08, part 1)
 
 Drawings back-end shipped. ~65.0% → ~66.0% (+1.0 SW pt), 727 → 738 tests,
 0 failed.
@@ -79,9 +101,7 @@ Drawings back-end shipped. ~65.0% → ~66.0% (+1.0 SW pt), 727 → 738 tests,
   WASM API as `measure_distance`, `project_to_view`, `angle_at_vertex`,
   `project_point_to_plane`, and `render_drawing_svg(model_json,
   target_id, params_json, view, dimensions_json, viewport_json)`. UI
-  wiring (a Drawings panel in the viewer that lets the user click two
-  vertices and download the resulting SVG) is still TODO — it's why the
-  Drawings line is 75% rather than 90%. **Drawings category bumps 50% →
+  wiring shipped in part 2 (see above). **Drawings category bumps 50% →
   75%.** Convex-hull silhouette is the documented fallback; concave
   parts (L-bracket viewed from above) currently render as their bounding
   shape. True silhouette (walk the edge graph, emit edges where adjacent
