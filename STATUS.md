@@ -52,17 +52,65 @@ kernel + authoring + viewer + production output).
 | Feature tree UI                           | 5%        | 60%      | 3.0    |
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
-| Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
+| Constraint solver (forward expressions)   | 10%       | 60%      | 6.0    |
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
 | Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 30%      | 2.4    |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~67.4%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~70.4%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08)
+## Latest session (2026-05-08, part 2)
+
+**Iterative 2D constraint solver shipped.** Constraint-solver scorecard
+line 30% → 60% (+3.0 SW pts). 739 tests → 752 tests (13 new
+integration tests in `tests/constraint_solver.rs`), 0 failed, 9 ignored.
+
+- **`Sketch::solve(params)`** in new `crates/kerf-cad/src/solver.rs`.
+  Takes the current Point coordinates as initial guess, iteratively
+  adjusts them to drive the residual sum to zero. Lines/Circles/Arcs
+  are derived from Points by id, so moving Points automatically
+  updates every primitive that touches them — Points are the only DOFs
+  the solver perturbs. On convergence, Point primitives are rewritten
+  in-place as `Scalar::Lit` with the solved coordinates.
+- **Residual functions** for all 7 `SketchConstraint` variants:
+  `Coincident` → `|p_a - p_b|^2`, `Distance` → `(|p_a - p_b| - v)^2`,
+  `Horizontal` → `(p_to.y - p_from.y)^2`, `Vertical` → analogous,
+  `Parallel` → `cross(dir_a, dir_b)^2`, `Perpendicular` →
+  `dot(dir_a, dir_b)^2`, `FixedPoint` → `|p - p_initial|^2`. Total
+  residual = sum.
+- **Solver loop**: gradient descent with backtracking line search.
+  Gradient is central finite differences over the flat coord vector
+  (problem sizes are small — typical sketches have <50 DOFs — so the
+  O(n) FD cost is negligible vs the readability win over hand-rolled
+  analytic derivatives). Initial step 1.0, halved until residual
+  decreases. Tolerance 1e-9, max 5000 iterations by default; tunable
+  via `SolverConfig` + `Sketch::solve_with_config`.
+- **Structured `SolverError`**: `OverConstrained` (max iterations
+  exhausted), `Contradictory` (gradient norm collapses with non-zero
+  residual, or line search shrinks below `min_step`),
+  `UnknownPoint(id)`, `UnknownLine(id)`, `ParamResolution(msg)`.
+  Under-constrained sketches converge to *some* valid configuration
+  (documented behaviour — `FixedPoint` is the explicit anchor when
+  callers want determinism).
+- **`Scalar::Param` resolution**: constraint values that reference
+  `$param` (e.g. `Distance { value: Scalar::param("len") }`) are
+  resolved against the `params: &HashMap<String, f64>` argument at
+  solve time, so the same sketch can be re-solved with different
+  parameter sets.
+- **Tests**: one per constraint variant (distance, horizontal,
+  vertical, parallel, perpendicular, coincident, fixed-point), one
+  per error path (over-constrained, contradictory, unknown-point,
+  param-resolution), one no-op for empty constraints, one composite
+  test combining FixedPoint + Horizontal + Distance to verify the
+  geometry collapses to the unique solution.
+- **`SketchConstraint` was NOT modified** — solver consumes it
+  read-only. The data model from PR #8 is unchanged; this is a pure
+  additive consumer.
+
+## Earlier session (2026-05-08, part 1)
 
 **2D sketcher data model + JSON DSL shipped.** Sketcher scorecard line
 0% → 30% (+2.4 SW pts). 727 tests → 739 tests (12 new — 10 integration
