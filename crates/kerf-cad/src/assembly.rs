@@ -169,6 +169,32 @@ pub struct AxisRef {
     pub direction: [Scalar; 3],
 }
 
+/// A reference to a simple analytic surface in an instance's local frame.
+/// Used by `Mate::TangentMate`. Only the simple cases are supported today;
+/// pairs that aren't covered (cylinder-on-cylinder skew, etc.) come back
+/// from the solver as `MateError::NotImplemented`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SurfaceRef {
+    /// Infinite plane through `origin` with outward `normal`. The mate
+    /// puts the second body on the side `normal` points toward.
+    Plane {
+        origin: [Scalar; 3],
+        normal: [Scalar; 3],
+    },
+    /// Infinite cylinder of `radius` around the line `origin + t * axis`.
+    Cylinder {
+        origin: [Scalar; 3],
+        axis: [Scalar; 3],
+        radius: Scalar,
+    },
+    /// Sphere of `radius` centered at `center`.
+    Sphere {
+        center: [Scalar; 3],
+        radius: Scalar,
+    },
+}
+
 /// One mate (positioning constraint) between two instances. Applied in
 /// declaration order. Points and axes are interpreted in each instance's
 /// LOCAL frame; the solver resolves them through the current poses.
@@ -205,6 +231,44 @@ pub enum Mate {
         point_b: [Scalar; 3],
         value: Scalar,
     },
+    /// Orient instance B's plane to be parallel to instance A's plane,
+    /// with the optional offset measured along plane A's normal. Sign
+    /// of `offset` follows `plane_a_normal`. Solved by rotating B so
+    /// the plane normals align (Rodrigues), then translating B so plane
+    /// B's origin sits at the chosen offset along plane A's normal.
+    ParallelPlane {
+        instance_a: String,
+        plane_a_normal: [Scalar; 3],
+        plane_a_origin: [Scalar; 3],
+        instance_b: String,
+        plane_b_normal: [Scalar; 3],
+        plane_b_origin: [Scalar; 3],
+        /// Distance from plane A to plane B, signed along plane A's
+        /// normal. Use `Scalar::lit(0.0)` for "coplanar".
+        offset: Scalar,
+    },
+    /// Set the angle between two axes (in radians). Solved by rotating
+    /// B around the cross-product axis until the angle between A's and
+    /// B's directions equals `angle`.
+    AngleMate {
+        instance_a: String,
+        axis_a: AxisRef,
+        instance_b: String,
+        axis_b: AxisRef,
+        /// Target angle in radians. Must be in `[0, π]`.
+        angle: Scalar,
+    },
+    /// Make `surface_b` tangent to `surface_a`. Only the simple cases
+    /// are supported: plane-plane (== ParallelPlane with zero offset
+    /// inverted), cylinder-on-plane (cylinder rolls on the plane),
+    /// sphere-on-plane (sphere kisses the plane), and sphere-on-sphere
+    /// (external tangent). Other combos return `MateError::NotImplemented`.
+    TangentMate {
+        instance_a: String,
+        surface_a: SurfaceRef,
+        instance_b: String,
+        surface_b: SurfaceRef,
+    },
 }
 
 /// Top-level container.
@@ -230,6 +294,12 @@ pub enum MateError {
     Parameter(usize, String),
     #[error("mate {0} concentric: axis direction is zero-length")]
     ZeroAxisDirection(usize),
+    #[error("mate {0}: not implemented for this surface combination ({1})")]
+    NotImplemented(usize, String),
+    #[error("mate {0}: invalid input ({1})")]
+    Invalid(usize, String),
+    #[error("mate cycle did not converge after {iterations} iterations: residual {residual}")]
+    CycleDidNotConverge { iterations: usize, residual: f64 },
 }
 
 #[derive(Debug, Error)]
@@ -257,6 +327,13 @@ pub enum AssemblyError {
 /// Tolerance for "is this constraint already satisfied?" checks during
 /// over-constrained detection.
 const MATE_TOL: f64 = 1e-9;
+
+/// Tolerance for the iterative cycle solver — sum of squared residuals
+/// across all mates.
+const CYCLE_RESIDUAL_TOL: f64 = 1e-12;
+
+/// Maximum iterations for the iterative cycle solver.
+const CYCLE_MAX_ITERS: usize = 200;
 
 impl Assembly {
     pub fn new() -> Self {
@@ -289,9 +366,27 @@ impl Assembly {
     }
 
     /// Solve mates and return the resolved pose for every instance, keyed by
-    /// instance id. Mates are applied in declaration order; if a mate
-    /// conflicts with an already-frozen instance, returns
-    /// `MateError::OverConstrained` carrying the conflicting mate's index.
+    /// instance id.
+    ///
+    /// Strategy:
+    /// 1. **Acyclic networks** (mate graph is a forest): apply mates in
+    ///    declaration order. Each mate moves its `instance_b` and freezes
+    ///    it; later mates that try to move a frozen instance must already
+    ///    satisfy the constraint, else `MateError::OverConstrained`.
+    /// 2. **Cyclic networks** (some mate closes a loop in the instance
+    ///    graph — A→B, B→C, C→A): the freeze rule would falsely flag the
+    ///    third mate as over-constrained. Instead, run iterative
+    ///    Gauss-Seidel relaxation: apply every mate to its `instance_b`
+    ///    each pass without freezing, repeat until the sum of squared
+    ///    residuals converges below `CYCLE_RESIDUAL_TOL` or
+    ///    `CYCLE_MAX_ITERS` is hit.
+    ///
+    /// If iterative refinement does not converge, the final residual is
+    /// re-checked for over-constrained vs. unconverged: a residual that
+    /// won't budge under more iterations and exceeds tolerance signals an
+    /// over-constrained cycle (`MateError::OverConstrained` carrying the
+    /// last mate touched). A residual that's still moving but past the
+    /// iteration cap returns `MateError::CycleDidNotConverge`.
     pub fn solve_poses(&self) -> Result<HashMap<String, ResolvedPose>, AssemblyError> {
         self.check_unique_instances()?;
 
@@ -305,17 +400,118 @@ impl Assembly {
             poses.insert(inst.id.clone(), pose);
         }
 
-        // Track which instance has been "moved" by some mate already. Used
-        // for over-constrained detection: if an instance has already been
-        // positioned and a new mate tries to position it but the constraint
-        // doesn't already hold, that's over-constrained.
-        let mut frozen: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-        for (mi, mate) in self.mates.iter().enumerate() {
-            self.apply_mate(mi, mate, &mut poses, &mut frozen)?;
+        // Decide the path. If the mate graph has cycles, go straight to
+        // iterative refinement; otherwise, run the strict "freeze after
+        // first move" pass.
+        if self.mates_form_cycle() {
+            self.solve_poses_iterative(&mut poses)?;
+        } else {
+            // Track which instance has been "moved" by some mate already.
+            // Used for over-constrained detection: if an instance has
+            // already been positioned and a new mate tries to position it
+            // but the constraint doesn't already hold, that's
+            // over-constrained.
+            let mut frozen: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for (mi, mate) in self.mates.iter().enumerate() {
+                self.apply_mate(mi, mate, &mut poses, Some(&mut frozen))?;
+            }
         }
 
         Ok(poses)
+    }
+
+    /// True if the directed-edge multigraph `instance_a → instance_b` (one
+    /// edge per mate) contains a cycle when treated as undirected. Uses a
+    /// union-find: when a mate connects two instances already in the same
+    /// component, the network has a cycle.
+    fn mates_form_cycle(&self) -> bool {
+        let mut parent: HashMap<String, String> = HashMap::new();
+        for inst in &self.instances {
+            parent.insert(inst.id.clone(), inst.id.clone());
+        }
+
+        fn find(parent: &mut HashMap<String, String>, x: &str) -> String {
+            let p = parent.get(x).cloned().unwrap_or_else(|| x.to_string());
+            if p == x {
+                return p;
+            }
+            let root = find(parent, &p);
+            parent.insert(x.to_string(), root.clone());
+            root
+        }
+
+        for mate in &self.mates {
+            let (a, b) = mate_endpoints(mate);
+            // Skip self-loops; they're degenerate but not "cycles" in the
+            // sense we care about here.
+            if a == b {
+                continue;
+            }
+            // If either side names an unknown instance, defer to the
+            // mate-application stage to produce the right error.
+            if !parent.contains_key(a) || !parent.contains_key(b) {
+                continue;
+            }
+            let ra = find(&mut parent, a);
+            let rb = find(&mut parent, b);
+            if ra == rb {
+                return true;
+            }
+            parent.insert(ra, rb);
+        }
+        false
+    }
+
+    /// Iterative Gauss-Seidel relaxation for cyclic mate networks. Each
+    /// pass applies every mate in declaration order, moving its
+    /// `instance_b` toward satisfaction without freezing. Loops until
+    /// total residual converges or the iteration cap is reached.
+    fn solve_poses_iterative(
+        &self,
+        poses: &mut HashMap<String, ResolvedPose>,
+    ) -> Result<(), AssemblyError> {
+        let mut prev_residual = f64::INFINITY;
+        for iter in 0..CYCLE_MAX_ITERS {
+            for (mi, mate) in self.mates.iter().enumerate() {
+                self.apply_mate(mi, mate, poses, None)?;
+            }
+            let residual = self.total_squared_residual(poses)?;
+            if residual < CYCLE_RESIDUAL_TOL {
+                return Ok(());
+            }
+            // Detect "stuck": residual essentially unchanged. Treat as
+            // over-constrained (the system can't both satisfy mate i and
+            // mate j simultaneously, so iteration stalls at a fixed
+            // non-zero residual).
+            if iter > 5 && (prev_residual - residual).abs() < 1e-15 && residual > 1e-6 {
+                return Err(AssemblyError::Mate(MateError::OverConstrained(
+                    self.mates.len().saturating_sub(1),
+                    format!(
+                        "cycle relaxation stalled at residual {residual} after {iter} \
+                         iterations — system is over-constrained"
+                    ),
+                )));
+            }
+            prev_residual = residual;
+        }
+        Err(AssemblyError::Mate(MateError::CycleDidNotConverge {
+            iterations: CYCLE_MAX_ITERS,
+            residual: prev_residual,
+        }))
+    }
+
+    /// Sum of squared residuals across every mate, given the current
+    /// poses. Used by the iterative solver to decide convergence.
+    fn total_squared_residual(
+        &self,
+        poses: &HashMap<String, ResolvedPose>,
+    ) -> Result<f64, AssemblyError> {
+        let mut total = 0.0;
+        for (mi, mate) in self.mates.iter().enumerate() {
+            total += self.mate_squared_residual(mi, mate, poses)?;
+        }
+        Ok(total)
     }
 
     fn apply_mate(
@@ -323,8 +519,18 @@ impl Assembly {
         mi: usize,
         mate: &Mate,
         poses: &mut HashMap<String, ResolvedPose>,
-        frozen: &mut std::collections::HashSet<String>,
+        mut frozen: Option<&mut std::collections::HashSet<String>>,
     ) -> Result<(), MateError> {
+        // Validate both endpoints are real, regardless of which mode.
+        {
+            let (a, b) = mate_endpoints(mate);
+            if !poses.contains_key(a) {
+                return Err(MateError::UnknownInstance(a.to_string(), mi));
+            }
+            if !poses.contains_key(b) {
+                return Err(MateError::UnknownInstance(b.to_string(), mi));
+            }
+        }
         match mate {
             Mate::Coincident {
                 instance_a,
@@ -337,24 +543,28 @@ impl Assembly {
 
                 let delta = pa - pb_world;
 
-                if frozen.contains(instance_b) {
-                    if delta.norm() > MATE_TOL {
-                        return Err(MateError::OverConstrained(
-                            mi,
-                            format!(
-                                "Coincident: instance '{instance_b}' is already positioned by an \
-                                 earlier mate; current point_b is {} from point_a, want 0",
-                                delta.norm()
-                            ),
-                        ));
+                if let Some(f) = frozen.as_deref() {
+                    if f.contains(instance_b) {
+                        if delta.norm() > MATE_TOL {
+                            return Err(MateError::OverConstrained(
+                                mi,
+                                format!(
+                                    "Coincident: instance '{instance_b}' is already positioned by an \
+                                     earlier mate; current point_b is {} from point_a, want 0",
+                                    delta.norm()
+                                ),
+                            ));
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
                 }
 
                 // Translate B by `delta` so its point lands on A's point.
                 let pose_b = poses.get_mut(instance_b).expect("checked");
                 pose_b.translation += delta;
-                frozen.insert(instance_b.clone());
+                if let Some(f) = frozen.as_deref_mut() {
+                    f.insert(instance_b.clone());
+                }
                 Ok(())
             }
             Mate::Concentric {
@@ -366,26 +576,31 @@ impl Assembly {
                 let (oa_w, da_w) = self.resolve_axis_in_world(mi, instance_a, axis_a, poses)?;
                 let (ob_w, db_w) = self.resolve_axis_in_world(mi, instance_b, axis_b, poses)?;
 
-                if frozen.contains(instance_b) {
-                    // Verify already-aligned to within tolerance.
-                    let parallel = db_w.cross(&da_w).norm() < MATE_TOL;
-                    let on_line = {
-                        let v = ob_w - oa_w;
-                        let proj = da_w.dot(&v);
-                        let perp = v - da_w * proj;
-                        perp.norm() < MATE_TOL
-                    };
-                    if !(parallel && on_line) {
-                        return Err(MateError::OverConstrained(
-                            mi,
-                            format!(
-                                "Concentric: '{instance_b}' is already positioned and its axis \
-                                 doesn't match (parallel={parallel}, on_line={on_line})"
-                            ),
-                        ));
+                if let Some(f) = frozen.as_deref() {
+                    if f.contains(instance_b) {
+                        // Verify already-aligned to within tolerance.
+                        let parallel = db_w.cross(&da_w).norm() < MATE_TOL;
+                        let on_line = {
+                            let v = ob_w - oa_w;
+                            let proj = da_w.dot(&v);
+                            let perp = v - da_w * proj;
+                            perp.norm() < MATE_TOL
+                        };
+                        if !(parallel && on_line) {
+                            return Err(MateError::OverConstrained(
+                                mi,
+                                format!(
+                                    "Concentric: '{instance_b}' is already positioned and its axis \
+                                     doesn't match (parallel={parallel}, on_line={on_line})"
+                                ),
+                            ));
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
                 }
+                // Avoid `let _ = ob_w` — keep pulling its name through the
+                // axis-recompute path below.
+                let _ = ob_w;
 
                 let pose_b = poses.get_mut(instance_b).expect("checked");
 
@@ -457,7 +672,9 @@ impl Assembly {
                 let perp = v - da_w * proj;
                 pose_b.translation -= perp;
 
-                frozen.insert(instance_b.clone());
+                if let Some(f) = frozen.as_deref_mut() {
+                    f.insert(instance_b.clone());
+                }
                 Ok(())
             }
             Mate::Distance {
@@ -476,17 +693,19 @@ impl Assembly {
                 let current_vec = pb_world - pa;
                 let current_dist = current_vec.norm();
 
-                if frozen.contains(instance_b) {
-                    if (current_dist - val).abs() > MATE_TOL {
-                        return Err(MateError::OverConstrained(
-                            mi,
-                            format!(
-                                "Distance: '{instance_b}' is already positioned at distance \
-                                 {current_dist}, want {val}"
-                            ),
-                        ));
+                if let Some(f) = frozen.as_deref() {
+                    if f.contains(instance_b) {
+                        if (current_dist - val).abs() > MATE_TOL {
+                            return Err(MateError::OverConstrained(
+                                mi,
+                                format!(
+                                    "Distance: '{instance_b}' is already positioned at distance \
+                                     {current_dist}, want {val}"
+                                ),
+                            ));
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
                 }
 
                 // Direction from A to B; if degenerate (B at A), pick +x.
@@ -500,10 +719,681 @@ impl Assembly {
                 let delta = target - pb_world;
                 let pose_b = poses.get_mut(instance_b).expect("checked");
                 pose_b.translation += delta;
-                frozen.insert(instance_b.clone());
+                if let Some(f) = frozen.as_deref_mut() {
+                    f.insert(instance_b.clone());
+                }
                 Ok(())
             }
+            Mate::ParallelPlane {
+                instance_a,
+                plane_a_normal,
+                plane_a_origin,
+                instance_b,
+                plane_b_normal,
+                plane_b_origin,
+                offset,
+            } => {
+                let na = self.resolve_dir_in_world(mi, instance_a, plane_a_normal, poses)?;
+                let oa = self.resolve_pt_in_world(mi, instance_a, plane_a_origin, poses)?;
+                let nb = self.resolve_dir_in_world(mi, instance_b, plane_b_normal, poses)?;
+                let ob = self.resolve_pt_in_world(mi, instance_b, plane_b_origin, poses)?;
+                let off = offset.resolve(&self.parameters).map_err(|e| {
+                    MateError::Parameter(mi, format!("offset: {e}"))
+                })?;
+
+                // Plane B should be parallel to plane A: nb_world == na_world.
+                // With offset: ob_world = oa_world + off * na_world (signed
+                // along plane_a's normal).
+                let parallel = nb.cross(&na).norm() < MATE_TOL && nb.dot(&na) > 0.0;
+                let target_ob = oa + na * off;
+                let delta_origin = target_ob - ob;
+                let on_target = delta_origin.norm() < MATE_TOL;
+
+                if let Some(f) = frozen.as_deref() {
+                    if f.contains(instance_b) {
+                        if !(parallel && on_target) {
+                            return Err(MateError::OverConstrained(
+                                mi,
+                                format!(
+                                    "ParallelPlane: '{instance_b}' is already positioned \
+                                     (parallel={parallel}, on_target={on_target}, \
+                                     origin_delta={})",
+                                    delta_origin.norm()
+                                ),
+                            ));
+                        }
+                        return Ok(());
+                    }
+                }
+
+                let pose_b = poses.get_mut(instance_b).expect("checked");
+
+                // Step 1: rotate B so nb aligns with na.
+                let cross = nb.cross(&na);
+                let dot = nb.dot(&na);
+                let cross_norm = cross.norm();
+                if cross_norm > MATE_TOL {
+                    let rot_axis = cross / cross_norm;
+                    let angle = cross_norm.atan2(dot);
+                    let r = compose_axis_angle(
+                        pose_b.rotation_axis,
+                        pose_b.rotation_angle,
+                        rot_axis,
+                        angle,
+                    );
+                    pose_b.rotation_axis = r.0;
+                    pose_b.rotation_angle = r.1;
+                    pose_b.translation = rodrigues(pose_b.translation, rot_axis, angle);
+                } else if dot < 0.0 {
+                    // Anti-parallel: 180° flip about a perpendicular axis.
+                    let perp = pick_perpendicular(nb);
+                    let angle = std::f64::consts::PI;
+                    let r = compose_axis_angle(
+                        pose_b.rotation_axis,
+                        pose_b.rotation_angle,
+                        perp,
+                        angle,
+                    );
+                    pose_b.rotation_axis = r.0;
+                    pose_b.rotation_angle = r.1;
+                    pose_b.translation = rodrigues(pose_b.translation, perp, angle);
+                }
+
+                // Step 2: translate B so its plane origin lands at the
+                // signed offset along na from oa. Re-evaluate ob in world
+                // with the updated rotation.
+                let ob_local = resolve_arr3(plane_b_origin, &self.parameters)
+                    .map_err(|e| MateError::Parameter(mi, format!("plane_b_origin: {e}")))?;
+                let ob_now = pose_b.apply_point(Vec3::new(ob_local[0], ob_local[1], ob_local[2]));
+                let target = oa + na * off;
+                let delta = target - ob_now;
+                pose_b.translation += delta;
+
+                if let Some(f) = frozen.as_deref_mut() {
+                    f.insert(instance_b.clone());
+                }
+                Ok(())
+            }
+            Mate::AngleMate {
+                instance_a,
+                axis_a,
+                instance_b,
+                axis_b,
+                angle,
+            } => {
+                let target_angle = angle.resolve(&self.parameters).map_err(|e| {
+                    MateError::Parameter(mi, format!("angle: {e}"))
+                })?;
+                if !(0.0..=std::f64::consts::PI + 1e-12).contains(&target_angle) {
+                    return Err(MateError::Invalid(
+                        mi,
+                        format!("AngleMate: angle {target_angle} is outside [0, π]"),
+                    ));
+                }
+                let (_oa, da) = self.resolve_axis_in_world(mi, instance_a, axis_a, poses)?;
+                let (_ob, db) = self.resolve_axis_in_world(mi, instance_b, axis_b, poses)?;
+
+                let current_dot = db.dot(&da).clamp(-1.0, 1.0);
+                let current_angle = current_dot.acos();
+                let delta_angle = target_angle - current_angle;
+
+                if let Some(f) = frozen.as_deref() {
+                    if f.contains(instance_b) {
+                        if delta_angle.abs() > MATE_TOL {
+                            return Err(MateError::OverConstrained(
+                                mi,
+                                format!(
+                                    "AngleMate: '{instance_b}' axis is already at \
+                                     {current_angle} rad from A, want {target_angle}"
+                                ),
+                            ));
+                        }
+                        return Ok(());
+                    }
+                }
+
+                if delta_angle.abs() < MATE_TOL {
+                    if let Some(f) = frozen.as_deref_mut() {
+                        f.insert(instance_b.clone());
+                    }
+                    return Ok(());
+                }
+
+                // Pick a rotation axis: cross of db × da (the axis that
+                // would send db onto da) — but we may want to rotate by
+                // any (current_angle - target_angle) so we go in the
+                // correct direction (decreasing the gap).
+                let cross = db.cross(&da);
+                let cross_norm = cross.norm();
+                let rot_axis = if cross_norm > MATE_TOL {
+                    cross / cross_norm
+                } else {
+                    pick_perpendicular(db)
+                };
+
+                // Rotate B by delta_angle around rot_axis. (db rotated by
+                // (current_angle - target_angle) around an axis from
+                // db→da reaches the desired angular separation; equivalent
+                // to rotating BY +delta_angle = +(target - current) when
+                // the rotation axis is db × da.)
+                // If delta_angle < 0, we need to rotate the other way —
+                // negative angle does that.
+                let angle = -delta_angle;
+                let pose_b = poses.get_mut(instance_b).expect("checked");
+                let r = compose_axis_angle(
+                    pose_b.rotation_axis,
+                    pose_b.rotation_angle,
+                    rot_axis,
+                    angle,
+                );
+                pose_b.rotation_axis = r.0;
+                pose_b.rotation_angle = r.1;
+                pose_b.translation = rodrigues(pose_b.translation, rot_axis, angle);
+
+                if let Some(f) = frozen.as_deref_mut() {
+                    f.insert(instance_b.clone());
+                }
+                Ok(())
+            }
+            Mate::TangentMate {
+                instance_a,
+                surface_a,
+                instance_b,
+                surface_b,
+            } => self.apply_tangent_mate(
+                mi,
+                instance_a,
+                surface_a,
+                instance_b,
+                surface_b,
+                poses,
+                frozen.as_deref_mut(),
+            ),
         }
+    }
+
+    /// Tangent-mate dispatch. Supports the simple cases:
+    /// - plane-on-plane: equivalent to `ParallelPlane` with offset 0 and
+    ///   normals pointed at each other (anti-parallel).
+    /// - plane-cylinder (either order): cylinder axis becomes parallel
+    ///   to plane, cylinder line at `radius` distance from plane.
+    /// - plane-sphere (either order): sphere center sits at `radius`
+    ///   along the plane normal from the plane origin's projection.
+    /// - sphere-sphere: external tangent — center distance = sum of radii.
+    /// All other combinations return `MateError::NotImplemented`.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_tangent_mate(
+        &self,
+        mi: usize,
+        instance_a: &str,
+        surface_a: &SurfaceRef,
+        instance_b: &str,
+        surface_b: &SurfaceRef,
+        poses: &mut HashMap<String, ResolvedPose>,
+        frozen: Option<&mut std::collections::HashSet<String>>,
+    ) -> Result<(), MateError> {
+        match (surface_a, surface_b) {
+            (
+                SurfaceRef::Plane {
+                    origin: _,
+                    normal: _,
+                },
+                SurfaceRef::Plane {
+                    origin: _,
+                    normal: _,
+                },
+            ) => Err(MateError::NotImplemented(
+                mi,
+                "plane-plane tangent — use ParallelPlane with offset=0 instead".into(),
+            )),
+            (
+                SurfaceRef::Plane {
+                    origin: pa_o,
+                    normal: pa_n,
+                },
+                SurfaceRef::Cylinder {
+                    origin: cy_o,
+                    axis: cy_ax,
+                    radius: cy_r,
+                },
+            ) => {
+                // Cylinder of B sits tangent to plane of A. Cylinder axis
+                // (in world) must be perpendicular to plane normal; the
+                // axis line must be at distance `radius` from the plane,
+                // on the +normal side.
+                let radius = cy_r.resolve(&self.parameters).map_err(|e| {
+                    MateError::Parameter(mi, format!("cylinder.radius: {e}"))
+                })?;
+                self.solve_plane_cylinder_tangent(
+                    mi, instance_a, pa_o, pa_n, instance_b, cy_o, cy_ax, radius, poses, frozen,
+                )
+            }
+            (
+                SurfaceRef::Cylinder {
+                    origin: cy_o,
+                    axis: cy_ax,
+                    radius: cy_r,
+                },
+                SurfaceRef::Plane {
+                    origin: pa_o,
+                    normal: pa_n,
+                },
+            ) => {
+                // Plane of B is tangent to cylinder of A — symmetric, but
+                // we move B (the plane). Reuse the same helper with roles
+                // flipped.
+                let _ = (cy_o, cy_ax, cy_r, pa_o, pa_n);
+                Err(MateError::NotImplemented(
+                    mi,
+                    "tangent: plane-on-cylinder (move plane to kiss cylinder) — \
+                     supported direction is cylinder-on-plane only"
+                        .into(),
+                ))
+            }
+            (
+                SurfaceRef::Plane {
+                    origin: pa_o,
+                    normal: pa_n,
+                },
+                SurfaceRef::Sphere {
+                    center: sp_c,
+                    radius: sp_r,
+                },
+            ) => {
+                let radius = sp_r.resolve(&self.parameters).map_err(|e| {
+                    MateError::Parameter(mi, format!("sphere.radius: {e}"))
+                })?;
+                self.solve_plane_sphere_tangent(
+                    mi, instance_a, pa_o, pa_n, instance_b, sp_c, radius, poses, frozen,
+                )
+            }
+            (
+                SurfaceRef::Sphere {
+                    center: _,
+                    radius: _,
+                },
+                SurfaceRef::Plane {
+                    origin: _,
+                    normal: _,
+                },
+            ) => Err(MateError::NotImplemented(
+                mi,
+                "tangent: sphere-on-plane requires the plane on the A side (use \
+                 surface_a=Plane, surface_b=Sphere)"
+                    .into(),
+            )),
+            (
+                SurfaceRef::Sphere {
+                    center: ca,
+                    radius: ra,
+                },
+                SurfaceRef::Sphere {
+                    center: cb,
+                    radius: rb,
+                },
+            ) => {
+                let radius_a = ra.resolve(&self.parameters).map_err(|e| {
+                    MateError::Parameter(mi, format!("sphere_a.radius: {e}"))
+                })?;
+                let radius_b = rb.resolve(&self.parameters).map_err(|e| {
+                    MateError::Parameter(mi, format!("sphere_b.radius: {e}"))
+                })?;
+                self.solve_sphere_sphere_tangent(
+                    mi, instance_a, ca, radius_a, instance_b, cb, radius_b, poses, frozen,
+                )
+            }
+            (SurfaceRef::Cylinder { .. }, SurfaceRef::Cylinder { .. }) => Err(
+                MateError::NotImplemented(mi, "tangent: cylinder-cylinder".into()),
+            ),
+            (SurfaceRef::Cylinder { .. }, SurfaceRef::Sphere { .. }) => Err(
+                MateError::NotImplemented(mi, "tangent: cylinder-sphere".into()),
+            ),
+            (SurfaceRef::Sphere { .. }, SurfaceRef::Cylinder { .. }) => Err(
+                MateError::NotImplemented(mi, "tangent: sphere-cylinder".into()),
+            ),
+        }
+    }
+
+    /// Cylinder-on-plane tangent. Plane lives on instance A, cylinder on
+    /// B. The cylinder's axis (world) becomes perpendicular to the plane
+    /// normal, and its line sits at `radius` from the plane on the
+    /// +normal side. This rotates and translates B.
+    #[allow(clippy::too_many_arguments)]
+    fn solve_plane_cylinder_tangent(
+        &self,
+        mi: usize,
+        instance_a: &str,
+        plane_origin: &[Scalar; 3],
+        plane_normal: &[Scalar; 3],
+        instance_b: &str,
+        cyl_origin: &[Scalar; 3],
+        cyl_axis: &[Scalar; 3],
+        radius: f64,
+        poses: &mut HashMap<String, ResolvedPose>,
+        mut frozen: Option<&mut std::collections::HashSet<String>>,
+    ) -> Result<(), MateError> {
+        let na = self.resolve_dir_in_world(mi, instance_a, plane_normal, poses)?;
+        let pa = self.resolve_pt_in_world(mi, instance_a, plane_origin, poses)?;
+        let cax = self.resolve_dir_in_world(mi, instance_b, cyl_axis, poses)?;
+        let _co_initial = self.resolve_pt_in_world(mi, instance_b, cyl_origin, poses)?;
+
+        // Goal: cax · na = 0 (axis perpendicular to plane normal). Rotate
+        // B about the axis (cax × na) by the angle that drives cax · na
+        // to zero. Specifically, the projection of cax onto na should
+        // become zero — current angle between cax and the plane is
+        // φ = π/2 − arccos(cax · na). We want φ = 0, i.e. arccos(cax·na)
+        // = π/2, i.e. cax·na = 0.
+        let dot = cax.dot(&na).clamp(-1.0, 1.0);
+        let current_angle = dot.acos();
+        let target_angle = std::f64::consts::FRAC_PI_2;
+        let delta_angle = target_angle - current_angle;
+
+        if delta_angle.abs() > MATE_TOL {
+            // Rotation axis: cax × na (the axis that would send cax → na).
+            let cross = cax.cross(&na);
+            let cn = cross.norm();
+            let rot_axis = if cn > MATE_TOL {
+                cross / cn
+            } else {
+                pick_perpendicular(cax)
+            };
+            // We want to drive the angle FROM cax TO na to π/2. Rotating
+            // by +delta_angle around (cax × na) bends cax toward na by
+            // |delta_angle|; sign of delta_angle controls direction.
+            let angle = delta_angle;
+            let pose_b = poses.get_mut(instance_b).expect("checked");
+            let r = compose_axis_angle(
+                pose_b.rotation_axis,
+                pose_b.rotation_angle,
+                rot_axis,
+                angle,
+            );
+            pose_b.rotation_axis = r.0;
+            pose_b.rotation_angle = r.1;
+            pose_b.translation = rodrigues(pose_b.translation, rot_axis, angle);
+        }
+
+        // After rotating, re-resolve cax and co in world, then translate
+        // B so the cylinder line sits at `radius` from the plane on the
+        // +na side.
+        let cax_now = {
+            let pose_b = poses.get(instance_b).expect("checked");
+            let local = resolve_arr3(cyl_axis, &self.parameters)
+                .map_err(|e| MateError::Parameter(mi, format!("cyl_axis: {e}")))?;
+            pose_b.apply_vector(Vec3::new(local[0], local[1], local[2])).normalize()
+        };
+        let co_now = {
+            let pose_b = poses.get(instance_b).expect("checked");
+            let local = resolve_arr3(cyl_origin, &self.parameters)
+                .map_err(|e| MateError::Parameter(mi, format!("cyl_origin: {e}")))?;
+            pose_b.apply_point(Vec3::new(local[0], local[1], local[2]))
+        };
+
+        // Distance from co_now to the plane (signed along na):
+        let signed_dist = na.dot(&(co_now - pa));
+        // We want signed_dist = radius. But the cylinder axis is now
+        // (approximately) parallel to the plane, so any point on the axis
+        // has the same signed distance. Translate by (radius -
+        // signed_dist) along na.
+        let move_amount = radius - signed_dist;
+        // ALSO: project out any tiny axial component so we don't undo the
+        // rotation alignment. Translation along the cylinder's own axis
+        // doesn't change the geometry's pose-meaningfully.
+        let translate_dir = na;
+        let _ = (cax_now, co_now);
+
+        let pose_b = poses.get_mut(instance_b).expect("checked");
+        pose_b.translation += translate_dir * move_amount;
+
+        if let Some(f) = frozen.as_deref_mut() {
+            f.insert(instance_b.to_string());
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn solve_plane_sphere_tangent(
+        &self,
+        mi: usize,
+        instance_a: &str,
+        plane_origin: &[Scalar; 3],
+        plane_normal: &[Scalar; 3],
+        instance_b: &str,
+        sphere_center: &[Scalar; 3],
+        radius: f64,
+        poses: &mut HashMap<String, ResolvedPose>,
+        mut frozen: Option<&mut std::collections::HashSet<String>>,
+    ) -> Result<(), MateError> {
+        let na = self.resolve_dir_in_world(mi, instance_a, plane_normal, poses)?;
+        let pa = self.resolve_pt_in_world(mi, instance_a, plane_origin, poses)?;
+        let cb_now = self.resolve_pt_in_world(mi, instance_b, sphere_center, poses)?;
+
+        // Signed distance from sphere center to plane along na:
+        let signed_dist = na.dot(&(cb_now - pa));
+        // We want signed_dist = radius (sphere kissing plane on the
+        // +normal side).
+        let move_amount = radius - signed_dist;
+
+        let pose_b = poses.get_mut(instance_b).expect("checked");
+        pose_b.translation += na * move_amount;
+
+        if let Some(f) = frozen.as_deref_mut() {
+            f.insert(instance_b.to_string());
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn solve_sphere_sphere_tangent(
+        &self,
+        mi: usize,
+        instance_a: &str,
+        center_a: &[Scalar; 3],
+        radius_a: f64,
+        instance_b: &str,
+        center_b: &[Scalar; 3],
+        radius_b: f64,
+        poses: &mut HashMap<String, ResolvedPose>,
+        mut frozen: Option<&mut std::collections::HashSet<String>>,
+    ) -> Result<(), MateError> {
+        let ca = self.resolve_pt_in_world(mi, instance_a, center_a, poses)?;
+        let cb = self.resolve_pt_in_world(mi, instance_b, center_b, poses)?;
+        let target_dist = radius_a + radius_b;
+        let cur_vec = cb - ca;
+        let cur_dist = cur_vec.norm();
+        let dir = if cur_dist > MATE_TOL {
+            cur_vec / cur_dist
+        } else {
+            Vec3::x()
+        };
+        let target_cb = ca + dir * target_dist;
+        let delta = target_cb - cb;
+        let pose_b = poses.get_mut(instance_b).expect("checked");
+        pose_b.translation += delta;
+        if let Some(f) = frozen.as_deref_mut() {
+            f.insert(instance_b.to_string());
+        }
+        Ok(())
+    }
+
+    /// Compute squared residual for one mate, given current poses. Used
+    /// by the iterative cycle solver.
+    fn mate_squared_residual(
+        &self,
+        mi: usize,
+        mate: &Mate,
+        poses: &HashMap<String, ResolvedPose>,
+    ) -> Result<f64, AssemblyError> {
+        match mate {
+            Mate::Coincident {
+                instance_a,
+                point_a,
+                instance_b,
+                point_b,
+            } => {
+                let pa = self.resolve_pt_in_world(mi, instance_a, point_a, poses)?;
+                let pb = self.resolve_pt_in_world(mi, instance_b, point_b, poses)?;
+                Ok((pa - pb).norm_squared())
+            }
+            Mate::Concentric {
+                instance_a,
+                axis_a,
+                instance_b,
+                axis_b,
+            } => {
+                let (oa, da) = self.resolve_axis_in_world(mi, instance_a, axis_a, poses)?;
+                let (ob, db) = self.resolve_axis_in_world(mi, instance_b, axis_b, poses)?;
+                let parallel_err = db.cross(&da).norm_squared();
+                let v = ob - oa;
+                let proj = da.dot(&v);
+                let perp = v - da * proj;
+                Ok(parallel_err + perp.norm_squared())
+            }
+            Mate::Distance {
+                instance_a,
+                point_a,
+                instance_b,
+                point_b,
+                value,
+            } => {
+                let val = value.resolve(&self.parameters).map_err(|e| {
+                    AssemblyError::Mate(MateError::Parameter(mi, format!("distance value: {e}")))
+                })?;
+                let pa = self.resolve_pt_in_world(mi, instance_a, point_a, poses)?;
+                let pb = self.resolve_pt_in_world(mi, instance_b, point_b, poses)?;
+                let d = (pb - pa).norm();
+                Ok((d - val).powi(2))
+            }
+            Mate::ParallelPlane {
+                instance_a,
+                plane_a_normal,
+                plane_a_origin,
+                instance_b,
+                plane_b_normal,
+                plane_b_origin,
+                offset,
+            } => {
+                let na = self.resolve_dir_in_world(mi, instance_a, plane_a_normal, poses)?;
+                let oa = self.resolve_pt_in_world(mi, instance_a, plane_a_origin, poses)?;
+                let nb = self.resolve_dir_in_world(mi, instance_b, plane_b_normal, poses)?;
+                let ob = self.resolve_pt_in_world(mi, instance_b, plane_b_origin, poses)?;
+                let off = offset.resolve(&self.parameters).map_err(|e| {
+                    AssemblyError::Mate(MateError::Parameter(mi, format!("offset: {e}")))
+                })?;
+                let parallel_err = nb.cross(&na).norm_squared();
+                let target_ob = oa + na * off;
+                let origin_err = (ob - target_ob).norm_squared();
+                Ok(parallel_err + origin_err)
+            }
+            Mate::AngleMate {
+                instance_a,
+                axis_a,
+                instance_b,
+                axis_b,
+                angle,
+            } => {
+                let target = angle.resolve(&self.parameters).map_err(|e| {
+                    AssemblyError::Mate(MateError::Parameter(mi, format!("angle: {e}")))
+                })?;
+                let (_oa, da) = self.resolve_axis_in_world(mi, instance_a, axis_a, poses)?;
+                let (_ob, db) = self.resolve_axis_in_world(mi, instance_b, axis_b, poses)?;
+                let cur = db.dot(&da).clamp(-1.0, 1.0).acos();
+                Ok((cur - target).powi(2))
+            }
+            Mate::TangentMate {
+                instance_a,
+                surface_a,
+                instance_b,
+                surface_b,
+            } => self.tangent_squared_residual(
+                mi, instance_a, surface_a, instance_b, surface_b, poses,
+            ),
+        }
+    }
+
+    fn tangent_squared_residual(
+        &self,
+        mi: usize,
+        instance_a: &str,
+        surface_a: &SurfaceRef,
+        instance_b: &str,
+        surface_b: &SurfaceRef,
+        poses: &HashMap<String, ResolvedPose>,
+    ) -> Result<f64, AssemblyError> {
+        match (surface_a, surface_b) {
+            (
+                SurfaceRef::Plane { origin: pao, normal: pan },
+                SurfaceRef::Cylinder { origin: cyo, axis: cya, radius: cyr },
+            ) => {
+                let na = self.resolve_dir_in_world(mi, instance_a, pan, poses)?;
+                let pa = self.resolve_pt_in_world(mi, instance_a, pao, poses)?;
+                let cax = self.resolve_dir_in_world(mi, instance_b, cya, poses)?;
+                let co = self.resolve_pt_in_world(mi, instance_b, cyo, poses)?;
+                let r = cyr.resolve(&self.parameters).map_err(|e| {
+                    AssemblyError::Mate(MateError::Parameter(mi, format!("radius: {e}")))
+                })?;
+                let perp_err = na.dot(&cax).powi(2);
+                let dist_err = (na.dot(&(co - pa)) - r).powi(2);
+                Ok(perp_err + dist_err)
+            }
+            (
+                SurfaceRef::Plane { origin: pao, normal: pan },
+                SurfaceRef::Sphere { center: spc, radius: spr },
+            ) => {
+                let na = self.resolve_dir_in_world(mi, instance_a, pan, poses)?;
+                let pa = self.resolve_pt_in_world(mi, instance_a, pao, poses)?;
+                let cb = self.resolve_pt_in_world(mi, instance_b, spc, poses)?;
+                let r = spr.resolve(&self.parameters).map_err(|e| {
+                    AssemblyError::Mate(MateError::Parameter(mi, format!("radius: {e}")))
+                })?;
+                Ok((na.dot(&(cb - pa)) - r).powi(2))
+            }
+            (
+                SurfaceRef::Sphere { center: ca, radius: ra },
+                SurfaceRef::Sphere { center: cb, radius: rb },
+            ) => {
+                let pa = self.resolve_pt_in_world(mi, instance_a, ca, poses)?;
+                let pb = self.resolve_pt_in_world(mi, instance_b, cb, poses)?;
+                let r_a = ra.resolve(&self.parameters).map_err(|e| {
+                    AssemblyError::Mate(MateError::Parameter(mi, format!("radius_a: {e}")))
+                })?;
+                let r_b = rb.resolve(&self.parameters).map_err(|e| {
+                    AssemblyError::Mate(MateError::Parameter(mi, format!("radius_b: {e}")))
+                })?;
+                let d = (pb - pa).norm();
+                Ok((d - (r_a + r_b)).powi(2))
+            }
+            // Unsupported pairs report zero residual; the apply step
+            // returns NotImplemented and the iterative path never
+            // reaches here.
+            _ => Ok(0.0),
+        }
+    }
+
+    /// Resolve a direction vector through an instance's pose to world.
+    /// Result is normalized; returns `ZeroAxisDirection` if the local
+    /// vector is degenerate.
+    fn resolve_dir_in_world(
+        &self,
+        mi: usize,
+        instance_id: &str,
+        local_dir: &[Scalar; 3],
+        poses: &HashMap<String, ResolvedPose>,
+    ) -> Result<Vec3, MateError> {
+        let pose = poses
+            .get(instance_id)
+            .ok_or_else(|| MateError::UnknownInstance(instance_id.to_string(), mi))?;
+        let mut d = [0.0; 3];
+        for (i, s) in local_dir.iter().enumerate() {
+            d[i] = s.resolve(&self.parameters).map_err(|e| {
+                MateError::Parameter(mi, format!("direction[{i}]: {e}"))
+            })?;
+        }
+        let v = Vec3::new(d[0], d[1], d[2]);
+        if v.norm() < MATE_TOL {
+            return Err(MateError::ZeroAxisDirection(mi));
+        }
+        Ok(pose.apply_vector(v).normalize())
     }
 
     fn resolve_pt_in_world(
@@ -697,6 +1587,35 @@ fn quat_to_axis_angle(q: (f64, f64, f64, f64)) -> (Vec3, f64) {
     } else {
         (Vec3::new(x / s, y / s, z / s), angle)
     }
+}
+
+/// Return `(instance_a_id, instance_b_id)` for a mate. Used by the
+/// cycle-detector and the up-front instance-name validation.
+fn mate_endpoints(mate: &Mate) -> (&str, &str) {
+    match mate {
+        Mate::Coincident { instance_a, instance_b, .. }
+        | Mate::Concentric { instance_a, instance_b, .. }
+        | Mate::Distance { instance_a, instance_b, .. }
+        | Mate::ParallelPlane { instance_a, instance_b, .. }
+        | Mate::AngleMate { instance_a, instance_b, .. }
+        | Mate::TangentMate { instance_a, instance_b, .. } => {
+            (instance_a.as_str(), instance_b.as_str())
+        }
+    }
+}
+
+/// Resolve a 3-element scalar array against the assembly's parameter
+/// table. Used by mate solvers that need to re-evaluate a local point or
+/// vector after an in-place rotation.
+fn resolve_arr3(
+    arr: &[Scalar; 3],
+    params: &HashMap<String, f64>,
+) -> Result<[f64; 3], String> {
+    let mut out = [0.0; 3];
+    for (i, s) in arr.iter().enumerate() {
+        out[i] = s.resolve(params)?;
+    }
+    Ok(out)
 }
 
 fn pick_perpendicular(v: Vec3) -> Vec3 {

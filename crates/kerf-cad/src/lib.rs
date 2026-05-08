@@ -13,7 +13,7 @@ pub mod transform;
 
 pub use assembly::{
     apply_pose_to_solid, Assembly, AssemblyError, AssemblyRef, AxisRef, Instance, Mate, MateError,
-    Pose, ResolvedPose,
+    Pose, ResolvedPose, SurfaceRef,
 };
 pub use eval::EvalError;
 pub use feature::{Feature, FilletEdge, Profile2D};
