@@ -96,7 +96,25 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
 
     let mut a = a.clone();
     let mut b = b.clone();
-    let mut intersections = face_intersections(&a, &b, tol);
+    let all_intersections = face_intersections(&a, &b, tol);
+    // Tier 2 safety: separate Arc-kind chords from Linear-kind. The legacy
+    // splice/split/interior pipeline assumes linear chords end-to-end —
+    // arc chords (Cylinder×Plane) need a curve-aware walker (Tier 3) that
+    // doesn't exist yet. Until Tier 3 lands, we filter arcs out of the
+    // pipeline so existing planar booleans (and the GAP C/D fillet repair
+    // tests) continue to work byte-for-byte. The arc list is currently
+    // unused by the pipeline; it exists so tests can verify the analytic
+    // path is wired and so Tier 3 can pick it up via a stable code path.
+    let mut intersections: Vec<_> = all_intersections
+        .iter()
+        .filter(|i| i.is_linear())
+        .cloned()
+        .collect();
+    let _arc_intersections: Vec<_> = all_intersections
+        .iter()
+        .filter(|i| !i.is_linear())
+        .cloned()
+        .collect();
     // Canonicalise intersection processing order. Without this, downstream
     // mef-driven splits run in slotmap-iteration order, which depends on the
     // construction path of the input solids (box_ vs extrude_polygon emit

@@ -21,7 +21,9 @@ pub use clip::{ClipResult, clip_line_to_convex_polygon};
 pub use edge_lookup::{PointLocation, locate_point_on_face};
 pub use face_polygon::{face_polygon, face_polygon_raw};
 pub use interior::{InteriorResolution, resolve_interior_endpoints};
-pub use intersect::{FaceIntersection, classify_chord_interiorness, face_intersections};
+pub use intersect::{
+    FaceIntersection, FaceIntersectionKind, classify_chord_interiorness, face_intersections,
+};
 pub use pipeline::{FaceSoup, boolean, boolean_solid};
 pub use select::{BooleanOp, SelectedFaces, flip_b_face, keep_a_face, keep_b_face};
 pub use splice::{

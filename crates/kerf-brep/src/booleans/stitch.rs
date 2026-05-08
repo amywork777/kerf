@@ -599,7 +599,17 @@ fn drop_orphan_contributors(
     loop {
         // Build edge -> [(face_idx, direction)] across currently-kept faces.
         // Direction true = forward (matches canonical key order); false = backward.
-        let mut edge_to_dir_faces: HashMap<(usize, usize), Vec<(usize, bool)>> = HashMap::new();
+        //
+        // Tier 1: bucket by `(v_lo, v_hi, curve_tag)` so a line edge between
+        // a pair of vertices and an arc edge between the same pair are
+        // tracked SEPARATELY. Pre-Tier-1 they pooled together, which would
+        // make Stage 1c spuriously drop arc-bearing faces because their
+        // line-twin neighbor on the same vertex pair pushed the bucket
+        // count over 3.
+        let mut edge_to_dir_faces: HashMap<
+            (usize, usize, EdgeCurveTag),
+            Vec<(usize, bool)>,
+        > = HashMap::new();
         for (face_idx, vidx) in face_to_vidx.iter().enumerate() {
             if !keep_mask[face_idx] {
                 continue;
@@ -614,8 +624,9 @@ fn drop_orphan_contributors(
                     // contribute to twin-pairing conflicts here.
                     continue;
                 }
-                let key = canonical_edge_key(v_start, v_end);
-                let forward = (v_start, v_end) == key;
+                let tag = kept[face_idx].edge_tag(i);
+                let key = canonical_edge_key_tagged(v_start, v_end, tag);
+                let forward = (v_start, v_end) == (key.0, key.1);
                 edge_to_dir_faces.entry(key).or_default().push((face_idx, forward));
             }
         }
@@ -1129,5 +1140,230 @@ mod tests {
         let polys = vec![vec![0, 1, 2, 3]];
         let pruned = prune_excursion_vertices(&polys);
         assert_eq!(pruned[0], vec![0, 1, 2, 3]);
+    }
+
+    // ----------------------------------------------------------------
+    // Tier 1 (curved-surface stitch wiring): canonical-edge-key must
+    // distinguish line half-edges from arc half-edges between the same
+    // pair of vertices.
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn canonical_edge_key_tagged_disambiguates_line_vs_arc() {
+        // The unordered vertex pair is the same, but the curve identity
+        // differs → the keys MUST be unequal. Without this, stitch would
+        // wire a line half-edge to an arc half-edge as twins.
+        let line_key = canonical_edge_key_tagged(0, 1, EdgeCurveTag::Line);
+        let arc_key = canonical_edge_key_tagged(0, 1, EdgeCurveTag::Arc(0));
+        assert_ne!(line_key, arc_key);
+    }
+
+    #[test]
+    fn canonical_edge_key_tagged_arc_with_same_id_matches_swapped_endpoints() {
+        // A→B as Arc(7) and B→A as Arc(7) are the same canonical edge
+        // (twin pair) — the unordered (lo, hi) pair PLUS matching arc
+        // identity collapse to one bucket so the two half-edges twin.
+        let fwd = canonical_edge_key_tagged(2, 5, EdgeCurveTag::Arc(7));
+        let rev = canonical_edge_key_tagged(5, 2, EdgeCurveTag::Arc(7));
+        assert_eq!(fwd, rev);
+    }
+
+    #[test]
+    fn canonical_edge_key_tagged_distinguishes_different_arc_ids() {
+        // Two arcs between the same pair of vertices but with different
+        // arc IDs are distinct edges (e.g., a closed-curve face whose two
+        // sides are *different* arcs of the same conic). They must NOT
+        // pair as twins.
+        let arc_a = canonical_edge_key_tagged(0, 1, EdgeCurveTag::Arc(0));
+        let arc_b = canonical_edge_key_tagged(0, 1, EdgeCurveTag::Arc(1));
+        assert_ne!(arc_a, arc_b);
+    }
+
+    #[test]
+    fn stitch_recognizes_arc_canonical_keys() {
+        // End-to-end Tier 1 test. Build a degenerate "double-sided
+        // triangle" mesh — two CCW triangles sharing all three vertices
+        // and three edges in opposite directions (front + back of a
+        // 2-manifold disk-without-holes). V=3 / E=3 / F=2 satisfies
+        // Euler-Poincaré V-E+F=2 for a sphere-like 2-manifold.
+        //
+        // ONE of the three shared edges is tagged as `Arc(0)` on BOTH
+        // faces (with the same arc_id, so they twin together). The other
+        // two edges are line-tagged (default). Stitch must:
+        //   1. Produce a valid 2-face / 3-edge / 3-vertex topology.
+        //   2. Wire the arc half-edges to each other as twins (not to
+        //      a line half-edge between the same vertex pair).
+        //   3. Materialize the arc edge's geometry as a CurveSegment whose
+        //      curve kind is `Ellipse`, NOT `Line`.
+        use crate::geometry::{CurveKind, EllipseSegment};
+        use kerf_geom::{Ellipse, Frame, Plane, Point3};
+
+        let p0 = Point3::new(0.0, 0.0, 0.0);
+        let p1 = Point3::new(1.0, 0.0, 0.0);
+        let p2 = Point3::new(0.0, 1.0, 0.0);
+
+        // The arc is a (degenerate) ellipse from p0 to p1 — semi-major
+        // axes are nominal; the test only cares that the arc segment
+        // round-trips into the resulting solid's edge_geom.
+        let arc_ellipse = Ellipse::new(
+            Frame::world(Point3::new(0.5, 0.0, 0.0)),
+            0.5,
+            0.5,
+        );
+        let arc_seg = EllipseSegment::new(arc_ellipse, 0.0, std::f64::consts::PI);
+
+        // Surface: a flat XY plane (used for both faces; cycle direction
+        // distinguishes front from back). Real Cylinder×Plane intersections
+        // would have a Cylinder face on one side, but for the canonical-
+        // key test the surface kind is incidental.
+        let surf = SurfaceKind::Plane(Plane::new(Frame::world(Point3::origin())));
+
+        // Front face: walks p0 → p1 → p2 → p0. Edge 0 (p0→p1) is the arc;
+        // edges 1 and 2 are lines.
+        let front = KeptFace {
+            polygon: vec![p0, p1, p2],
+            surface: surf.clone(),
+            owner: None,
+            edge_tags: Some(vec![
+                EdgeCurveTag::Arc(0),
+                EdgeCurveTag::Line,
+                EdgeCurveTag::Line,
+            ]),
+            arc_segments: vec![arc_seg.clone()],
+        };
+        // Back face: walks p1 → p0 → p2 → p1. Its first edge is p1→p0
+        // — the reverse of front's p0→p1 — so it twins to the arc on
+        // front. Same arc_id (0) so the canonical key matches.
+        let back = KeptFace {
+            polygon: vec![p1, p0, p2],
+            surface: surf,
+            owner: None,
+            edge_tags: Some(vec![
+                EdgeCurveTag::Arc(0),
+                EdgeCurveTag::Line,
+                EdgeCurveTag::Line,
+            ]),
+            arc_segments: vec![arc_seg.clone()],
+        };
+
+        let solid = stitch(&[front, back], &Tolerance::default());
+        // Topology sanity.
+        assert_eq!(solid.vertex_count(), 3);
+        assert_eq!(solid.edge_count(), 3);
+        assert_eq!(solid.face_count(), 2);
+        validate(&solid.topo).unwrap();
+
+        // Find the arc-backed edge by inspecting edge_geom for an Ellipse
+        // curve kind. There must be exactly one (the other two are line
+        // edges).
+        let mut arc_edge_count = 0;
+        for (_eid, seg) in solid.edge_geom.iter() {
+            if matches!(seg.curve, CurveKind::Ellipse(_)) {
+                arc_edge_count += 1;
+            }
+        }
+        assert_eq!(
+            arc_edge_count, 1,
+            "expected exactly 1 arc-backed edge, got {arc_edge_count}"
+        );
+    }
+
+    #[test]
+    fn stitch_arc_edge_does_not_collide_with_line_between_same_vertices() {
+        // Regression test: build a topology where two faces share a LINE
+        // edge between vertices p0 and p1, and the two faces ALSO have an
+        // arc-tagged half-edge between the same vertex pair (different
+        // canonical key thanks to Tier 1).
+        //
+        // We model this as TWO triangles plus TWO arc-bow-tie quads:
+        //   front_tri: [p0, p1, p2] (line p0→p1)
+        //   back_tri:  [p1, p0, p2] (line p1→p0 — line twin)
+        //   front_arc: [p0, p1, p3] (arc p0→p1 marked Arc(0))
+        //   back_arc:  [p1, p0, p3] (arc p1→p0 marked Arc(0) — arc twin)
+        //
+        // V=4 (p0..p3), E=5 (line(p0,p1) + arc(p0,p1) + line(p1,p2) +
+        //   line(p2,p0) + line(p1,p3) + line(p3,p0)) — wait, that's 6 edges
+        //   if line and arc are distinct.
+        //
+        // Pre-Tier-1 the canonical key (0,1) collided across line and
+        // arc, producing 4 half-edges in one bucket and panicking. With
+        // Tier 1, the line (0,1,Line) bucket has exactly 2 entries (one
+        // forward, one backward) and the arc (0,1,Arc(0)) bucket also
+        // has 2.
+        use crate::geometry::EllipseSegment;
+        use kerf_geom::{Ellipse, Frame, Plane, Point3};
+
+        let p0 = Point3::new(0.0, 0.0, 0.0);
+        let p1 = Point3::new(1.0, 0.0, 0.0);
+        let p2 = Point3::new(0.5, 1.0, 0.0);
+        let p3 = Point3::new(0.5, -1.0, 0.0);
+
+        let arc_seg = EllipseSegment::new(
+            Ellipse::new(Frame::world(Point3::new(0.5, 0.0, 0.0)), 0.5, 0.5),
+            0.0,
+            std::f64::consts::PI,
+        );
+        let surf = SurfaceKind::Plane(Plane::new(Frame::world(Point3::origin())));
+
+        let front_tri = KeptFace::new_line(
+            vec![p0, p1, p2],
+            surf.clone(),
+            None,
+        );
+        let back_tri = KeptFace::new_line(
+            vec![p1, p0, p2],
+            surf.clone(),
+            None,
+        );
+        let front_arc = KeptFace {
+            polygon: vec![p0, p1, p3],
+            surface: surf.clone(),
+            owner: None,
+            edge_tags: Some(vec![
+                EdgeCurveTag::Arc(0),
+                EdgeCurveTag::Line,
+                EdgeCurveTag::Line,
+            ]),
+            arc_segments: vec![arc_seg.clone()],
+        };
+        let back_arc = KeptFace {
+            polygon: vec![p1, p0, p3],
+            surface: surf,
+            owner: None,
+            edge_tags: Some(vec![
+                EdgeCurveTag::Arc(0),
+                EdgeCurveTag::Line,
+                EdgeCurveTag::Line,
+            ]),
+            arc_segments: vec![arc_seg.clone()],
+        };
+
+        // Without the canonical-key extension this stitch would either
+        // panic on "non-manifold input" (4 half-edges in one bucket) or
+        // produce wrong twin pairings. With Tier 1 it must succeed.
+        let solid = stitch(
+            &[front_tri, back_tri, front_arc, back_arc],
+            &Tolerance::default(),
+        );
+        validate(&solid.topo).unwrap();
+        // Stage 1b's coplanar-duplicate dedup may collapse front/back
+        // polygons that share the same canonical cycle. Both triangles
+        // (front_tri and back_tri) are reverse-wound, so they survive
+        // dedup; the test simply asserts that stitch did NOT panic.
+        assert!(solid.face_count() >= 2);
+        // Both vertex pairs (line and arc) must be wired as separate
+        // edges — total edge count distinguishes the two cases.
+        // Pre-Tier-1: stitch panics. Post-Tier-1: edges include the arc.
+        let mut has_arc_edge = false;
+        for (_eid, seg) in solid.edge_geom.iter() {
+            if matches!(seg.curve, crate::geometry::CurveKind::Ellipse(_)) {
+                has_arc_edge = true;
+                break;
+            }
+        }
+        assert!(
+            has_arc_edge,
+            "expected at least one Ellipse edge to survive stitch"
+        );
     }
 }
