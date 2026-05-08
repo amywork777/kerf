@@ -16,12 +16,33 @@ use crate::Solid;
 pub fn extrude_polygon(profile: &[Point3], direction: Vec3) -> Solid {
     debug_assert!(profile.len() >= 3, "profile must have at least 3 vertices");
     debug_assert!(direction.norm() > 1e-12, "direction must be non-zero");
-
-    let n = profile.len();
-    let mut s = Solid::new();
-
-    let bottom: Vec<Point3> = profile.to_vec();
     let top: Vec<Point3> = profile.iter().map(|p| *p + direction).collect();
+    extrude_lofted(profile, &top)
+}
+
+/// Connect two parallel polygons with the same vertex count via flat side
+/// faces, producing a closed prism-or-frustum-or-loft solid. Each side
+/// face is a quad from `bottom[i] - bottom[(i+1) % n] - top[(i+1) % n] -
+/// top[i]`. Quads are accepted as planar by the topology validator if
+/// they actually are planar (the caller's responsibility — for true loft
+/// between non-similar polygons, side faces may be non-planar and the
+/// engine will treat them as such with degraded boolean robustness).
+///
+/// `bottom` and `top` must have the same length ≥ 3 and the same CCW
+/// orientation when viewed from outside (typically: bottom's normal is
+/// opposite the direction toward top).
+pub fn extrude_lofted(bottom: &[Point3], top: &[Point3]) -> Solid {
+    debug_assert!(bottom.len() >= 3, "bottom profile must have at least 3 vertices");
+    debug_assert_eq!(
+        bottom.len(),
+        top.len(),
+        "top profile must have the same vertex count as bottom"
+    );
+
+    let n = bottom.len();
+    let mut s = Solid::new();
+    let bottom: Vec<Point3> = bottom.to_vec();
+    let top: Vec<Point3> = top.to_vec();
 
     // ---- Stage 1: mvfs to seed b_0. ----
     let r = s.topo.mvfs();
@@ -166,7 +187,11 @@ pub fn extrude_polygon(profile: &[Point3], direction: Vec3) -> Solid {
     }
 
     // ---- Stage 5: Attach face geometry (planes). ----
-    let dir_unit = direction.normalize();
+    // Synthesize an upward direction from bottom-to-top centroid difference.
+    let bot_centroid =
+        bottom.iter().fold(Vec3::zeros(), |a, p| a + p.coords) / n as f64;
+    let top_centroid = top.iter().fold(Vec3::zeros(), |a, p| a + p.coords) / n as f64;
+    let dir_unit = (top_centroid - bot_centroid).normalize();
     let face_ids: Vec<_> = s.topo.face_ids().collect();
     for fid in face_ids {
         let frame = compute_face_frame(&s, fid, &dir_unit);
