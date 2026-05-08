@@ -54,64 +54,34 @@ kernel + authoring + viewer + production output).
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
-| Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
+| Manufacturing features (170+ — see catalog, multi-edge Fillets now handles 4-corner) | 12% | 96% | 11.52 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.0%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~65.1%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08): Viewer polish
+## Latest session (2026-05-08)
 
-Three usability gaps closed in the viewer — undo/redo, error overlays,
-and a feature-catalog browser. Pure UI work, zero kernel/cad changes.
-+0.5 SW pts on the Feature-tree-UI / Authoring axes (the panel reads
-much less "alpha"). 0 cargo regressions.
+GAP C (multi-edge fillet stitch repair) shipped. The 4-corner z-edge
+Fillets ignored test (`fillets_all_four_z_corners_succeeds`) now
+passes; sequential subtract chain on a box body produces a valid
+filleted solid. ~65.0% → ~65.1% (+0.1 SW pt: small Manufacturing
+sub-bump). 727 tests → 731 (one previously-ignored, plus three new
+prune unit tests).
 
-- **Undo/redo (`viewer/src/state.ts`)**: pure-data history container
-  with `pushSnapshot` / `undo` / `redo` and a hard `MAX_UNDO_DEPTH = 50`
-  cap. Every model edit (param scrub, feature add, feature delete,
-  field edit, target swap, reset) calls `recordHistory()` *before*
-  mutating, so the undo stack always holds the previous state. Slider
-  drags snapshot once at the start of the drag, not on every `input`
-  event — otherwise a single scrub would steamroll the cap. Wired to
-  Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z and to two new toolbar buttons that
-  disable themselves when their stack is empty. Loading a fresh model
-  clears both stacks (an undo across model loads would be incoherent).
-  8 vitest cases lock in cap behaviour, dedup, redo-clears-on-edit, and
-  deep-copy semantics.
-- **Error overlay banner (`viewer/src/overlay.ts`)**: replaces the
-  easy-to-miss red status-bar text with a red-tinted strip across the
-  top of the 3D stage when evaluation fails. Body shows the message
-  plus the offending feature id (parsed out of the kerf-cad evaluator's
-  `evaluate '<id>': ...` error format via `extractFeatureIdFromError`).
-  Click anywhere on the banner to dismiss. Re-shows on the next failed
-  rebuild; auto-hides on the next successful rebuild via the existing
-  `ok()` path. 6 jsdom-backed vitest cases cover mount, show, dismiss,
-  feature-pin, idempotent re-show, and the regex parser.
-- **Feature catalog browser (`viewer/src/catalog.ts`)**: new collapsible
-  "Browse Features (231)" panel below the action buttons. Loads the
-  full kind list via the new `feature_kinds()` WASM export, partitions
-  into 8 categories by name pattern (Primitives, Manufacturing,
-  Sweep & Loft, Structural, Fasteners, Joinery, Reference, Transforms,
-  Patterns & Booleans), and lets the user click any kind to splice a
-  default-parameter instance into the model. Auto-suffixes the new id
-  to avoid collisions, auto-wires `input` / `inputs` placeholders to
-  the current target so transforms/booleans work on insert, and makes
-  the new feature the target so the user immediately sees what landed.
-  Search box filters by case-insensitive substring. 13 vitest cases
-  lock in category buckets, search, and the default-instance generator.
-- **WASM export `feature_kinds()` (`crates/kerf-cad-wasm/src/feature_kinds.rs`)**:
-  a hand-mirrored `&'static [&'static str]` list of all 231 `Feature`
-  variant names, exposed as `feature_kinds() -> Vec<String>`. The list
-  lives in the WASM crate (not the cad crate) so the kernel/cad logic
-  stays untouched. 3 cargo tests round-trip every name through serde
-  to catch drift if the enum gains or loses a variant.
-- **Tests**: 27 new vitest cases (3 files: state, catalog, overlay) +
-  3 new cargo tests in `kerf-cad-wasm`. `pnpm build` succeeds; `cargo
-  test --workspace` stays green; `vite build` produces a 520 KB JS
-  bundle (unchanged) plus the 2.9 MB WASM blob.
+- **Stitch rescue + prune**: `stitch_with_rescue(kept, dropped, tol)`
+  added a two-stage repair before the manifold check. Stage 1d (excursion
+  vertex prune) removes detour vertices that intersection-edge
+  propagation thread into a kept polygon — vertices unique to one
+  polygon whose adjacent edges have no twin elsewhere. Stage 1e
+  (dropped-pile rescue) promotes a dropped face whose polygon contains
+  the reverse of a 1-half-edge orphan, with a relaxed coplanarity
+  gate (coplanar partners preferred, non-coplanar accepted on second
+  pass for cylinder-facet seam edges). pipeline.rs's `boolean_solid`
+  passes the dropped pool through. **Manufacturing category bumps 95%
+  → 96%.**
 
 ## Earlier session (2026-05-06)
 
@@ -202,7 +172,7 @@ real kernel additions:
 - **Decorative composites**: Arrow, Funnel, TruncatedPyramid.
 - **Transforms**: ScaleXYZ.
 
-727 tests pass, 9 ignored. 220+ Features in catalog.
+731 tests pass, 8 ignored. 220+ Features in catalog.
 
 The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
 are real manufacturing features even if multi-edge fillet is still
@@ -281,10 +251,13 @@ proprietary product): years.
 **Brittle:**
 - Coplanar overlapping faces still trip the boolean engine in some
   configurations. Not all multi-cylinder unions work.
-- Stacking multiple `Fillet`s on the same body fails at the second
-  fillet whose wedge cutter meets the first fillet's rounded face.
-  Single-corner fillets work; designs that want multiple fillets must
-  union pre-filleted parts.
+- Stacking multiple chained `Fillet`s on the same body still fails
+  at the second fillet whose wedge cutter meets the first fillet's
+  rounded face — but the **plural `Fillets`** feature now handles
+  4-corner z-edge configurations via stitch rescue (dropped-pile
+  partner promotion + excursion-vertex prune). Designs that want
+  multiple fillets should use `Fillets` rather than chained
+  `Fillet`s where possible.
 - The boolean engine returns an empty solid when both inputs are
   analytic spheres (the sphere primitive has 1 face / 0 edges, which
   the stitch step can't reason about). That's why `HollowSphere` was

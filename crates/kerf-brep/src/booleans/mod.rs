@@ -26,5 +26,5 @@ pub use splice::{
     AddedEdge, SolidIndex, add_intersection_edges, find_he_in_loop, vertices_connected,
 };
 pub use split::{EndpointVertices, SplitOutcome, split_solids_at_intersections};
-pub use stitch::{KeptFace, stitch};
+pub use stitch::{KeptFace, stitch, stitch_with_rescue};
 pub use triangulate::{fan_triangulate, fan_triangulate_reversed};

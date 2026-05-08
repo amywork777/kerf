@@ -68,10 +68,6 @@ fn fillets_two_diagonally_opposite_corners_match_chained() {
 }
 
 #[test]
-#[ignore = "kernel: 4-corner wedge union has coplanar faces that trip stitch — \
-            adjacent z-corners share lateral body faces, so wedges share \
-            those planes too. Documented in README; needs kernel-side \
-            coplanar-face handling to fix."]
 fn fillets_all_four_z_corners_succeeds() {
     // The chained-Fillet approach FAILS here (adjacent fillets share faces).
     // Plural Fillets should handle it because the four wedges don't overlap.
