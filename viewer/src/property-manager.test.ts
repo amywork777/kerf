@@ -3,7 +3,7 @@
  *
  * @vitest-environment happy-dom
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mountPropertyManager, type PropertyManagerOpts } from "./property-manager.js";
 
 function makeHost(): HTMLElement {
@@ -231,5 +231,55 @@ describe("PropertyManager — refresh", () => {
     refresh();
     const numInput = host.querySelector<HTMLInputElement>(".pm-number-input")!;
     expect(Number(numInput.value)).toBe(200);
+  });
+
+  it("refresh preserves expression-mode state when params change externally", () => {
+    const host = makeHost();
+    let currentParams: Record<string, number> = { plate_x: 100, other: 5 };
+    const setParam = vi.fn((name: string, value: number) => {
+      currentParams = { ...currentParams, [name]: value };
+    });
+    const onChange = vi.fn();
+    const opts: PropertyManagerOpts = {
+      getParams: () => ({ ...currentParams }),
+      getDefaults: () => ({ plate_x: 100, other: 5 }),
+      setParam,
+      onChange,
+    };
+    const { refresh } = mountPropertyManager(host, opts);
+
+    // Rows are sorted alphabetically: other(0), plate_x(1)
+    const rows = host.querySelectorAll<HTMLElement>(".pm-row");
+    const plateRow = rows[1]!;
+
+    // Toggle fx on plate_x and type an expression
+    const fxBtn = plateRow.querySelector<HTMLButtonElement>(".pm-fx-btn")!;
+    fxBtn.click();
+    const exprInput = plateRow.querySelector<HTMLInputElement>(".pm-expr-input")!;
+    exprInput.value = "$other * 2";
+    exprInput.dispatchEvent(new Event("input"));
+
+    // Simulate an external setParam on 'other' triggering refresh
+    currentParams = { ...currentParams, other: 10 };
+    refresh();
+
+    // Expression mode must still be active — expr input still present
+    const exprInputAfter = plateRow.querySelector<HTMLInputElement>(".pm-expr-input");
+    expect(exprInputAfter).not.toBeNull();
+    // Expression text must be preserved
+    expect(exprInputAfter!.value).toBe("$other * 2");
+    // ƒx button still active
+    expect(plateRow.querySelector(".pm-fx-btn")!.classList.contains("pm-fx-active")).toBe(true);
+  });
+});
+
+describe("PropertyManager — slider range for negative defaults", () => {
+  it("slider min is below the negative default and max is at or above 0", () => {
+    const host = makeHost();
+    const { opts } = makeOpts({ offset: -50 }, { offset: -50 });
+    mountPropertyManager(host, opts);
+    const slider = host.querySelector<HTMLInputElement>('input[type="range"]')!;
+    expect(Number(slider.min)).toBeLessThan(-50);
+    expect(Number(slider.max)).toBeGreaterThanOrEqual(0);
   });
 });

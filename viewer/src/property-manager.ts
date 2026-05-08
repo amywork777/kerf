@@ -26,10 +26,149 @@ export interface PropertyManagerHandle {
 }
 
 // ---------------------------------------------------------------------------
-// Tiny expression evaluator
-// Supports: +, -, *, /, unary -, parens, numeric literals, $param references.
+// Tiny recursive-descent expression parser
+// Supports: +, -, *, /, unary -, unary +, parens, numeric literals (incl.
+// scientific notation), whitespace.  $param references are substituted before
+// parsing by evalExpression().
 // Returns the numeric result or throws with a human-readable error message.
 // ---------------------------------------------------------------------------
+
+class Parser {
+  private pos = 0;
+  constructor(private readonly src: string) {}
+
+  /** Skip any whitespace at the current position. */
+  private skipWS(): void {
+    while (this.pos < this.src.length && /\s/.test(this.src[this.pos]!)) {
+      this.pos++;
+    }
+  }
+
+  /** Peek at the character at the current position without advancing. */
+  private peek(): string {
+    this.skipWS();
+    return this.pos < this.src.length ? this.src[this.pos]! : "";
+  }
+
+  /** Consume one character and return it. */
+  private consume(): string {
+    return this.src[this.pos++]!;
+  }
+
+  /** Parse a full expression (entry point). */
+  parseExpr(): number {
+    const val = this.parseAddSub();
+    this.skipWS();
+    if (this.pos < this.src.length) {
+      throw new Error(`unexpected token at position ${this.pos}: '${this.src[this.pos]}'`);
+    }
+    return val;
+  }
+
+  /** additive precedence: left-associative + and - */
+  private parseAddSub(): number {
+    let left = this.parseMulDiv();
+    while (true) {
+      const ch = this.peek();
+      if (ch === "+" || ch === "-") {
+        this.consume();
+        const right = this.parseMulDiv();
+        left = ch === "+" ? left + right : left - right;
+      } else {
+        break;
+      }
+    }
+    return left;
+  }
+
+  /** multiplicative precedence: left-associative * and / */
+  private parseMulDiv(): number {
+    let left = this.parseUnary();
+    while (true) {
+      const ch = this.peek();
+      if (ch === "*" || ch === "/") {
+        this.consume();
+        const right = this.parseUnary();
+        if (ch === "/") {
+          if (right === 0) throw new Error("division by zero");
+          left = left / right;
+        } else {
+          left = left * right;
+        }
+      } else {
+        break;
+      }
+    }
+    return left;
+  }
+
+  /** unary + and - */
+  private parseUnary(): number {
+    const ch = this.peek();
+    if (ch === "-") {
+      this.consume();
+      return -this.parseUnary();
+    }
+    if (ch === "+") {
+      this.consume();
+      return +this.parseUnary();
+    }
+    return this.parsePrimary();
+  }
+
+  /** primary: parenthesised sub-expression or numeric literal */
+  private parsePrimary(): number {
+    const ch = this.peek();
+    if (ch === "(") {
+      this.consume(); // consume '('
+      const val = this.parseAddSub();
+      this.skipWS();
+      if (this.peek() !== ")") {
+        throw new Error(`expected ')' at position ${this.pos}`);
+      }
+      this.consume(); // consume ')'
+      return val;
+    }
+
+    // Numeric literal (including scientific notation).
+    this.skipWS();
+    const start = this.pos;
+    // Optional leading sign already handled by parseUnary; just read digits/dot/e.
+    if (this.pos < this.src.length && /[\d.]/.test(this.src[this.pos]!)) {
+      // integer or decimal part
+      while (this.pos < this.src.length && /[\d.]/.test(this.src[this.pos]!)) {
+        this.pos++;
+      }
+      // optional exponent
+      if (
+        this.pos < this.src.length &&
+        (this.src[this.pos] === "e" || this.src[this.pos] === "E")
+      ) {
+        this.pos++;
+        if (
+          this.pos < this.src.length &&
+          (this.src[this.pos] === "+" || this.src[this.pos] === "-")
+        ) {
+          this.pos++;
+        }
+        while (this.pos < this.src.length && /\d/.test(this.src[this.pos]!)) {
+          this.pos++;
+        }
+      }
+      const token = this.src.slice(start, this.pos);
+      const val = Number(token);
+      if (isNaN(val)) {
+        throw new Error(`invalid numeric literal '${token}' at position ${start}`);
+      }
+      return val;
+    }
+
+    if (this.pos >= this.src.length) {
+      throw new Error(`unexpected end of expression`);
+    }
+    throw new Error(`unexpected token at position ${this.pos}: '${this.src[this.pos]}'`);
+  }
+}
 
 /**
  * Evaluate a simple arithmetic expression string.
@@ -48,22 +187,16 @@ export function evalExpression(
     return String(params[name]);
   });
 
-  // Safety: only allow digits, operators, parens, dots, spaces, and 'e'/'E' for sci notation.
+  // Reject any character not valid in a numeric expression before parsing.
   if (!/^[\d\s+\-*/().eE]+$/.test(substituted)) {
     throw new Error(`Unsupported characters in expression`);
   }
 
-  // Use Function constructor for safe evaluation (no identifiers left after substitution).
-  try {
-    // eslint-disable-next-line no-new-func
-    const result = new Function(`"use strict"; return (${substituted});`)() as unknown;
-    if (typeof result !== "number" || !isFinite(result)) {
-      throw new Error(`Expression does not evaluate to a finite number`);
-    }
-    return result;
-  } catch (e) {
-    throw new Error(`Invalid expression: ${(e as Error).message}`);
+  const result = new Parser(substituted).parseExpr();
+  if (!isFinite(result)) {
+    throw new Error(`Expression does not evaluate to a finite number`);
   }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +227,7 @@ function buildRow(
 
   const row = document.createElement("div");
   row.className = "pm-row";
+  row.dataset["name"] = name;
 
   // ── header: label + fx button + reset button ──────────────────────────────
   const header = document.createElement("div");
@@ -147,8 +281,8 @@ function buildRow(
 
   // ── range slider ──────────────────────────────────────────────────────────
   const span = Math.max(Math.abs(def) * 2, 10);
-  const sliderMin = def === 0 ? -span : Math.min(def - span, def * -0.2);
-  const sliderMax = def === 0 ? span : Math.max(def + span, def * 2);
+  const sliderMin = def >= 0 ? Math.min(0, def - span) : def - span;
+  const sliderMax = def <= 0 ? Math.max(0, def + span) : def + span;
   const sliderStep = Math.max((sliderMax - sliderMin) / 200, 0.001);
 
   const slider = document.createElement("input");
@@ -257,6 +391,13 @@ function buildRow(
     }
   });
 
+  // ── value-sync method (used by smart refresh) ─────────────────────────────
+  (row as HTMLElement & { _syncValues?: (cur: number) => void })._syncValues = (newCur: number) => {
+    numInput.value = String(newCur);
+    numInput.step = String(smartStep(newCur));
+    slider.value = String(newCur);
+  };
+
   return row;
 }
 
@@ -268,14 +409,23 @@ export function mountPropertyManager(
   host: HTMLElement,
   opts: PropertyManagerOpts,
 ): PropertyManagerHandle {
-  function render() {
+  /** The sorted list of param names from the last full render. */
+  let lastKeys: string[] = [];
+
+  function getKeys(): string[] {
+    const params = opts.getParams();
+    const defaults = opts.getDefaults();
+    return Array.from(
+      new Set([...Object.keys(params), ...Object.keys(defaults)]),
+    ).sort();
+  }
+
+  function fullRender() {
     host.innerHTML = "";
     const params = opts.getParams();
     const defaults = opts.getDefaults();
-    // Use union of keys from both maps, sorted.
-    const keys = Array.from(
-      new Set([...Object.keys(params), ...Object.keys(defaults)]),
-    ).sort();
+    const keys = getKeys();
+    lastKeys = keys;
 
     for (const k of keys) {
       const def = defaults[k] ?? params[k] ?? 0;
@@ -285,11 +435,33 @@ export function mountPropertyManager(
     }
   }
 
-  render();
+  fullRender();
 
   return {
     refresh() {
-      render();
+      const newKeys = getKeys();
+
+      // If the set of parameter names has changed, do a full rebuild.
+      if (
+        newKeys.length !== lastKeys.length ||
+        newKeys.some((k, i) => k !== lastKeys[i])
+      ) {
+        fullRender();
+        return;
+      }
+
+      // Otherwise, sync values in-place without touching the DOM structure.
+      const params = opts.getParams();
+      const defaults = opts.getDefaults();
+      for (const k of newKeys) {
+        const row = host.querySelector<HTMLElement & { _syncValues?: (cur: number) => void }>(
+          `[data-name="${k}"]`,
+        );
+        if (!row) continue;
+        const def = defaults[k] ?? params[k] ?? 0;
+        const cur = params[k] ?? def;
+        row._syncValues?.(cur);
+      }
     },
   };
 }
