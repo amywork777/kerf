@@ -62,6 +62,111 @@ kernel + authoring + viewer + production output).
 | **Solidworks-tier total**                 | **100%**  |          | **~79.6%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
+## Latest session (2026-05-08, part 5 — e2e scenarios)
+
+End-to-end CAD scenario tests: 12 new scenarios in
+`crates/kerf-cad/tests/e2e_scenarios.rs`, each chaining 2-5 features into
+a workflow a real CAD user would execute. 10 pass, 2 are `#[ignore]`d
+because they reveal pre-existing kernel limitations. **784 → 796, 0 failed,
+9 → 11 ignored.** No SW pts moved; this session validates what's already
+claimed at 100% rather than shipping new capability.
+
+### What works end-to-end
+
+- **Bracket pipeline**: `Box → BoltCircle → Fillets` composes cleanly with
+  volume within 5% of analytic (`scenario_01`).
+- **Gear assembly**: `GearBlank` × 2 + `Concentric` + `Gear(ratio=2.0)`
+  produces driven twist == 2 × drive twist about +z to 1e-6
+  (`scenario_02`).
+- **Sketch → extrude**: 2D `Sketch` with `Distance + Horizontal +
+  Vertical` constraints solves to ENFORCEMENT_TOL, then `ExtrudePolygon`
+  matches W·H·D analytic to 1e-3 (`scenario_03`).
+- **Sub-assembly via loader**: `AssemblyRef::Path` resolved via
+  `evaluate_with_loader`; carriage AABB shifts correctly with the
+  containing pose (`scenario_04`).
+- **Shell + drill**: `HollowBox + Cylinder + Translate + Difference`
+  produces a hollowed, drilled body within 25% of analytic
+  (`scenario_05`).
+- **Loft + Revolve compound**: both produce well-formed solids;
+  `solid_volume(Loft)` exact, `solid_volume(Revolve)` reads 0
+  (already-documented seam limitation) (`scenario_06`).
+- **Three-gear chain**: cascading `Gear` mates with ratios `r1 = -2.0`
+  then `r2 = 0.5` produce signed twists `θ`, `r1·θ`, `r1·r2·θ` to 1e-6
+  (`scenario_07`).
+- **Multi-view dimensions**: `Box + BoltCircle` AABB extents emit
+  top/front/side dimensions matching the authored sizes — the *data* a
+  3-view dimensioned drawing would render (`scenario_08`). There's no
+  programmatic SVG writer in the codebase; the scorecard's "Drawings
+  50%" is viewer-only.
+- **Picking → fillet (diagonal)**: walk topology to find Box's z-edges,
+  feed two diagonal corners into `Fillets` — volume matches analytic to
+  5% (`scenario_09b`).
+- **Interference resolved by mate**: two overlapping unit cubes,
+  `Distance` mate at value=3 → `detect_interference` returns empty after
+  the mate is applied, residual ≤ 1e-9 (`scenario_10`).
+- **MountingFlange composite**: bolt-circle-drilled disk volume matches
+  analytic faceted-disk-minus-bolts to 2% (`scenario_11`).
+- **Sketch + LinearPattern + Difference**: solved 1×2 rectangular hole
+  profile, patterned 5× along x, subtracted from a 20×5 plate. Volume
+  matches analytic to 2% (`scenario_12`).
+
+### Bugs found
+
+- **`scenario_08_lbracket_with_counterbore_bug` (filed, `#[ignore]`d)**:
+  `Counterbore` applied to an `LBracket` panics inside the kernel with
+  `non-manifold input to stitch: edge key (...) has 1 half-edges
+  (expected 2)`. Surfaces from `eval` as `EvalError::Boolean`. Same
+  Counterbore composes fine on a plain `Box`. Likely root cause: the
+  LBracket's interior corner exposes a face whose boundary the
+  counterbore cutter splits in a way the stitcher's adjacency map can't
+  reconcile. **The scorecard claims Manufacturing features at 95%, but
+  any composite-cutter manufacturing feature applied to a non-convex
+  body trips this.** Worth a real fix before claiming Manufacturing
+  parity above 95%.
+- **`scenario_09_picking_drives_fillet_chain` (re-confirmed, `#[ignore]`d)**:
+  Picking pipeline (walk topology to find z-edges, feed into `Fillets`)
+  works perfectly. The kernel can't union four adjacent z-corner
+  wedges — same limitation as
+  `tests/fillets_plural.rs::fillets_all_four_z_corners_succeeds`. The
+  scenario_09b stand-in confirms the picking + 2-corner fillet flow
+  works end-to-end. **`Picking 100%` is honest for the picking flow
+  itself; the gating constraint is the 4-corner Fillets kernel
+  limitation, not picking.**
+- **`solid_volume(Revolve)` returns 0**: not new — already documented in
+  STATUS.md "Brittle" — but `scenario_06` verifies the symptom is
+  unchanged after final-polish.
+
+### Surprises that worked
+
+- **Symbolic gear-mate cascade through 3 instances** (`scenario_07`):
+  the Gear mate's signed-twist extraction composes cleanly through two
+  hops, even when the intermediate gear's axis was at the assembly
+  default and never explicitly Concentric'd to a parent.
+- **Sub-assembly loader + `to_json_string`/`from_json_str` round-trip**
+  (`scenario_04`): the `AssemblyRef::Path("sub.json")` round-trip works
+  with a `HashMap<String, String>`-backed mock loader without any
+  serde gymnastics — `Pose::at` and `Mate` variants all serialize
+  cleanly via their tagged enums.
+- **`HollowBox + Difference` cleanly produces a doubly-pierced shell**
+  (`scenario_05`): the boolean engine handles the hollow body's two
+  parallel inner faces being pierced by the same cylinder without
+  triggering the `non-manifold` panic — unlike LBracket+Counterbore.
+
+### What's still missing
+
+- No `SketchExtrude` feature (the spec assumed one). `scenario_03`
+  routes the solved sketch's coordinates manually into
+  `ExtrudePolygon` — that's the practical workaround until a thin
+  `SketchExtrude { sketch, direction }` wrapper is added.
+- No `Shell` feature. `HollowBox` is a passable substitute but only for
+  axis-aligned rectangular shells.
+- No programmatic SVG/drawing emitter. Scorecard claims 50% on
+  Drawings; that 50% is viewer screenshot capability, not headless
+  drawing generation.
+- No `face_to_edges` helper. Picking-driven scenarios walk the topology
+  manually using `s.topo.edge_ids()` + half-edge traversal. Works fine,
+  but a 5-line helper on `Solid` would shave boilerplate.
+
 ## Latest session (2026-05-08, part 4 — final polish)
 
 Final close-out of three buckets — Assembly (80% → 100%), Constraint
