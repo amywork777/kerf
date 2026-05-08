@@ -9,8 +9,9 @@ use kerf_topo::FaceId;
 
 use crate::Solid;
 use crate::booleans::analytic_curves::{
-    CylinderPlaneIntersection, SpherePlaneIntersection, cylinder_plane_intersection,
-    sphere_plane_intersection,
+    ConePlaneIntersection, CylinderPlaneIntersection, SpherePlaneIntersection,
+    TorusPlaneIntersection, cone_plane_intersection, cylinder_plane_intersection,
+    sphere_plane_intersection, torus_plane_intersection,
 };
 use crate::booleans::{
     BooleanOp, ClipResult, FaceClassification, classify_face, clip_line_to_convex_polygon,
@@ -113,10 +114,38 @@ pub fn face_intersections(a: &Solid, b: &Solid, tol: &Tolerance) -> Vec<FaceInte
                         results.push(seg);
                     }
                 }
+                (SurfaceKind::Cone(co), SurfaceKind::Plane(pl)) => {
+                    if let Some(seg) =
+                        intersect_cone_plane_pair(fa_id, co, fb_id, pl, false, tol)
+                    {
+                        results.push(seg);
+                    }
+                }
+                (SurfaceKind::Plane(pl), SurfaceKind::Cone(co)) => {
+                    if let Some(seg) =
+                        intersect_cone_plane_pair(fa_id, co, fb_id, pl, true, tol)
+                    {
+                        results.push(seg);
+                    }
+                }
+                (SurfaceKind::Torus(tor), SurfaceKind::Plane(pl)) => {
+                    if let Some(seg) =
+                        intersect_torus_plane_pair(fa_id, tor, fb_id, pl, false, tol)
+                    {
+                        results.push(seg);
+                    }
+                }
+                (SurfaceKind::Plane(pl), SurfaceKind::Torus(tor)) => {
+                    if let Some(seg) =
+                        intersect_torus_plane_pair(fa_id, tor, fb_id, pl, true, tol)
+                    {
+                        results.push(seg);
+                    }
+                }
                 _ => {
                     // Other curved-surface combinations (Cylinder×Cylinder,
-                    // Sphere×Plane, Torus×anything) aren't yet typed at the
-                    // brep layer. They fall through unchanged today —
+                    // Cone×Sphere, Torus×Cylinder, ...) aren't yet typed at
+                    // the brep layer. They fall through unchanged today —
                     // analytic-curves.rs's roadmap will pick them up.
                 }
             }
@@ -199,6 +228,98 @@ fn intersect_sphere_plane_pair(
                 start: p,
                 end: p,
                 kind: FaceIntersectionKind::Arc(seg),
+            })
+        }
+    }
+}
+
+fn intersect_cone_plane_pair(
+    face_cone: FaceId,
+    cone: &kerf_geom::Cone,
+    face_plane: FaceId,
+    plane: &Plane,
+    cone_is_b: bool,
+    tol: &Tolerance,
+) -> Option<FaceIntersection> {
+    // Closed-form Cone × Plane: emit Arc(EllipseSegment) for closed conic
+    // sections (Circle, Ellipse). The Parabola/Hyperbola/TwoLines/Apex
+    // regimes don't fit the closed-loop EllipseSegment abstraction the
+    // brep stitch path uses today — return None so they fall through
+    // (consistent with how non-conic Cylinder×Plane regimes are handled).
+    match cone_plane_intersection(cone, plane, tol) {
+        ConePlaneIntersection::Empty
+        | ConePlaneIntersection::Apex(_)
+        | ConePlaneIntersection::TwoLines(_, _)
+        | ConePlaneIntersection::Parabola(_)
+        | ConePlaneIntersection::Hyperbola(_) => None,
+        ConePlaneIntersection::Circle(seg) | ConePlaneIntersection::Ellipse(seg) => {
+            let p = seg.start_point();
+            let (face_a, face_b) = if cone_is_b {
+                (face_plane, face_cone)
+            } else {
+                (face_cone, face_plane)
+            };
+            Some(FaceIntersection {
+                face_a,
+                face_b,
+                start: p,
+                end: p,
+                kind: FaceIntersectionKind::Arc(seg),
+            })
+        }
+    }
+}
+
+fn intersect_torus_plane_pair(
+    face_torus: FaceId,
+    torus: &kerf_geom::Torus,
+    face_plane: FaceId,
+    plane: &Plane,
+    torus_is_b: bool,
+    tol: &Tolerance,
+) -> Option<FaceIntersection> {
+    // Closed-form Torus × Plane: pick the OUTER concentric circle when the
+    // intersection is two concentric circles, single circle for the tangent
+    // case. Other regimes (TwoTubeCircles, Spiric polylines) currently
+    // fall through (the EllipseSegment-only chord doesn't naturally express
+    // "two disjoint loops" — emitting the outer for now keeps the data
+    // channel populated for downstream Tier-B work). All Arc chords stay
+    // filtered out by the pipeline today.
+    match torus_plane_intersection(torus, plane, tol) {
+        TorusPlaneIntersection::Empty | TorusPlaneIntersection::Spiric(_) => None,
+        TorusPlaneIntersection::Circle(seg) => {
+            let p = seg.start_point();
+            let (face_a, face_b) = if torus_is_b {
+                (face_plane, face_torus)
+            } else {
+                (face_torus, face_plane)
+            };
+            Some(FaceIntersection {
+                face_a,
+                face_b,
+                start: p,
+                end: p,
+                kind: FaceIntersectionKind::Arc(seg),
+            })
+        }
+        TorusPlaneIntersection::TwoCircles(outer, _)
+        | TorusPlaneIntersection::TwoTubeCircles(outer, _) => {
+            // For the two-circle regimes, the brep stitch path currently
+            // accepts a single closed-loop chord per face pair. Emit the
+            // outer ring; downstream Tier-B work will expand this to two
+            // chords (or a multi-loop chord type).
+            let p = outer.start_point();
+            let (face_a, face_b) = if torus_is_b {
+                (face_plane, face_torus)
+            } else {
+                (face_torus, face_plane)
+            };
+            Some(FaceIntersection {
+                face_a,
+                face_b,
+                start: p,
+                end: p,
+                kind: FaceIntersectionKind::Arc(outer),
             })
         }
     }
@@ -361,7 +482,7 @@ mod tests {
     use super::*;
     use kerf_geom::{Point3, Vec3};
 
-    use crate::primitives::{box_, box_at, cylinder, sphere};
+    use crate::primitives::{box_, box_at, cone, cylinder, sphere, torus};
 
     #[test]
     fn disjoint_boxes_have_no_face_intersections() {
@@ -501,6 +622,65 @@ mod tests {
         assert!(
             found_expected,
             "expected an arc with radius √0.75 from the z=0.5 cut"
+        );
+    }
+
+    /// Tier C (curved-tier-b): Cone × Plane face pairs emit Arc-kind chords
+    /// for the closed-conic regimes (Circle / Ellipse). Pick a horizontal
+    /// plane that crosses the cone's lateral face perpendicular to its axis;
+    /// the resulting Arc must be a closed circle whose center is on the
+    /// cone's axis line.
+    #[test]
+    fn face_intersection_returns_arc_for_cone_plane() {
+        // Cone of base radius 2, height 4 (apex at z=4). A horizontal plane
+        // at z=2 cuts the lateral face in a circle of radius 1.
+        let co = cone(2.0, 4.0);
+        let plate = box_at(
+            Vec3::new(6.0, 6.0, 2.0),
+            Point3::new(-3.0, -3.0, 0.0), // top face at z=2
+        );
+        let result = face_intersections(&co, &plate, &Tolerance::default());
+        let mut found = false;
+        for inter in &result {
+            if let FaceIntersectionKind::Arc(seg) = &inter.kind {
+                assert!(seg.is_full(), "Cone×Plane arc must be closed");
+                // The expected ring at z=2: radius 1, center on Z-axis.
+                if (seg.ellipse.semi_major - 1.0).abs() < 1e-6 {
+                    found = true;
+                    assert!(seg.ellipse.frame.origin.x.abs() < 1e-6);
+                    assert!(seg.ellipse.frame.origin.y.abs() < 1e-6);
+                }
+            }
+        }
+        assert!(found, "expected radius-1 ring from Cone×Plane(z=2)");
+    }
+
+    /// Tier C: Torus × Plane face pairs emit Arc-kind chords for the
+    /// concentric-circle regime. A torus at origin (R=3, r=1) sliced by
+    /// the XY plane should produce a TwoCircles result; we wire the OUTER
+    /// ring (radius 4) into face_intersections as the Arc payload.
+    #[test]
+    fn face_intersection_returns_arc_for_torus_plane() {
+        let tor = torus(3.0, 1.0);
+        // Slicing plate just above z=0 to keep the box's top face at z=0
+        // (XY plane). Plate is below z=0 to leave its top face cutting
+        // through the torus center.
+        let plate = box_at(
+            Vec3::new(10.0, 10.0, 1.0),
+            Point3::new(-5.0, -5.0, -1.0), // top face at z=0
+        );
+        let result = face_intersections(&tor, &plate, &Tolerance::default());
+        let mut found_outer = false;
+        for inter in &result {
+            if let FaceIntersectionKind::Arc(seg) = &inter.kind {
+                if (seg.ellipse.semi_major - 4.0).abs() < 1e-6 {
+                    found_outer = true;
+                }
+            }
+        }
+        assert!(
+            found_outer,
+            "expected outer ring (R+r=4) from Torus×Plane(XY) face pair"
         );
     }
 
