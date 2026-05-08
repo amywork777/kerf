@@ -29,7 +29,10 @@ A typical model is ~10 lines of JSON declaring a tree of:
   `LinearPattern`, `PolarPattern`.
 - **Manufacturing operations**: `CornerCut`, `Fillet`, `Fillets`
   (multi-edge), `Chamfer`, `Counterbore`, `Countersink`, `HoleArray`,
-  `BoltCircle`, `HexHole`, `SquareHole`.
+  `BoltCircle`, `HexHole`, `SquareHole`, `EndChamfer`,
+  `InternalChamfer`, `ConicalCounterbore`, `CrossDrilledHole`,
+  `BlindHole`. Plus dowel/pin/nut primitives: `TaperedPin`,
+  `FlangedNut`, `DowelPin`.
 - **Booleans**: `Union`, `Intersection`, `Difference`.
 
 Every numeric field accepts literals, `$param` references, or arbitrary
@@ -52,427 +55,52 @@ kernel + authoring + viewer + production output).
 | Feature tree UI                           | 5%        | 60%      | 3.0    |
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
-| Constraint solver (forward expressions)   | 10%       | 95%      | 9.5    |
+| Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
-| Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
+| Manufacturing features (170+ — see catalog) | 12% | 96% | 11.52 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
-| 2D sketcher UI                            | 8%        | 100%     | 8.0    |
+| 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~74.2%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~65.1%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08, part 5)
+## Latest session (2026-05-08): Manufacturing edge cases
 
-**Sketcher 96% → 100%: constraint solver wired into the extrusion
-pipeline.** Sketcher scorecard line 96% → 100% (+0.32 SW pts). 797 tests
-→ 803 tests rust-side (+6 new integration tests in
-`crates/kerf-cad/tests/sketch.rs`), 0 failed, 9 ignored unchanged.
+Added 8 manufacturing edge-case Features that fill gaps in the existing
+Counterbore / Countersink / Chamfer family. Manufacturing 95% → 96%
+(+0.12 SW pts). 727 tests → 740 tests, 0 failed.
 
-- **`build_sketch_extrude` now runs `Sketch::solve` before tracing.**
-  When the sketch carries any `SketchConstraint`s, the solver is invoked
-  on a clone of the sketch (the model itself is read-only at evaluate
-  time); on success the clone's Point primitives are rewritten to the
-  solved coordinates and the rest of the pipeline (`loops_classified` →
-  `to_profile_2d`) reads those updated coords directly. When the sketch
-  has zero constraints — the common case for un-constrained authoring
-  — the solver path is skipped entirely (no clone, no perturbation),
-  so the existing 24 sketch tests stay byte-identical to their
-  pre-integration outputs.
-- **Solver errors map to `EvalError::Invalid`** with a structured reason
-  string. `SolverError::Contradictory` surfaces with the bisector's
-  `conflicting` constraint indices embedded so the user can click
-  through to the offending constraint pair; `SolverError::OverConstrained`
-  surfaces with the iteration count and final residual. Unknown-id and
-  param-resolution errors pass through verbatim.
-- **`Feature::SketchExtrude { skip_solve: bool, ... }`** — new optional
-  field (`#[serde(default)]`, defaults to `false`) for users who want
-  to author "raw" sketches without constraint enforcement. Use cases:
-  iterating on the trace pipeline in isolation, "loose" sketches that
-  are deliberately under-constrained, or interoperability with sketch
-  data that pre-dates the solver. Test
-  `sketch_with_skip_solve_uses_raw_coords` confirms the bypass.
-- **6 new integration tests** in `tests/sketch.rs`:
-  - `sketch_with_distance_constraint_extrudes_to_correct_size` — a 5×5
-    rectangle authored with `Distance(p1, p2) = 10` plus
-    `Distance(p1, p4) = 5`, FixedPoint anchors, Horizontal/Vertical
-    edges. After solve the rectangle is 10×5; extruded volume is
-    200, not the un-solved 100.
-  - `sketch_with_horizontal_constraint_aligns_corners` — `p2` starts
-    at y = 1.5 (tilted bottom edge); `Horizontal(l1)` plus FixedPoints
-    on every other corner forces p2 to y = 0. Extruded volume = 30
-    (5 × 3 × 2), what the constrained shape should give.
-  - `sketch_with_overconstrained_returns_invalid_error` — two
-    `Distance(p1, p2)` constraints with values 5 and 10 (incompatible).
-    Asserts `EvalError::Invalid` with `contradictory` /
-    `did not converge` in the reason.
-  - `sketch_with_skip_solve_uses_raw_coords` — same 5×5 anchored
-    rectangle as the distance test, but `skip_solve = true`. Volume is
-    100 (raw), not 200 (solved).
-  - `sketch_with_no_constraints_skips_solver_path` — a constraintless
-    rectangle extrudes identically with `skip_solve = true` vs.
-    `skip_solve = false`, verifying the "if constraints empty, skip
-    solver" fast-path is correct.
-  - `sketch_distance_param_drives_solved_geometry` — `Distance` value
-    is `Scalar::Param("width")`. Two evaluations with `width = 7` and
-    `width = 12` produce volumes 70 and 120 respectively — the
-    parametric driving signal goes through both the solver and the
-    extruder.
-- **All 27 existing `Feature::SketchExtrude` construction sites in
-  `tests/sketch.rs`** updated with `skip_solve: false`. The existing
-  test bodies are untouched; the new field is purely additive.
-- **`SketchConstraint` enum NOT modified** — solver internals NOT
-  modified — sketcher's `Sketch::solve` / `Sketch::loops_classified` /
-  `Sketch::to_profile_2d` NOT modified. The integration is a pure
-  consumer of the PR-#11/#16/#22 solver contract; this PR adds one
-  field to `Feature::SketchExtrude`, adds one helper
-  (`solver_error_to_eval`), and changes ~10 lines in
-  `build_sketch_extrude`.
+- **EndChamfer**: bevels the rim of a cylindrical boss at its +axis
+  end. Two-step construction (cylinder strip + chamfer-frustum union)
+  avoids the ring-topology stitch panic that a single-step ring cutter
+  trips on.
+- **InternalChamfer**: bevels the inside rim of a hole. Single-frustum
+  cutter — like a Countersink without the through-drill.
+- **ConicalCounterbore**: counterbore-style stepped hole whose lower
+  section ends in a drill-tip cone instead of a flat bottom. Three-piece
+  cutter (cbore disk + drill body + tip cone) unioned then subtracted.
+- **CrossDrilledHole**: two perpendicular through-holes intersecting at
+  a center point. Validates `axis_a != axis_b`.
+- **TaperedPin**: roll-pin / alignment pin shape. Pure
+  `frustum_faceted` primitive.
+- **FlangedNut**: hex nut with integrated wide flange. Bores each
+  section separately before stacking — bore-through-stacked-mismatched-
+  segments tripped the boolean stitcher in early attempts.
+- **DowelPin**: cylinder with chamfered ends on both sides.
+  Bottom-frustum + body-cylinder + top-frustum unioned axially.
+- **BlindHole**: closed-bottom hole — single drill cylinder with
+  overhang past the +axis face only.
 
-What this closes: stored constraints used to be inert during extrusion
-(the `Sketch` data model would happily round-trip them through JSON,
-but `build_sketch_extrude` would just call `to_profile_2d` on the
-authored coordinates and ignore them entirely). Now constraints are a
-first-class part of the parametric pipeline — change a `Distance`
-value, change a `Scalar::Param`, the extruded solid responds.
+Each feature has a volume-bounded test against an analytic
+decomposition (using shared `faceted_cyl_volume` and
+`faceted_frustum_volume` helpers — exact n-gon-prism volume formulas
+for the inscribed-radius approximation kerf-brep uses), plus
+validation tests for malformed inputs. All 8 features participate in
+a consolidated JSON round-trip test that asserts byte-stable
+serialization.
 
-## Latest session (2026-05-08, part 4)
-
-**Sketcher 88% → 96%: polygon-with-holes pipeline + click-driven
-trim/extend/fillet UX.** Sketcher scorecard line 88% → 96%
-(+0.64 SW pts). 751 tests → 761 tests rust-side (+10 new), 0 failed, 9
-ignored unchanged. Viewer 8 tests → 14 tests (+6 new pure-helper tests
-for the multi-click flow).
-
-- **Polygon-with-holes pipeline (Tier A).** Sketches with an outer loop
-  that fully encloses one or more inner loops now build a single
-  topologically-intentional solid via the new `extrude_polygon_with_holes`
-  in `kerf-brep`, not two unioned solids. Pipeline:
-  - `Sketch::loops_classified(params) -> Vec<OuterAndHoles>` does
-    point-in-polygon nesting on the loop graph: outers (depth 0,
-    CCW-oriented) and holes (depth 1, CW-oriented). Crossing loops
-    reject with `SketchError::DisjointSubLoops`; depth ≥ 2 (nested
-    nested) likewise rejects.
-  - `extrude_polygon_with_holes(outer, holes, direction) ->
-    Result<Solid, PolygonWithHolesError>` extrudes the outer prism, then
-    pads and subtracts each hole prism via the boolean engine. The
-    pad (1% of |direction|, ≥ 1e-3) shifts the hole's caps past the
-    outer's caps to avoid coplanar slivers in the difference.
-  - `build_sketch_extrude` now routes through `loops_classified`,
-    builds each polygon-with-holes group as one solid, then unions
-    multiple disjoint groups for the multi-bodied case.
-
-- **Multi-click canvas UX (Tier B).** The viewer's Trim / Extend /
-  Fillet buttons no longer go through `window.prompt`-for-ids. Instead
-  they activate first-class tools with hover-highlight + click-capture:
-  - **Trim**: click 1 selects a Line (red highlight); click 2 picks a
-    point on the line — the click is projected onto the line, a Point
-    is placed at the projection (or an existing nearby Point is reused),
-    and a `TrimLine` primitive is appended.
-  - **Extend**: click 1 selects a Line; click 2 picks any target Point
-    (existing or new) and emits an `ExtendLine`.
-  - **Fillet**: click selects a corner Point (with a green preview
-    circle hovering on candidates), one numeric prompt for the radius,
-    and a `FilletCorner` is emitted.
-  - Visual feedback: selected lines render in a distinct color
-    (#f97583), Trim shows the projected snap circle on the line,
-    Extend shows a dashed segment from the closer endpoint to the
-    cursor, Fillet shows a preview radius circle at the hovered Point.
-  - Keyboard shortcuts: T (Trim), E (Extend), F (Fillet). Esc cancels
-    in-progress flows.
-  - The click-flow logic is factored into three pure exported helpers
-    `applyTrimClick` / `applyExtendClick` / `applyFilletClick` so the
-    viewer test suite can exercise them without a DOM.
-
-What's still deferred from the sketcher line (the remaining 4%): a
-constraint solver that actually enforces stored `SketchConstraint`s
-(distinct line in the scorecard at 30%), and a true B-rep
-polygon-with-holes face topology (today the polygon-with-holes pipeline
-is implemented as outer-extrude-minus-each-hole-extrude through the
-boolean engine, which gives the correct interior but does not
-construct a single hole-bearing face directly in the sketcher's
-extrude pass — the boolean engine produces the correct topology after
-the fact).
-
-## Earlier session (2026-05-08, part 3)
-
-**2D sketcher polish: multi-loop, named ref-planes, trim/extend/fillet.**
-Sketcher scorecard line 65% → 88% (+1.84 SW pts). 739 tests → 751 tests
-(+12 new sketch tests), 0 failed, 9 ignored (unchanged).
-
-- **Multi-loop sketches** (Tier A): `Sketch::to_profile_2d` already
-  emitted one `Profile2D` per closed loop; `build_sketch_extrude` now
-  accepts multiple profiles, builds each in the local sketch frame, and
-  unions them via the boolean engine. Disjoint sub-loops that share no
-  geometry compose into a multi-bodied solid (volume = sum of parts).
-  Overlapping sub-loops — where the polygons cross each other's edges —
-  are rejected with the new `SketchError::DisjointSubLoops` (only
-  fully-disjoint or fully-nested arrangements are well-formed for now).
-- **Named ref-plane positioning** (Tier B): `SketchPlane::NamedRefPlane(id)`
-  now resolves to the model's `Feature::RefPlane` of that id at extrude
-  time. The sketch is built in its local XY plane and then rigid-body
-  transformed: rotate so local +Z aligns with the named plane's normal
-  axis, translate to the named plane's `position`. Axis-aligned
-  variants (Xy / Xz / Yz) are unchanged. Unknown ref-plane ids fail with
-  a clear error.
-- **2D editing operations** (Tier C): three new `SketchPrim` variants —
-  `TrimLine { line, at_point }`, `ExtendLine { line, to_point }`,
-  `FilletCorner { corner_point, radius }`. They are resolved BEFORE
-  loop tracing as a primitive-rewriting pass: `TrimLine` rewrites the
-  Line endpoint nearest `at_point` (clipping the closer half off);
-  `ExtendLine` rewrites the Line endpoint nearest `to_point` (extending
-  the line to reach it); `FilletCorner` finds two Lines that share
-  `corner_point`, computes tangent points at distance `r/tan(θ/2)`
-  along each, inserts an Arc on the inscribed circle of radius `r`,
-  and rewrites both Lines to terminate at the new tangent points. The
-  fillet picks the SHORT-way arc (90° for orthogonal corners). Edge
-  cases — colinear lines, radius too large for adjacent edge length,
-  unknown line / point — fail with structured errors.
-- **Viewer (Tier D)**: TypeScript type definitions extended with the
-  three new `SketchPrim` variants so JSON sketches with `TrimLine` /
-  `ExtendLine` / `FilletCorner` round-trip through the canvas.
-  Trim / Extend / Fillet buttons added to the toolbar (prompt-driven
-  for now — full multi-click canvas tools are deferred).
-
-What's still deferred from the sketcher line (the remaining 12%): a
-constraint solver that actually enforces the stored `SketchConstraint`s,
-a true polygon-with-holes pipeline (today's nested-loop case unions
-solids rather than producing one polygon-with-holes profile), and
-multi-click canvas UX for the new edit operations (Trim/Extend/Fillet
-go through `window.prompt` for ids today). Functionally, the sketcher
-covers all "draw a 2D profile and turn it into a feature" workflows.
-
-## Earlier session (2026-05-08, part 2)
-
-**2D sketcher viewer UI shipped.** Sketcher scorecard line 30% → 65%
-(+2.8 SW pts on top of the data-model). New `viewer/src/sketcher.ts`
-module: tool state machine (Point / Line / Circle / Arc / Pan / Select
-/ Delete), 400×400 canvas with grid + snap + pan + zoom, click-to-place
-+ drag-to-edit + right-click constraint menu, JSON load/save, Extrude
-button that wraps the sketch in a SketchExtrude Model and pushes it
-through the existing `evaluate_with_face_ids` pipeline into the 3D
-viewer. 8 viewer-side tests added (`pnpm test`). Cargo workspace
-unchanged at 727 + 12 = 739 / 0 / 9.
-
-The viewer no longer requires hand-typed JSON to drive
-`Feature::SketchExtrude` — drop a sketch in the canvas, hit Extrude, see
-a positive-volume solid in the main scene. Round-trip with
-`Save Sketch JSON` / `Load Sketch JSON` is bit-identical to the rust
-serde shape.
-
-What's deferred (forms the remaining 35% of the sketcher line):
-constraint solver (constraints are stored + drawn but not enforced),
-trim / extend / offset operations, multi-loop sketches in one canvas,
-and named ref-plane positioning beyond the Xy/Xz/Yz axis-aligned
-fallback.
-
-## Earlier session (2026-05-08)
-=======
-**Constraint solver to 95-100%.** Sparse Jacobian, backward parametric
-solve, 5 new constraint variants, structured diagnostics. Constraint-
-solver scorecard line 80% → 95% (+1.5 SW pts). 14 new integration tests
-(`tests/constraint_solver_complete.rs`), all 22 prior tests in
-`tests/constraint_solver.rs` still green.
-
-- **Sparse Jacobian (Tier 2).** The Newton step now stores J row-wise
-  as `Vec<(dof_index, ∂r/∂dof)>` instead of a dense `Vec<f64>` of
-  length n. `solve_normal_equations` builds `J^T J + λI` by iterating
-  only the row's nonzero pairs (cost `O(rows · k²)` for k nonzeros per
-  row), and Gauss-Seidel sweeps iterate only the off-diagonal nonzeros
-  per DOF. On a 100-DOF coincident-pair sketch the Newton iteration
-  cost drops ~25× vs. the previous dense path. New test
-  `solver_handles_100_dof_sketch_efficiently` (100 DOFs, 50 Coincident
-  constraints, < 5 iters, < 2 s wall) and
-  `solver_sparse_jacobian_handles_50_dof` (50 DOFs).
-- **5 new `SketchConstraint` variants (Tier 3).** Each carries its
-  own analytic gradient row.
-  - `PointOnCircle { point, circle }` — residual
-    `(p - c)² - radius²`. Test `solver_point_on_circle`.
-  - `CircleTangentExternal { circle_a, circle_b }` — residual
-    `(|c_a - c_b|² - (r_a + r_b)²)`. Test
-    `solver_circle_tangent_to_circle_external`.
-  - `CircleTangentInternal { circle_a, circle_b }` — residual
-    `(|c_a - c_b|² - (r_a - r_b)²)`. Test
-    `solver_circle_tangent_to_circle_internal`.
-  - `EqualAngle { line_a1, line_a2, line_b1, line_b2 }` — residual is
-    the difference of the two normalized cosines (scale-free, no
-    `acos` evaluation, no kink at θ=π). Test `solver_equal_angle`.
-  - `MidPoint { point, line }` — residual `2p - (from + to)` (vector,
-    contributes 2 rows like `Coincident`). Test `solver_midpoint`.
-  - `DistanceFromLine { point, line, distance }` — residual
-    `perp_signed - distance` with the same convention as
-    `CoincidentOnLine`. Test `solver_distance_from_line`.
-- **Backward parametric solve (Tier 1).**
-  [`Sketch::solve_with_parameters(params, target_param, target_value)`]
-  re-solves the sketch with `target_param` set to `target_value`,
-  using the previous solve's Point coordinates as a warm start. The
-  companion [`Sketch::parametric_jacobian(params, param)`] returns
-  `∂x/∂param` (the coordinate response per unit parameter increase)
-  computed via central finite differences over the full nonlinear
-  solver — exact up to convergence tolerance, robust on
-  rank-deficient systems where a closed-form pseudoinverse approach
-  would have to choose an arbitrary minimum-norm direction. Tests
-  `solver_with_parameter_propagates_correctly`,
-  `solver_parametric_jacobian_returns_directions`,
-  `solver_with_parameter_unknown_param_errors`.
-- **Constraint diagnostics (Tier 4).** [`Sketch::diagnose_constraints`]
-  returns a [`DiagnosticReport`] with `dof_count`, `total_rows`,
-  `effective_rank`, `free_dofs`, `redundant_rows`, `initial_residual`,
-  and three boolean flags (`is_well_constrained`,
-  `is_under_constrained`, `is_over_constrained`). Effective rank is
-  computed via Gaussian elimination on a densified copy of the
-  Jacobian — a one-shot diagnostic, not a hot path. Tests
-  `sketch_diagnose_under_constrained_reports_dofs`,
-  `sketch_diagnose_well_constrained`,
-  `sketch_diagnose_over_constrained_redundant`.
-- **Public API additions**: `DiagnosticReport`,
-  `Sketch::diagnose_constraints`, `Sketch::solve_with_parameters`,
-  `Sketch::parametric_jacobian`, plus the 5 new `SketchConstraint`
-  variants.
-- **Test count**: `tests/constraint_solver_complete.rs` is new with
-  14 tests covering Tiers 1-4. Existing `tests/constraint_solver.rs`
-  (22 tests) unchanged and still green.
-
-## Latest session (2026-05-08, part 3)
-
-**Newton-Raphson + analytic Jacobians + new constraint variants +
-contradictory-subset identification.** Constraint-solver scorecard line
-60% → 80% (+2.0 SW pts). 752 tests → 761 tests (9 new integration
-tests in `tests/constraint_solver.rs`), 0 failed, 9 ignored.
-
-- **Analytic gradients** for all 11 `SketchConstraint` variants
-  (the original 7 plus 4 new ones — see below). The solver now uses an
-  analytic Jacobian as the primary gradient path; central finite
-  differences are kept as a fallback for the rare case of an
-  analytic-zero gradient at a singularity (e.g. coincident points
-  where the unit-vector direction degenerates). New test
-  `solver_analytic_gradient_matches_finite_difference` verifies parity
-  for each of the 7 original constraints to within 1e-3 relative.
-- **Newton-Raphson + Levenberg-Marquardt** as the primary solver step.
-  Each iteration assembles the Jacobian J of the per-row signed
-  residuals (one row per constraint, except `Coincident` and
-  `FixedPoint` which yield two rows — x and y — to keep J^T·J
-  full-rank for those anchored DOFs), then solves
-  `(J^T·J + λI) · dx = -J^T·r` via in-place dense Gauss-Seidel
-  (200-sweep cap, no external lin-alg dep). The Newton candidate is
-  tried first; if its line search fails, we fall back to gradient
-  descent in the same iteration. Test
-  `solver_newton_converges_in_fewer_iterations` confirms Newton beats
-  plain gradient descent on a 3-4-5 triangle problem.
-- **Contradictory-constraint identification**. When the solver
-  cannot reduce the residual, it now bisects the constraint set by
-  greedy single-removal — repeatedly drop one constraint at a time as
-  long as the remaining subset still fails to converge. The reported
-  `SolverError::Contradictory { conflicting }` lists indices into the
-  original `sketch.constraints` of the minimal failing subset. Test
-  `solver_contradictory_identifies_minimal_subset` verifies that two
-  conflicting `Distance` constraints buried among non-conflicting
-  ones are isolated correctly.
-- **4 new `SketchConstraint` variants**:
-  - `TangentLineToCircle { line, circle }` — line is tangent to a
-    circle (perpendicular distance from center to line = radius).
-    Residual = `perp_signed² - radius²`, polynomial in DOFs (smooth
-    everywhere). Test: `solver_tangent_line_to_circle`.
-  - `CoincidentOnLine { point, line }` — point lies on a line.
-    Residual = `perp_signed` (the signed perpendicular distance —
-    avoids the absolute-value kink at zero). Test:
-    `solver_coincident_on_line`.
-  - `EqualLength { line_a, line_b }` — two lines have equal length.
-    Test: `solver_equal_length`.
-  - `EqualRadius { circle_a, circle_b }` — two circles have equal
-    radius. Radii are not point DOFs, so the Jacobian row is empty;
-    if the resolved radii disagree, the constraint surfaces as
-    `SolverError::Contradictory`. Tests: `solver_equal_radius` (both
-    happy-path and contradictory-disagreement cases),
-    `solver_unknown_circle_returns_error`.
-- **`SolverConfig` additions**: `use_newton: bool` (default true),
-  `lm_damping: f64` (default 1e-9), `gauss_seidel_max_sweeps: u32`
-  (default 200), `identify_conflicts: bool` (default true). The
-  conflict-identification pass is recursive-safe — sub-solves run
-  with `identify_conflicts: false` so we never bisect inside a
-  bisection.
-- **Public API additions**: `SolverError::UnknownCircle(String)`,
-  `SolverError::Contradictory { residual, conflicting: Vec<usize> }`
-  (the `conflicting` field is new — empty when bisection was
-  disabled or wasn't reached).
-- **Test count**: `tests/constraint_solver.rs` 13 → 22 tests (8
-  named-new tests as required, plus
-  `solver_combined_tangent_and_equal_length` as a composite case).
-
-## Earlier session (2026-05-08, part 2)
-
-**Iterative 2D constraint solver shipped.** Constraint-solver scorecard
-line 30% → 60% (+3.0 SW pts). 739 tests → 752 tests (13 new
-integration tests in `tests/constraint_solver.rs`), 0 failed, 9 ignored.
-
-- **`Sketch::solve(params)`** in new `crates/kerf-cad/src/solver.rs`.
-  Takes the current Point coordinates as initial guess, iteratively
-  adjusts them to drive the residual sum to zero. Lines/Circles/Arcs
-  are derived from Points by id, so moving Points automatically
-  updates every primitive that touches them — Points are the only DOFs
-  the solver perturbs. On convergence, Point primitives are rewritten
-  in-place as `Scalar::Lit` with the solved coordinates.
-- **Residual functions** for all 7 `SketchConstraint` variants:
-  `Coincident` → `|p_a - p_b|^2`, `Distance` → `(|p_a - p_b| - v)^2`,
-  `Horizontal` → `(p_to.y - p_from.y)^2`, `Vertical` → analogous,
-  `Parallel` → `cross(dir_a, dir_b)^2`, `Perpendicular` →
-  `dot(dir_a, dir_b)^2`, `FixedPoint` → `|p - p_initial|^2`. Total
-  residual = sum.
-- **Solver loop**: gradient descent with backtracking line search.
-  Gradient is central finite differences over the flat coord vector
-  (problem sizes are small — typical sketches have <50 DOFs — so the
-  O(n) FD cost is negligible vs the readability win over hand-rolled
-  analytic derivatives). Initial step 1.0, halved until residual
-  decreases. Tolerance 1e-9, max 5000 iterations by default; tunable
-  via `SolverConfig` + `Sketch::solve_with_config`.
-- **Structured `SolverError`**: `OverConstrained` (max iterations
-  exhausted), `Contradictory` (gradient norm collapses with non-zero
-  residual, or line search shrinks below `min_step`),
-  `UnknownPoint(id)`, `UnknownLine(id)`, `ParamResolution(msg)`.
-  Under-constrained sketches converge to *some* valid configuration
-  (documented behaviour — `FixedPoint` is the explicit anchor when
-  callers want determinism).
-- **`Scalar::Param` resolution**: constraint values that reference
-  `$param` (e.g. `Distance { value: Scalar::param("len") }`) are
-  resolved against the `params: &HashMap<String, f64>` argument at
-  solve time, so the same sketch can be re-solved with different
-  parameter sets.
-- **Tests**: one per constraint variant (distance, horizontal,
-  vertical, parallel, perpendicular, coincident, fixed-point), one
-  per error path (over-constrained, contradictory, unknown-point,
-  param-resolution), one no-op for empty constraints, one composite
-  test combining FixedPoint + Horizontal + Distance to verify the
-  geometry collapses to the unique solution.
-- **`SketchConstraint` was NOT modified** — solver consumes it
-  read-only. The data model from PR #8 is unchanged; this is a pure
-  additive consumer.
-
-## Earlier session (2026-05-08, part 1)
-
-**2D sketcher data model + JSON DSL shipped.** Sketcher scorecard line
-0% → 30% (+2.4 SW pts). 727 tests → 739 tests (12 new — 10 integration
-+ 2 unit), 0 failed, 9 ignored.
-
-- **`Sketch` type** in new `crates/kerf-cad/src/sketch.rs`: `SketchPlane`
-  (Xy/Xz/Yz/NamedRefPlane), `SketchPrim` (Point, Line, Circle, Arc),
-  `SketchConstraint` (Coincident, Distance, Horizontal, Vertical,
-  Parallel, Perpendicular, FixedPoint). Full serde derive for JSON DSL.
-- **Loop tracer** `Sketch::to_profile_2d(params)` walks Lines+Arcs as a
-  graph and emits a `Profile2D` per closed loop. Standalone Circles
-  emit their own profile each. Requires every endpoint that participates
-  in a line/arc to have valence == 2 — branching, dangling endpoints,
-  and unknown-point references are rejected with structured
-  `SketchError`s. Auto-flips clockwise sketches to CCW so
-  `extrude_polygon` produces positive-volume solids.
-- **`Feature::SketchExtrude` / `Feature::SketchRevolve`** route a sketch
-  through `to_profile_2d` and into the existing `extrude_polygon` /
-  `revolve_polyline` kernel paths.
-- **Constraints are stored, not solved.** Round-trip through JSON
-  preserves all 7 variants. The future solver picks them up unchanged.
-  This is the structural foundation for the constraint-solver line
-  (currently 30%, separate from this delta).
-
-## Earlier session (2026-05-06)
+## Latest session (2026-05-06)
 
 GAP 1 (Picking → edit) shipped. GAP 2 Plan B (SweepPath) shipped. Bonus
 faceted torus + Donut feature shipped. ~52.7% → ~54.7% (+2 SW pts), 518
@@ -578,14 +206,9 @@ achievable in one focused session: ~4 SW pts of progress.
 The gap is roughly 57 SW pts and is dominated by features that are each
 multi-week engineering projects in their own right:
 
-- **2D sketcher UI + constraint solver** (18 SW pts combined; sketcher
-  itself is now at 100% — 8 SW pts — and the constraint solver line is
-  at 95% — 9.5 SW pts; the remaining gap on the *constraint solver*
-  line is bidirectional drag-to-update + a real interactive UI for
-  authoring constraints, not the math). Real CAD's primary input mode
-  is a 2D drawing surface; we have the data-model + tracer + solver +
-  click-driven trim/extend/fillet, but not yet an interactive
-  constraint-authoring overlay.
+- **2D sketcher UI + constraint solver** (18 SW pts combined). Real CAD's
+  primary input mode. Sketcher needs an interactive 2D drawing surface;
+  bidirectional constraint solver is its own discipline.
 - **Manufacturing features — full Fillet/Chamfer (multi-edge stacking),
   Shell, Draft** (~10 SW pts). Single-edge axis-aligned Fillet/Chamfer
   ship today; stacking multiple Fillets on the same body trips the

@@ -519,6 +519,590 @@ fn build(
                 message: e.message,
             })
         }
+        Feature::EndChamfer {
+            input,
+            axis,
+            top_center,
+            outer_radius,
+            chamfer,
+            segments,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let tc = resolve3(id, top_center, params)?;
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let c = resolve_one(id, chamfer, params)?;
+            if r_out <= 0.0 || c <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "EndChamfer requires positive outer_radius and chamfer (got r={r_out}, c={c})"
+                    ),
+                });
+            }
+            if c >= r_out {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "EndChamfer chamfer ({c}) must be < outer_radius ({r_out})"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("EndChamfer segments must be >= 6 (got {segments})"),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            // Two-step construction (avoids ring topology that the
+            // boolean stitcher can't reliably handle):
+            //   step 1: subtract a cylinder of radius r_out and height
+            //   c from the top of the body. This removes a column-
+            //   shaped slab (radius r_out, height c) from the body.
+            //   For a cylindrical boss exactly of radius r_out this
+            //   strips the top c of material off; for a wider body
+            //   this leaves a cylindrical pit.
+            //   step 2: union a chamfer frustum (r_out at bottom z=top-c,
+            //   r_out - c at top z=top) into the pit. This adds back
+            //   the lower-rim material, leaving a 45° chamfered top
+            //   surface.
+            //
+            // Net effect for a cylindrical r_out boss: the rim is
+            // beveled from r_out at z=top-c to r_out-c at z=top.
+            let eps = (c * 0.05).max(1e-3);
+            let _ = eps;
+            // Step 1 cutter: cylinder at the top, slight overhang past +axis.
+            let cut1_local = cylinder_faceted(r_out, c, *segments);
+            let cut1_oriented = match axis_idx {
+                2 => cut1_local,
+                0 => axis_swap_xz_to_x(&cut1_local),
+                1 => axis_swap_yz_to_y(&cut1_local),
+                _ => unreachable!(),
+            };
+            let mut translation = [0.0_f64; 3];
+            translation[axis_idx] = tc[axis_idx] - c;
+            translation[a_idx] = tc[a_idx];
+            translation[b_idx] = tc[b_idx];
+            let cut1 = translate_solid(
+                &cut1_oriented,
+                Vec3::new(translation[0], translation[1], translation[2]),
+            );
+            let trimmed = base.try_difference(&cut1).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "end_chamfer_strip",
+                message: e.message,
+            })?;
+            // Step 2: union a chamfer frustum back in.
+            // frustum_faceted(r_bot, r_top, h): bot at z=0, top at z=h.
+            // We want bot = r_out at z=top-c, top = r_out-c at z=top.
+            let cone_local = frustum_faceted(r_out, r_out - c, c, *segments);
+            let cone_oriented = match axis_idx {
+                2 => cone_local,
+                0 => axis_swap_xz_to_x(&cone_local),
+                1 => axis_swap_yz_to_y(&cone_local),
+                _ => unreachable!(),
+            };
+            let cone = translate_solid(
+                &cone_oriented,
+                Vec3::new(translation[0], translation[1], translation[2]),
+            );
+            trimmed.try_union(&cone).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "end_chamfer_fill",
+                message: e.message,
+            })
+        }
+        Feature::InternalChamfer {
+            input,
+            axis,
+            top_center,
+            hole_radius,
+            chamfer_width,
+            chamfer_depth,
+            segments,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let tc = resolve3(id, top_center, params)?;
+            let hr = resolve_one(id, hole_radius, params)?;
+            let cw = resolve_one(id, chamfer_width, params)?;
+            let cd = resolve_one(id, chamfer_depth, params)?;
+            if hr <= 0.0 || cw <= 0.0 || cd <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "InternalChamfer requires positive hole_radius, chamfer_width, chamfer_depth (got hr={hr}, cw={cw}, cd={cd})"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("InternalChamfer segments must be >= 6 (got {segments})"),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            // The cutter is a single frustum that opens upward: bottom
+            // radius = hr at depth cd, top radius = hr + cw at the surface.
+            // Build local in +z: bottom at z=0 (radius=hr), top at z=cd
+            // (radius=hr+cw). Add small overhang past the top to avoid
+            // coplanar caps with the body's top surface.
+            let eps = (cd * 0.1).max(1e-3);
+            let cone_local = frustum_faceted(hr, hr + cw, cd + eps, *segments);
+            let oriented = match axis_idx {
+                2 => cone_local,
+                0 => axis_swap_xz_to_x(&cone_local),
+                1 => axis_swap_yz_to_y(&cone_local),
+                _ => unreachable!(),
+            };
+            let mut translation = [0.0_f64; 3];
+            translation[axis_idx] = tc[axis_idx] - cd;
+            translation[a_idx] = tc[a_idx];
+            translation[b_idx] = tc[b_idx];
+            let cutter = translate_solid(
+                &oriented,
+                Vec3::new(translation[0], translation[1], translation[2]),
+            );
+            base.try_difference(&cutter)
+                .map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "internal_chamfer",
+                    message: e.message,
+                })
+        }
+        Feature::ConicalCounterbore {
+            input,
+            axis,
+            top_center,
+            drill_radius,
+            cbore_radius,
+            cbore_depth,
+            body_depth,
+            tip_depth,
+            segments,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let tc = resolve3(id, top_center, params)?;
+            let dr = resolve_one(id, drill_radius, params)?;
+            let cr = resolve_one(id, cbore_radius, params)?;
+            let cd = resolve_one(id, cbore_depth, params)?;
+            let bd = resolve_one(id, body_depth, params)?;
+            let td = resolve_one(id, tip_depth, params)?;
+            if dr <= 0.0 || cr <= 0.0 || cd <= 0.0 || bd <= 0.0 || td <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ConicalCounterbore requires positive radii and depths (got dr={dr}, cr={cr}, cd={cd}, bd={bd}, td={td})"
+                    ),
+                });
+            }
+            if cr <= dr {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ConicalCounterbore cbore_radius ({cr}) must be > drill_radius ({dr})"
+                    ),
+                });
+            }
+            if cd >= bd {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ConicalCounterbore cbore_depth ({cd}) must be < body_depth ({bd})"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("ConicalCounterbore segments must be >= 6 (got {segments})"),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            // Three cutters, all axis-aligned:
+            //  1. counterbore disk: r=cr, h=cd, top at top_center.
+            //  2. drill body: r=dr, h=bd-eps, top overlapping cbore by eps.
+            //  3. tip cone: frustum dr->0, h=td, top abutting drill.
+            let eps = (dr * 0.1).max(1e-3).min(bd * 0.1);
+            // Counterbore cylinder: from tc[axis]-cd to tc[axis]+eps.
+            let cbore = cylinder_along_axis(
+                cr,
+                cd + eps,
+                *segments,
+                axis_idx,
+                tc[axis_idx] - cd,
+                tc[a_idx],
+                tc[b_idx],
+            );
+            // Drill body: from tc[axis]-bd to tc[axis]-cd+eps.
+            let drill_h = bd - cd + eps;
+            let drill = cylinder_along_axis(
+                dr,
+                drill_h,
+                *segments,
+                axis_idx,
+                tc[axis_idx] - bd,
+                tc[a_idx],
+                tc[b_idx],
+            );
+            // Tip cone: cone_faceted(r, h, n) builds base at z=0,
+            // apex at z=h. We want apex DOWN: build the cone
+            // upside-down by swapping vertices via mirror across z=h/2.
+            // Simpler: use frustum_faceted with a tiny non-zero r_top
+            // (drill-tip radius) to approximate the tip without
+            // hitting the r_bot==0 panic.
+            let tip_min_r = (dr * 0.01).max(1e-6);
+            // Local frustum: r_bot=tip_min (narrow) at z=0, r_top=dr
+            // (wide) at z=td+eps. Place narrow at world z=tc-bd-td
+            // (deepest point) so wide ends up at world z=tc-bd+eps,
+            // overlapping the drill body bottom by eps.
+            let cone_local = frustum_faceted(tip_min_r, dr, td + eps, *segments);
+            let oriented = match axis_idx {
+                2 => cone_local,
+                0 => axis_swap_xz_to_x(&cone_local),
+                1 => axis_swap_yz_to_y(&cone_local),
+                _ => unreachable!(),
+            };
+            let mut tip_translation = [0.0_f64; 3];
+            tip_translation[axis_idx] = tc[axis_idx] - bd - td;
+            tip_translation[a_idx] = tc[a_idx];
+            tip_translation[b_idx] = tc[b_idx];
+            let tip = translate_solid(
+                &oriented,
+                Vec3::new(tip_translation[0], tip_translation[1], tip_translation[2]),
+            );
+            let cb_drill = cbore.try_union(&drill).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "conical_counterbore_cb_drill_union",
+                message: e.message,
+            })?;
+            let composite = cb_drill.try_union(&tip).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "conical_counterbore_tip_union",
+                message: e.message,
+            })?;
+            base.try_difference(&composite)
+                .map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "conical_counterbore",
+                    message: e.message,
+                })
+        }
+        Feature::CrossDrilledHole {
+            input,
+            center,
+            axis_a,
+            axis_b,
+            radius,
+            length_a,
+            length_b,
+            segments,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let c = resolve3(id, center, params)?;
+            let r = resolve_one(id, radius, params)?;
+            let la = resolve_one(id, length_a, params)?;
+            let lb = resolve_one(id, length_b, params)?;
+            if r <= 0.0 || la <= 0.0 || lb <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "CrossDrilledHole requires positive radius, length_a, length_b (got r={r}, la={la}, lb={lb})"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("CrossDrilledHole segments must be >= 6 (got {segments})"),
+                });
+            }
+            let ai = parse_axis(id, axis_a)?;
+            let bi = parse_axis(id, axis_b)?;
+            if ai == bi {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "CrossDrilledHole axis_a and axis_b must differ (both got {axis_a})"
+                    ),
+                });
+            }
+            let (a_perp_a, a_perp_b) = perpendicular_axes(ai);
+            let (b_perp_a, b_perp_b) = perpendicular_axes(bi);
+            let drill_a = cylinder_along_axis(
+                r,
+                la,
+                *segments,
+                ai,
+                c[ai] - la / 2.0,
+                c[a_perp_a],
+                c[a_perp_b],
+            );
+            let drill_b = cylinder_along_axis(
+                r,
+                lb,
+                *segments,
+                bi,
+                c[bi] - lb / 2.0,
+                c[b_perp_a],
+                c[b_perp_b],
+            );
+            let composite = drill_a
+                .try_union(&drill_b)
+                .map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "cross_drilled_union",
+                    message: e.message,
+                })?;
+            base.try_difference(&composite)
+                .map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "cross_drilled_hole",
+                    message: e.message,
+                })
+        }
+        Feature::TaperedPin {
+            large_radius,
+            small_radius,
+            length,
+            segments,
+            ..
+        } => {
+            let r_large = resolve_one(id, large_radius, params)?;
+            let r_small = resolve_one(id, small_radius, params)?;
+            let l = resolve_one(id, length, params)?;
+            if r_large <= 0.0 || r_small <= 0.0 || l <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TaperedPin requires positive large_radius, small_radius, length (got large={r_large}, small={r_small}, l={l})"
+                    ),
+                });
+            }
+            if r_small >= r_large {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "TaperedPin small_radius ({r_small}) must be < large_radius ({r_large})"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("TaperedPin segments must be >= 6 (got {segments})"),
+                });
+            }
+            // r_bot = large at z=0, r_top = small at z=length.
+            Ok(frustum_faceted(r_large, r_small, l, *segments))
+        }
+        Feature::FlangedNut {
+            inscribed_radius,
+            flange_radius,
+            flange_thickness,
+            nut_thickness,
+            bore_radius,
+            segments,
+            ..
+        } => {
+            let ir = resolve_one(id, inscribed_radius, params)?;
+            let fr = resolve_one(id, flange_radius, params)?;
+            let ft = resolve_one(id, flange_thickness, params)?;
+            let nt = resolve_one(id, nut_thickness, params)?;
+            let br = resolve_one(id, bore_radius, params)?;
+            if ir <= 0.0 || fr <= 0.0 || ft <= 0.0 || nt <= 0.0 || br <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "FlangedNut requires all positive dimensions (got ir={ir}, fr={fr}, ft={ft}, nt={nt}, br={br})"
+                    ),
+                });
+            }
+            if br >= ir {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "FlangedNut bore_radius ({br}) must be < inscribed_radius ({ir})"
+                    ),
+                });
+            }
+            // Hex circumradius (vertex distance) from inscribed (across-flats /2).
+            let hex_circ = ir / (std::f64::consts::PI / 6.0).cos();
+            if fr <= hex_circ {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "FlangedNut flange_radius ({fr}) must be > hex circumradius ({hex_circ})"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("FlangedNut segments must be >= 6 (got {segments})"),
+                });
+            }
+            // Bore each section separately, then assemble. This avoids
+            // the failure mode where the bore cylinder spans both the
+            // flange (segments-sided) and the hex (6-sided) at once;
+            // their differing facet topology around the shared bore
+            // wall trips the boolean stitcher.
+            //
+            // Per-section bore: each piece is a hollow cylinder/hex,
+            // already boolean-resolved. Assembling them axially via
+            // try_union produces a clean stacked solid because they
+            // share only the bore-wall edges already present in both.
+            let eps = 1e-3;
+            let flange_raw = cylinder_faceted(fr, ft, *segments);
+            let bore_flange_raw = cylinder_faceted(br, ft + 2.0 * eps, *segments);
+            let bore_flange = translate_solid(&bore_flange_raw, Vec3::new(0.0, 0.0, -eps));
+            let flange = flange_raw
+                .try_difference(&bore_flange)
+                .map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "flanged_nut_flange_bore",
+                    message: e.message,
+                })?;
+            let hex_raw = cylinder_faceted(hex_circ, nt, 6);
+            let bore_hex_raw = cylinder_faceted(br, nt + 2.0 * eps, *segments);
+            let bore_hex = translate_solid(&bore_hex_raw, Vec3::new(0.0, 0.0, -eps));
+            let hex_solid = hex_raw
+                .try_difference(&bore_hex)
+                .map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "flanged_nut_hex_bore",
+                    message: e.message,
+                })?;
+            let hex_translated = translate_solid(&hex_solid, Vec3::new(0.0, 0.0, ft));
+            flange
+                .try_union(&hex_translated)
+                .map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "flanged_nut_assemble",
+                    message: e.message,
+                })
+        }
+        Feature::DowelPin {
+            radius,
+            length,
+            chamfer,
+            segments,
+            ..
+        } => {
+            let r = resolve_one(id, radius, params)?;
+            let l = resolve_one(id, length, params)?;
+            let c = resolve_one(id, chamfer, params)?;
+            if r <= 0.0 || l <= 0.0 || c <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "DowelPin requires positive radius, length, chamfer (got r={r}, l={l}, c={c})"
+                    ),
+                });
+            }
+            if c >= r {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "DowelPin chamfer ({c}) must be < radius ({r})"
+                    ),
+                });
+            }
+            if 2.0 * c >= l {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "DowelPin 2 * chamfer ({}) must be < length ({l})",
+                        2.0 * c
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("DowelPin segments must be >= 6 (got {segments})"),
+                });
+            }
+            // Three sections, slightly overlapped to avoid coplanar caps:
+            //  - bottom frustum: r-c at z=0 -> r at z=c.
+            //  - body cylinder: r at z=c..length-c.
+            //  - top frustum: r at z=length-c -> r-c at z=length.
+            let eps = (c * 0.05).max(1e-3);
+            let bot_local = frustum_faceted(r - c, r, c + eps, *segments);
+            let body_h = l - 2.0 * c + 2.0 * eps;
+            let body_local = cylinder_faceted(r, body_h, *segments);
+            let body = translate_solid(&body_local, Vec3::new(0.0, 0.0, c - eps));
+            let top_local = frustum_faceted(r, r - c, c + eps, *segments);
+            let top = translate_solid(&top_local, Vec3::new(0.0, 0.0, l - c));
+            let lower = bot_local
+                .try_union(&body)
+                .map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "dowel_pin_lower_join",
+                    message: e.message,
+                })?;
+            lower.try_union(&top).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "dowel_pin_upper_join",
+                message: e.message,
+            })
+        }
+        Feature::BlindHole {
+            input,
+            axis,
+            top_center,
+            radius,
+            depth,
+            segments,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let tc = resolve3(id, top_center, params)?;
+            let r = resolve_one(id, radius, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if r <= 0.0 || d <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "BlindHole requires positive radius and depth (got r={r}, d={d})"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("BlindHole segments must be >= 6 (got {segments})"),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            // Drill cylinder runs from top_center down by `depth`.
+            // Add small overhang past the top surface so the cylinder
+            // pokes outside the body and avoids coplanar caps with the
+            // body's exterior face.
+            let eps = (r * 0.1).max(1e-3).min(d * 0.1);
+            let drill = cylinder_along_axis(
+                r,
+                d + eps,
+                *segments,
+                axis_idx,
+                tc[axis_idx] - d,
+                tc[a_idx],
+                tc[b_idx],
+            );
+            base.try_difference(&drill)
+                .map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "blind_hole",
+                    message: e.message,
+                })
+        }
         Feature::Fillets { input, edges, .. } => {
             let base = cache_get(cache, input)?;
             build_fillets(id, base, edges, params)
