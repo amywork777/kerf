@@ -15,6 +15,10 @@ path = "src/lib.rs"
 name = "kerf-cad"
 path = "src/bin/kerf_cad.rs"
 
+[[bin]]
+name = "extract_catalog"
+path = "src/bin/extract_catalog.rs"
+
 [dependencies]
 kerf-geom = { path = "../kerf-geom" }
 kerf-brep = { path = "../kerf-brep" }
