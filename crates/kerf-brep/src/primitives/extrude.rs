@@ -1,4 +1,11 @@
 //! `extrude_polygon(profile, direction)` — build a prism with an N-gon base.
+//! `extrude_polygon_with_holes(outer, holes, direction)` — build a prism whose
+//! base is a polygon with one or more inner cutouts (polygon-with-holes
+//! profile), implemented as the boolean difference of the outer prism with
+//! each hole prism. This is topologically intentional in the sense that
+//! callers asking for "a profile with holes" get a single resulting solid
+//! whose interior matches the polygon-with-holes definition (rather than
+//! disjoint solids that the caller has to compose themselves).
 
 use kerf_geom::{Frame, Line, Plane, Point3, Vec3};
 use kerf_topo::{validate, FaceId, MevResult};
@@ -18,6 +25,139 @@ pub fn extrude_polygon(profile: &[Point3], direction: Vec3) -> Solid {
     debug_assert!(direction.norm() > 1e-12, "direction must be non-zero");
     let top: Vec<Point3> = profile.iter().map(|p| *p + direction).collect();
     extrude_lofted(profile, &top)
+}
+
+/// Error returned by [`extrude_polygon_with_holes`] when the inputs don't
+/// describe a well-formed polygon-with-holes (degenerate outer, hole that
+/// crosses the outer boundary, hole–hole overlap, boolean engine refused,
+/// etc.).
+#[derive(Debug)]
+pub struct PolygonWithHolesError {
+    pub message: String,
+}
+
+impl std::fmt::Display for PolygonWithHolesError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "polygon-with-holes extrude: {}", self.message)
+    }
+}
+
+impl std::error::Error for PolygonWithHolesError {}
+
+/// Extrude a polygon-with-holes profile along `direction`.
+///
+/// Builds the outer-loop prism, then carves each inner hole as a boolean
+/// difference. The hole prisms are extended slightly past both caps so the
+/// difference cuts through cleanly without leaving thin slivers from
+/// coplanar coincidence between the hole's top/bottom face and the outer's
+/// top/bottom face.
+///
+/// `outer` must be a CCW simple polygon (when viewed from `+direction`)
+/// with at least 3 vertices. Each inner loop in `holes` must be a CW
+/// simple polygon (i.e. opposite orientation from `outer`); they should
+/// lie strictly inside `outer` and not overlap each other. The CW
+/// requirement is for downstream face-orientation consistency in the
+/// resulting solid; this function flips inner orientations to CCW
+/// internally before extruding (because the boolean engine wants both
+/// operands oriented outward) — so callers can pass holes in either
+/// orientation without crashing.
+///
+/// On success the returned solid has F = outer.F + holes.F faces (outer
+/// caps remain, hole side walls are added per hole) modulo what the
+/// boolean engine merges. On failure it returns a [`PolygonWithHolesError`]
+/// — typically when the boolean engine hits an unsupported configuration
+/// for the chosen geometry (e.g. coincident vertices that don't cleanly
+/// resolve at the default tolerance).
+pub fn extrude_polygon_with_holes(
+    outer: &[Point3],
+    holes: &[Vec<Point3>],
+    direction: Vec3,
+) -> Result<Solid, PolygonWithHolesError> {
+    if outer.len() < 3 {
+        return Err(PolygonWithHolesError {
+            message: format!("outer profile must have >= 3 vertices, got {}", outer.len()),
+        });
+    }
+    if direction.norm() < 1e-12 {
+        return Err(PolygonWithHolesError {
+            message: "direction must be non-zero".into(),
+        });
+    }
+
+    // Build the outer prism in its native orientation.
+    let outer_solid = extrude_polygon(outer, direction);
+
+    if holes.is_empty() {
+        return Ok(outer_solid);
+    }
+
+    // For each hole, normalize orientation to CCW (so the hole prism is a
+    // valid outward-facing solid), then extrude with the cap planes
+    // pushed slightly past the outer's caps to avoid coplanar slivers.
+    // The "slightly past" offset is 1% of |direction| on each side, which
+    // is well above the boolean engine's default tolerance and well below
+    // any meaningful geometric scale a user would configure.
+    let dir_unit = direction.normalize();
+    let dir_len = direction.norm();
+    let pad = (dir_len * 0.01).max(1e-3);
+    let extended_dir = direction + dir_unit * (2.0 * pad);
+
+    let mut acc = outer_solid;
+    for (i, hole) in holes.iter().enumerate() {
+        if hole.len() < 3 {
+            return Err(PolygonWithHolesError {
+                message: format!("hole {i} must have >= 3 vertices, got {}", hole.len()),
+            });
+        }
+        let oriented = orient_ccw(hole, dir_unit);
+        let base: Vec<Point3> = oriented.iter().map(|p| *p - dir_unit * pad).collect();
+        let hole_prism = extrude_polygon(&base, extended_dir);
+        acc = acc
+            .try_difference(&hole_prism)
+            .map_err(|e| PolygonWithHolesError {
+                message: format!("hole {i}: {}", e.message),
+            })?;
+    }
+    Ok(acc)
+}
+
+/// Return `poly` with CCW orientation (signed area in the plane normal to
+/// `up_dir` is positive). If already CCW, returned vertices match input;
+/// if CW, the input is reversed.
+fn orient_ccw(poly: &[Point3], up_dir: Vec3) -> Vec<Point3> {
+    // Project onto the plane perpendicular to up_dir using a stable basis,
+    // compute signed area, reverse if negative.
+    let (u, v) = perp_basis(up_dir);
+    let mut area = 0.0;
+    let n = poly.len();
+    for i in 0..n {
+        let a = poly[i];
+        let b = poly[(i + 1) % n];
+        let ax = a.coords.dot(&u);
+        let ay = a.coords.dot(&v);
+        let bx = b.coords.dot(&u);
+        let by = b.coords.dot(&v);
+        area += ax * by - bx * ay;
+    }
+    if area >= 0.0 {
+        poly.to_vec()
+    } else {
+        let mut rev = poly.to_vec();
+        rev.reverse();
+        rev
+    }
+}
+
+fn perp_basis(n: Vec3) -> (Vec3, Vec3) {
+    let nu = n.normalize();
+    let seed = if nu.dot(&Vec3::x()).abs() < 0.9 {
+        Vec3::x()
+    } else {
+        Vec3::y()
+    };
+    let u = (seed - nu * seed.dot(&nu)).normalize();
+    let v = nu.cross(&u);
+    (u, v)
 }
 
 /// Connect two parallel polygons with the same vertex count via flat side
@@ -329,5 +469,46 @@ mod tests {
         for (_, seg) in &s.edge_geom {
             assert!(matches!(seg.curve, crate::CurveKind::Line(_)));
         }
+    }
+
+    #[test]
+    fn polygon_with_no_holes_matches_plain_extrude() {
+        let outer = vec![
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(4.0, 0.0, 0.0),
+            Point3::new(4.0, 3.0, 0.0),
+            Point3::new(0.0, 3.0, 0.0),
+        ];
+        let dir = Vec3::new(0.0, 0.0, 2.0);
+        let direct = extrude_polygon(&outer, dir);
+        let via_holes = extrude_polygon_with_holes(&outer, &[], dir).unwrap();
+        assert_eq!(direct.vertex_count(), via_holes.vertex_count());
+        assert_eq!(direct.face_count(), via_holes.face_count());
+    }
+
+    #[test]
+    fn polygon_with_one_hole_subtracts_volume() {
+        // 4×4 square with a 1×1 hole in the middle, extruded by 2.
+        // Expected volume: 4*4*2 - 1*1*2 = 32 - 2 = 30.
+        let outer = vec![
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(4.0, 0.0, 0.0),
+            Point3::new(4.0, 4.0, 0.0),
+            Point3::new(0.0, 4.0, 0.0),
+        ];
+        let hole = vec![
+            Point3::new(1.5, 1.5, 0.0),
+            Point3::new(2.5, 1.5, 0.0),
+            Point3::new(2.5, 2.5, 0.0),
+            Point3::new(1.5, 2.5, 0.0),
+        ];
+        let dir = Vec3::new(0.0, 0.0, 2.0);
+        let s = extrude_polygon_with_holes(&outer, &[hole], dir).unwrap();
+        let v = crate::solid_volume(&s);
+        assert!(
+            (v - 30.0).abs() < 0.5,
+            "expected ~30, got {v} (32 - 2 = 30)"
+        );
+        validate(&s.topo).unwrap();
     }
 }

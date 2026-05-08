@@ -5816,55 +5816,59 @@ fn build_sketch_extrude(
     params: &HashMap<String, f64>,
     model: &Model,
 ) -> Result<Solid, EvalError> {
-    let profiles = sketch.to_profile_2d(params).map_err(|e| EvalError::Invalid {
-        id: id.into(),
-        reason: format!("sketch trace: {e}"),
-    })?;
-    if profiles.is_empty() {
+    // Classify the sketch into polygon-with-holes groups. This rejects
+    // crossing loops up-front and assigns nested inner loops as holes of
+    // their enclosing outer.
+    let groups = sketch
+        .loops_classified(params)
+        .map_err(|e| EvalError::Invalid {
+            id: id.into(),
+            reason: format!("sketch trace: {e}"),
+        })?;
+    if groups.is_empty() {
         return Err(EvalError::Invalid {
             id: id.into(),
             reason: "SketchExtrude has no closed profile".into(),
         });
     }
 
-    // Multi-loop policy: if there are 2+ profiles, ensure none of them
-    // CROSS each other (they may be fully disjoint or fully nested). For
-    // now we union all profiles via the boolean engine — polygon-with-
-    // holes isn't yet wired through `extrude_polygon`, so a fully-nested
-    // inner loop becomes a separate solid that overlaps the outer; the
-    // boolean engine handles the union naturally for the disjoint case
-    // and reports an error for the overlapping case (which we surface as
-    // DisjointSubLoops).
-    if profiles.len() >= 2 {
-        let pts: Vec<Vec<[f64; 2]>> = profiles
-            .iter()
-            .map(|p| {
-                crate::sketch::profile_points_xy(p, params).map_err(|e| EvalError::Invalid {
-                    id: id.into(),
-                    reason: format!("sketch profile: {e}"),
-                })
-            })
-            .collect::<Result<_, _>>()?;
-        for i in 0..pts.len() {
-            for j in (i + 1)..pts.len() {
-                if crate::sketch::polygons_cross(&pts[i], &pts[j]) {
-                    return Err(EvalError::Invalid {
-                        id: id.into(),
-                        reason: format!(
-                            "{}",
-                            crate::sketch::SketchError::DisjointSubLoops
-                        ),
-                    });
-                }
-            }
-        }
-    }
+    // Resolve direction once.
+    let dir_arr = resolve3(id, direction, params)?;
+    let dir = Vec3::new(dir_arr[0], dir_arr[1], dir_arr[2]);
 
-    // Build each profile in the LOCAL sketch frame (XY plane). We then
-    // apply an optional ref-plane transform to the unioned result.
+    // Build each polygon-with-holes group. If a group has zero holes, use
+    // the plain `extrude_polygon` path. Otherwise route through
+    // `extrude_polygon_with_holes` for a topologically intentional
+    // polygon-with-holes solid (one cap-with-hole face on each side, plus
+    // both outer and inner side walls). Multiple disjoint groups union
+    // into a single multi-bodied solid.
     let mut acc: Option<Solid> = None;
-    for prof in &profiles {
-        let one = build_extrude(id, prof, direction, params)?;
+    for group in &groups {
+        let outer_pts: Vec<kerf_geom::Point3> = group
+            .outer
+            .iter()
+            .map(|xy| kerf_geom::Point3::new(xy[0], xy[1], 0.0))
+            .collect();
+        let one = if group.holes.is_empty() {
+            kerf_brep::extrude_polygon(&outer_pts, dir)
+        } else {
+            let hole_pts: Vec<Vec<kerf_geom::Point3>> = group
+                .holes
+                .iter()
+                .map(|h| {
+                    h.iter()
+                        .map(|xy| kerf_geom::Point3::new(xy[0], xy[1], 0.0))
+                        .collect()
+                })
+                .collect();
+            kerf_brep::extrude_polygon_with_holes(&outer_pts, &hole_pts, dir).map_err(|e| {
+                EvalError::Boolean {
+                    id: id.into(),
+                    op: "sketch_polygon_with_holes",
+                    message: e.message,
+                }
+            })?
+        };
         acc = Some(match acc {
             None => one,
             Some(prev) => prev.try_union(&one).map_err(|e| EvalError::Boolean {
@@ -5874,7 +5878,7 @@ fn build_sketch_extrude(
             })?,
         });
     }
-    let solid = acc.expect("at least one profile");
+    let solid = acc.expect("at least one group");
 
     // Apply ref-plane transform, if any.
     let positioned = apply_sketch_plane_transform(id, &sketch.plane, &solid, params, model)?;

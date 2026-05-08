@@ -16,7 +16,10 @@ pub use geometry::{CurveKind, CurveSegment, Sense, SurfaceKind};
 pub use measure::{shell_volume, solid_volume};
 pub use mesh_import::{from_triangles, read_ascii, read_stl_auto, read_stl_binary_to_solid, read_stl_to_solid, MeshImportError};
 pub use obj::{read_obj, read_obj_to_solid, write_obj};
-pub use primitives::{box_, box_at, cone, cylinder, extrude_polygon, frustum, revolve_polyline, sphere, torus};
+pub use primitives::{
+    box_, box_at, cone, cylinder, extrude_polygon, extrude_polygon_with_holes, frustum,
+    revolve_polyline, sphere, torus, PolygonWithHolesError,
+};
 pub use serde_io::{read_json, write_json};
 pub use solid::{try_boolean_solid, BooleanError, Solid};
 pub use step::write_step;
