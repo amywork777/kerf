@@ -52,17 +52,83 @@ kernel + authoring + viewer + production output).
 | Feature tree UI                           | 5%        | 60%      | 3.0    |
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
-| Constraint solver (forward expressions)   | 10%       | 60%      | 6.0    |
+| Constraint solver (forward expressions)   | 10%       | 80%      | 8.0    |
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
 | Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 30%      | 2.4    |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~70.4%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~72.4%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08, part 2)
+## Latest session (2026-05-08, part 3)
+
+**Newton-Raphson + analytic Jacobians + new constraint variants +
+contradictory-subset identification.** Constraint-solver scorecard line
+60% → 80% (+2.0 SW pts). 752 tests → 761 tests (9 new integration
+tests in `tests/constraint_solver.rs`), 0 failed, 9 ignored.
+
+- **Analytic gradients** for all 11 `SketchConstraint` variants
+  (the original 7 plus 4 new ones — see below). The solver now uses an
+  analytic Jacobian as the primary gradient path; central finite
+  differences are kept as a fallback for the rare case of an
+  analytic-zero gradient at a singularity (e.g. coincident points
+  where the unit-vector direction degenerates). New test
+  `solver_analytic_gradient_matches_finite_difference` verifies parity
+  for each of the 7 original constraints to within 1e-3 relative.
+- **Newton-Raphson + Levenberg-Marquardt** as the primary solver step.
+  Each iteration assembles the Jacobian J of the per-row signed
+  residuals (one row per constraint, except `Coincident` and
+  `FixedPoint` which yield two rows — x and y — to keep J^T·J
+  full-rank for those anchored DOFs), then solves
+  `(J^T·J + λI) · dx = -J^T·r` via in-place dense Gauss-Seidel
+  (200-sweep cap, no external lin-alg dep). The Newton candidate is
+  tried first; if its line search fails, we fall back to gradient
+  descent in the same iteration. Test
+  `solver_newton_converges_in_fewer_iterations` confirms Newton beats
+  plain gradient descent on a 3-4-5 triangle problem.
+- **Contradictory-constraint identification**. When the solver
+  cannot reduce the residual, it now bisects the constraint set by
+  greedy single-removal — repeatedly drop one constraint at a time as
+  long as the remaining subset still fails to converge. The reported
+  `SolverError::Contradictory { conflicting }` lists indices into the
+  original `sketch.constraints` of the minimal failing subset. Test
+  `solver_contradictory_identifies_minimal_subset` verifies that two
+  conflicting `Distance` constraints buried among non-conflicting
+  ones are isolated correctly.
+- **4 new `SketchConstraint` variants**:
+  - `TangentLineToCircle { line, circle }` — line is tangent to a
+    circle (perpendicular distance from center to line = radius).
+    Residual = `perp_signed² - radius²`, polynomial in DOFs (smooth
+    everywhere). Test: `solver_tangent_line_to_circle`.
+  - `CoincidentOnLine { point, line }` — point lies on a line.
+    Residual = `perp_signed` (the signed perpendicular distance —
+    avoids the absolute-value kink at zero). Test:
+    `solver_coincident_on_line`.
+  - `EqualLength { line_a, line_b }` — two lines have equal length.
+    Test: `solver_equal_length`.
+  - `EqualRadius { circle_a, circle_b }` — two circles have equal
+    radius. Radii are not point DOFs, so the Jacobian row is empty;
+    if the resolved radii disagree, the constraint surfaces as
+    `SolverError::Contradictory`. Tests: `solver_equal_radius` (both
+    happy-path and contradictory-disagreement cases),
+    `solver_unknown_circle_returns_error`.
+- **`SolverConfig` additions**: `use_newton: bool` (default true),
+  `lm_damping: f64` (default 1e-9), `gauss_seidel_max_sweeps: u32`
+  (default 200), `identify_conflicts: bool` (default true). The
+  conflict-identification pass is recursive-safe — sub-solves run
+  with `identify_conflicts: false` so we never bisect inside a
+  bisection.
+- **Public API additions**: `SolverError::UnknownCircle(String)`,
+  `SolverError::Contradictory { residual, conflicting: Vec<usize> }`
+  (the `conflicting` field is new — empty when bisection was
+  disabled or wasn't reached).
+- **Test count**: `tests/constraint_solver.rs` 13 → 22 tests (8
+  named-new tests as required, plus
+  `solver_combined_tangent_and_equal_length` as a composite case).
+
+## Earlier session (2026-05-08, part 2)
 
 **Iterative 2D constraint solver shipped.** Constraint-solver scorecard
 line 30% → 60% (+3.0 SW pts). 739 tests → 752 tests (13 new

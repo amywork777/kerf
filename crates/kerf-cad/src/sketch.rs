@@ -99,9 +99,9 @@ impl SketchPrim {
     }
 }
 
-/// Geometric constraints. Stored on the sketch and round-tripped through
-/// JSON, but NOT enforced today — there is no solver. They are
-/// forward-compatible slots for a future bidirectional constraint engine.
+/// Geometric constraints. Round-tripped through JSON. Enforced by
+/// [`Sketch::solve`] in `crate::solver`, which adjusts Point coordinates
+/// to drive the residual sum to zero.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind")]
 pub enum SketchConstraint {
@@ -119,6 +119,20 @@ pub enum SketchConstraint {
     Perpendicular { line_a: String, line_b: String },
     /// A point should be pinned in place.
     FixedPoint { point: String },
+    /// A line should be tangent to a circle (the line's distance from
+    /// the circle's center equals the circle's radius).
+    TangentLineToCircle { line: String, circle: String },
+    /// A point should lie on a line (perpendicular distance = 0).
+    CoincidentOnLine { point: String, line: String },
+    /// Two lines should have equal length.
+    EqualLength { line_a: String, line_b: String },
+    /// Two circles should have equal radius. (Resolves both radii at
+    /// solve time; if the circles' radii are literal `Scalar::Lit`s,
+    /// only the constraint check matters — the solver does not perturb
+    /// radii, so this is satisfied iff the literal values agree.
+    /// More usefully it pairs with `Scalar::Param` radii sharing the
+    /// same parameter, where the radii are equal by construction.)
+    EqualRadius { circle_a: String, circle_b: String },
 }
 
 /// A parametric 2D sketch: primitives + constraints, on a plane.
