@@ -2610,6 +2610,51 @@ pub enum Feature {
         slices: usize,
     },
 
+    /// TopHat: a tall cylinder body with a flat disk brim around the
+    /// bottom. Brim radius is wider than body radius.
+    TopHat {
+        id: String,
+        body_radius: Scalar,
+        body_height: Scalar,
+        brim_radius: Scalar,
+        brim_thickness: Scalar,
+        slices: usize,
+    },
+
+    /// WaterTower: a wide cylindrical tank perched on a slimmer
+    /// cylindrical support column.
+    WaterTower {
+        id: String,
+        tank_radius: Scalar,
+        tank_height: Scalar,
+        support_radius: Scalar,
+        support_height: Scalar,
+        slices: usize,
+    },
+
+    /// PlantPot: an inverted frustum (wider at top) with a flat ring
+    /// rim on top — terra-cotta planter shape. Open top for now is
+    /// implied by the silhouette; this is a solid prim, no carve.
+    PlantPot {
+        id: String,
+        rim_radius: Scalar,
+        base_radius: Scalar,
+        height: Scalar,
+        rim_thickness: Scalar,
+        slices: usize,
+    },
+
+    /// Buoy: a spherical float with a cylindrical mast extending
+    /// upward. Used in marine markers, decorative compositions.
+    Buoy {
+        id: String,
+        float_radius: Scalar,
+        mast_radius: Scalar,
+        mast_height: Scalar,
+        stacks: usize,
+        slices: usize,
+    },
+
     /// Volute: a decorative scroll/spiral disk — Archimedean spiral
     /// rod plus a central disk. Used as classical column-capital
     /// ornament.
@@ -2971,6 +3016,10 @@ impl Feature {
             | Feature::PointedDome { id, .. }
             | Feature::WindBell { id, .. }
             | Feature::PineCone { id, .. }
+            | Feature::TopHat { id, .. }
+            | Feature::WaterTower { id, .. }
+            | Feature::PlantPot { id, .. }
+            | Feature::Buoy { id, .. }
             | Feature::Volute { id, .. }
             | Feature::ScrollPlate { id, .. }
             | Feature::DovetailSlot { id, .. }
@@ -3208,6 +3257,10 @@ impl Feature {
             | Feature::PointedDome { .. }
             | Feature::WindBell { .. }
             | Feature::PineCone { .. }
+            | Feature::TopHat { .. }
+            | Feature::WaterTower { .. }
+            | Feature::PlantPot { .. }
+            | Feature::Buoy { .. }
             | Feature::Volute { .. }
             | Feature::ScrollPlate { .. }
             | Feature::DovetailSlot { .. }

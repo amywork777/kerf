@@ -5309,6 +5309,61 @@ fn build(
             }
             Ok(acc.expect("pinecone must have >=2 scales"))
         }
+        Feature::TopHat { body_radius, body_height, brim_radius, brim_thickness, slices, .. } => {
+            let br = resolve_one(id, body_radius, params)?;
+            let bh = resolve_one(id, body_height, params)?;
+            let bmr = resolve_one(id, brim_radius, params)?;
+            let bmt = resolve_one(id, brim_thickness, params)?;
+            if br <= 0.0 || bh <= 0.0 || bmr <= br || bmt <= 0.0 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("TopHat requires brim_radius>body_radius, positive dims (got br={br}, bmr={bmr})") });
+            }
+            // Brim disk at z=0, body cylinder above with 1e-3 overlap.
+            let brim = cylinder_faceted(bmr, bmt, *slices);
+            let body = cylinder_along_axis(br, bh, *slices, 2, bmt - 1e-3, 0.0, 0.0);
+            brim.try_union(&body).map_err(|e| EvalError::Boolean { id: id.into(), op: "tophat_join", message: e.message })
+        }
+        Feature::WaterTower { tank_radius, tank_height, support_radius, support_height, slices, .. } => {
+            let tr = resolve_one(id, tank_radius, params)?;
+            let th = resolve_one(id, tank_height, params)?;
+            let sr = resolve_one(id, support_radius, params)?;
+            let sh = resolve_one(id, support_height, params)?;
+            if tr <= 0.0 || th <= 0.0 || sr <= 0.0 || sh <= 0.0 || sr >= tr || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("WaterTower requires support_radius<tank_radius, positive dims (got tr={tr}, sr={sr})") });
+            }
+            // Slim support column at z=0, wide tank perched on top.
+            let support = cylinder_faceted(sr, sh, *slices);
+            let tank = cylinder_along_axis(tr, th, *slices, 2, sh - 1e-3, 0.0, 0.0);
+            support.try_union(&tank).map_err(|e| EvalError::Boolean { id: id.into(), op: "water_tower_join", message: e.message })
+        }
+        Feature::PlantPot { rim_radius, base_radius, height, rim_thickness, slices, .. } => {
+            let rr = resolve_one(id, rim_radius, params)?;
+            let bar = resolve_one(id, base_radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            let rt = resolve_one(id, rim_thickness, params)?;
+            if rr <= 0.0 || bar <= 0.0 || h <= 0.0 || rt <= 0.0 || rr <= bar || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("PlantPot requires rim_radius>base_radius, positive dims (got bar={bar}, rr={rr})") });
+            }
+            // Inverted frustum (wider at top) + a flat ring rim at the top.
+            let body = frustum_faceted(bar, rr, h, *slices);
+            // Rim is a flat annulus we approximate with a thin wider cylinder
+            // on top of the frustum opening.
+            let rim_outer_r = rr * 1.05;
+            let rim = cylinder_along_axis(rim_outer_r, rt, *slices, 2, h - 1e-3, 0.0, 0.0);
+            body.try_union(&rim).map_err(|e| EvalError::Boolean { id: id.into(), op: "plant_pot_rim", message: e.message })
+        }
+        Feature::Buoy { float_radius, mast_radius, mast_height, stacks, slices, .. } => {
+            let fr = resolve_one(id, float_radius, params)?;
+            let mr = resolve_one(id, mast_radius, params)?;
+            let mh = resolve_one(id, mast_height, params)?;
+            if fr <= 0.0 || mr <= 0.0 || mh <= 0.0 || mr >= fr || *stacks < 2 || *slices < 3 {
+                return Err(EvalError::Invalid { id: id.into(), reason: format!("Buoy requires mast_radius<float_radius, positive dims (got fr={fr}, mr={mr})") });
+            }
+            // Float sphere centered at origin; mast cylinder rising from the
+            // top of the sphere with 1e-3 overlap (same pattern as AcornShape).
+            let float = sphere_faceted(fr, *stacks, *slices);
+            let mast = cylinder_along_axis(mr, mh + 1e-3, *slices, 2, fr - 1e-3, 0.0, 0.0);
+            float.try_union(&mast).map_err(|e| EvalError::Boolean { id: id.into(), op: "buoy_join", message: e.message })
+        }
         Feature::Beehive { base_radius, layer_height, layers, slices, .. } => {
             let r0 = resolve_one(id, base_radius, params)?;
             let lh = resolve_one(id, layer_height, params)?;
