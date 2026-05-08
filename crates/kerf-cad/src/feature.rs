@@ -2817,6 +2817,31 @@ pub enum Feature {
         wall_thickness: Scalar,
     },
 
+    /// Hollow out `input` by offsetting every face inward by `thickness`,
+    /// producing a solid whose outer surface is the original and whose inner
+    /// surface is the inward offset. Implemented as `input - inner_offset`
+    /// using a per-vertex inward-plane-intersection algorithm.
+    ///
+    /// **Planar primitives only.** Inputs whose faces are not all `Plane`
+    /// surfaces (Sphere, Cone, Frustum, Torus, Cylinder, and any composite
+    /// containing those) are rejected with `EvalError::Invalid`. Curved-
+    /// surface Shell needs offset-surface math the kernel doesn't yet have
+    /// — see STATUS.md.
+    ///
+    /// Best-tested for **convex polyhedra**: Box, RegularPrism, Pyramid,
+    /// ExtrudePolygon (convex), Wedge, Star (convex), and the structural
+    /// shapes (LBracket, UChannel, TBeam, IBeam, etc.). Concave inputs may
+    /// produce a self-intersecting inner solid that trips the boolean
+    /// engine — those return a Boolean error.
+    ///
+    /// `thickness` must satisfy `0 < thickness < min_dimension/2`; otherwise
+    /// `Invalid` is returned.
+    Shell {
+        id: String,
+        input: String,
+        thickness: Scalar,
+    },
+
     Translate {
         id: String,
         input: String,
@@ -2910,6 +2935,7 @@ impl Feature {
             | Feature::Revolve { id, .. }
             | Feature::Tube { id, .. }
             | Feature::HollowBox { id, .. }
+            | Feature::Shell { id, .. }
             | Feature::CornerCut { id, .. }
             | Feature::Fillet { id, .. }
             | Feature::Fillets { id, .. }
@@ -3400,7 +3426,8 @@ impl Feature {
             | Feature::Fillets { input, .. }
             | Feature::Chamfer { input, .. }
             | Feature::Counterbore { input, .. }
-            | Feature::Countersink { input, .. } => {
+            | Feature::Countersink { input, .. }
+            | Feature::Shell { input, .. } => {
                 vec![input.as_str()]
             }
             Feature::Union { inputs, .. }
