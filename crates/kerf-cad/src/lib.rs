@@ -4,12 +4,17 @@
 //! walks the DAG, calls into kerf primitives + booleans, and returns a `Solid`.
 //! JSON serde lets the recipe be data, not code.
 
+pub mod assembly;
 pub mod eval;
 pub mod feature;
 pub mod model;
 pub mod scalar;
 pub mod transform;
 
+pub use assembly::{
+    apply_pose_to_solid, Assembly, AssemblyError, AssemblyRef, AxisRef, Instance, Mate, MateError,
+    Pose, ResolvedPose,
+};
 pub use eval::EvalError;
 pub use feature::{Feature, FilletEdge, Profile2D};
 pub use model::{Model, ModelError};
