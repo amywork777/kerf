@@ -133,6 +133,42 @@ pub enum SketchConstraint {
     /// More usefully it pairs with `Scalar::Param` radii sharing the
     /// same parameter, where the radii are equal by construction.)
     EqualRadius { circle_a: String, circle_b: String },
+    /// A point should lie on a circle (distance from center = radius).
+    /// Residual is `(|p - center|² - radius²)` (polynomial — smooth and
+    /// kink-free, no abs() in residual).
+    PointOnCircle { point: String, circle: String },
+    /// Two circles should be tangent externally (distance between
+    /// centers = r_a + r_b). Residual:
+    /// `(|c_a - c_b|² - (r_a + r_b)²)`.
+    CircleTangentExternal { circle_a: String, circle_b: String },
+    /// Two circles should be tangent internally (distance between
+    /// centers = |r_a - r_b|). Residual:
+    /// `(|c_a - c_b|² - (r_a - r_b)²)`.
+    CircleTangentInternal { circle_a: String, circle_b: String },
+    /// Two angles between line pairs should be equal. Each angle is
+    /// represented by its two lines; the residual compares the cosines
+    /// of the angles (cos θ_a · |la|·|la'| - cos θ_b · |lb|·|lb'|·…
+    /// scaled correctly). Implementation: equality of *normalized*
+    /// dot products `dot(la, la') / (|la|·|la'|) ==
+    /// dot(lb, lb') / (|lb|·|lb'|)` so the constraint is scale-free.
+    EqualAngle {
+        line_a1: String,
+        line_a2: String,
+        line_b1: String,
+        line_b2: String,
+    },
+    /// A point is the midpoint of a line.
+    /// Residual: `|2p - (from + to)|² = 0`. Two scalar rows (x and y).
+    MidPoint { point: String, line: String },
+    /// A point at a signed perpendicular distance from a line. Sign:
+    /// positive when the point is on the left of the directed line
+    /// (from `from` toward `to`), negative on the right.
+    /// Residual: `(perp_signed - distance)`.
+    DistanceFromLine {
+        point: String,
+        line: String,
+        distance: Scalar,
+    },
 }
 
 /// A parametric 2D sketch: primitives + constraints, on a plane.
