@@ -58,11 +58,56 @@ kernel + authoring + viewer + production output).
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
-| Assembly (multi-body + mates)             | 8%        | 30%      | 2.4    |
-| **Solidworks-tier total**                 | **100%**  |          | **~67.4%** |
+| Assembly (multi-body + mates)             | 8%        | 50%      | 4.0    |
+| **Solidworks-tier total**                 | **100%**  |          | **~69.0%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08)
+## Latest session (2026-05-08, part 2)
+
+Assembly mate solver completed. Three new mate variants
+(`ParallelPlane`, `AngleMate`, `TangentMate`) plus cycle-aware
+iterative solving. ~67.4% → ~69.0% (+1.6 SW pts), 742 tests → 756
+tests, 0 failed.
+
+- **ParallelPlane** mate: rotate B so `plane_b_normal` aligns with
+  `plane_a_normal`, then translate B along `plane_a_normal` by a
+  signed `offset`. Reuses Rodrigues + axis-angle composition from
+  PR #7 — same code path as Concentric.
+- **AngleMate** mate: rotate B around (axis_b × axis_a) until the
+  angle between the two world-space directions equals a user-supplied
+  target (in radians, range [0, π]). Validates the input range and
+  returns `MateError::Invalid` for negative/out-of-range angles.
+- **TangentMate** mate with new `SurfaceRef::{Plane, Cylinder, Sphere}`
+  enum. Supports the simple cases:
+  - **plane-on-cylinder**: cylinder axis becomes ⊥ to plane normal,
+    cylinder line at `radius` distance from plane.
+  - **plane-on-sphere**: sphere center at `radius` along plane normal.
+  - **sphere-on-sphere**: external tangent (center distance = sum of
+    radii).
+  Unsupported pairs (cylinder-cylinder, cylinder-sphere) return
+  `MateError::NotImplemented(mate_idx, reason)` so callers can
+  surface the limitation cleanly.
+- **Cycle-aware solving**: the simple sequential pass that froze
+  `instance_b` after each mate now runs only when the mate graph is
+  a forest. When a mate closes a cycle (A→B, B→C, C→A), the solver
+  switches to **iterative Gauss-Seidel relaxation**: each pass
+  applies every mate without freezing, repeated until the sum of
+  squared residuals drops below `1e-12` or `200` iterations are hit.
+  Stalled non-zero residuals are recognized as over-constrained
+  (`MateError::OverConstrained`); residuals that are still moving
+  but past the cap return `MateError::CycleDidNotConverge`. Cycle
+  detection uses union-find on the instance graph — adds two mates
+  between the same connected component → cycle.
+- **JSON serde** round-trips the new variants (`ParallelPlane`,
+  `AngleMate`, `TangentMate`) and `SurfaceRef`. Tested in
+  `parallel_plane_round_trip_json`.
+- **14 new tests** in `tests/assembly_completion.rs`, including the
+  required parallel_plane_mate, angle_mate_90deg, angle_mate_45deg
+  with parameter, both tangent cases, cycle convergence, and
+  cycle over-constrained rejection. All 11 PR #7 tests still pass.
+  **Assembly category 30% → 50% (+1.6 SW pts).**
+
+## Earlier session (2026-05-08, part 1)
 
 Assembly + mates data model shipped. ~65.0% → ~67.4% (+2.4 SW pts),
 727 tests → 742 tests, 0 failed.
@@ -204,11 +249,13 @@ multi-week engineering projects in their own right:
   major kernel addition.
 - **Sweep / loft** (6 SW pts after Revolve). Sweep along a curve, loft
   between profiles. Each is its own primitive with topology bookkeeping.
-- **Assembly + mates** (8 SW pts → ~5.6 SW pts remaining). Data model
-  + Coincident/Concentric/Distance solver shipped. Still missing:
-  iterative multi-pass solver for cyclic/symmetric mate networks,
-  parallel/perpendicular/tangent mates, and assembly-level booleans
-  (e.g., interference checking).
+- **Assembly + mates** (8 SW pts → ~4.0 SW pts remaining). Data model
+  + Coincident/Concentric/Distance/ParallelPlane/AngleMate/TangentMate
+  + cycle-aware iterative solver shipped. Still missing: full 6-DOF
+  symbolic solver for highly-constrained networks, perpendicular mate
+  (one-line wrapper around AngleMate at π/2), gear mates, assembly-
+  level booleans (interference checking, common volumes), and
+  `AssemblyRef::Path` resolution.
 - **Picking → edit** loop (~3 SW pts). Currently we pick a face but can't
   fillet *that* face; we'd need entity-id exposure across the JSON model.
 
