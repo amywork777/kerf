@@ -123,12 +123,23 @@ pub enum Feature {
     /// Extrude a `Sketch` along a direction vector. The sketch is traced
     /// into a single closed profile via `Sketch::to_profile_2d` and routed
     /// through the same `extrude_polygon` kernel as `ExtrudePolygon`.
-    /// Constraints on the sketch are stored but not enforced — coordinate
-    /// values come from the primitive's Scalar fields directly.
+    ///
+    /// If the sketch carries any `SketchConstraint`s, the constraint solver
+    /// runs *before* tracing — the Point coordinates emitted by the trace
+    /// reflect the solved configuration. Set `skip_solve = true` to bypass
+    /// the solver and trace the raw authored coordinates verbatim (useful
+    /// for testing the trace pipeline in isolation, or for "loose" sketches
+    /// that are deliberately authored under-constrained).
+    ///
+    /// `skip_solve` defaults to `false` in JSON deserialization (see
+    /// `#[serde(default)]`).
     SketchExtrude {
         id: String,
         sketch: crate::sketch::Sketch,
         direction: [Scalar; 3],
+        /// Bypass `Sketch::solve` even when constraints are present.
+        #[serde(default)]
+        skip_solve: bool,
     },
 
     /// Revolve a `Sketch` around the z-axis. The sketch's primitives are

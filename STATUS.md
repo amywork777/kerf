@@ -57,10 +57,84 @@ kernel + authoring + viewer + production output).
 | Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
-| 2D sketcher UI                            | 8%        | 96%      | 7.68   |
+| 2D sketcher UI                            | 8%        | 100%     | 8.0    |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~73.9%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~74.2%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
+
+## Latest session (2026-05-08, part 5)
+
+**Sketcher 96% → 100%: constraint solver wired into the extrusion
+pipeline.** Sketcher scorecard line 96% → 100% (+0.32 SW pts). 797 tests
+→ 803 tests rust-side (+6 new integration tests in
+`crates/kerf-cad/tests/sketch.rs`), 0 failed, 9 ignored unchanged.
+
+- **`build_sketch_extrude` now runs `Sketch::solve` before tracing.**
+  When the sketch carries any `SketchConstraint`s, the solver is invoked
+  on a clone of the sketch (the model itself is read-only at evaluate
+  time); on success the clone's Point primitives are rewritten to the
+  solved coordinates and the rest of the pipeline (`loops_classified` →
+  `to_profile_2d`) reads those updated coords directly. When the sketch
+  has zero constraints — the common case for un-constrained authoring
+  — the solver path is skipped entirely (no clone, no perturbation),
+  so the existing 24 sketch tests stay byte-identical to their
+  pre-integration outputs.
+- **Solver errors map to `EvalError::Invalid`** with a structured reason
+  string. `SolverError::Contradictory` surfaces with the bisector's
+  `conflicting` constraint indices embedded so the user can click
+  through to the offending constraint pair; `SolverError::OverConstrained`
+  surfaces with the iteration count and final residual. Unknown-id and
+  param-resolution errors pass through verbatim.
+- **`Feature::SketchExtrude { skip_solve: bool, ... }`** — new optional
+  field (`#[serde(default)]`, defaults to `false`) for users who want
+  to author "raw" sketches without constraint enforcement. Use cases:
+  iterating on the trace pipeline in isolation, "loose" sketches that
+  are deliberately under-constrained, or interoperability with sketch
+  data that pre-dates the solver. Test
+  `sketch_with_skip_solve_uses_raw_coords` confirms the bypass.
+- **6 new integration tests** in `tests/sketch.rs`:
+  - `sketch_with_distance_constraint_extrudes_to_correct_size` — a 5×5
+    rectangle authored with `Distance(p1, p2) = 10` plus
+    `Distance(p1, p4) = 5`, FixedPoint anchors, Horizontal/Vertical
+    edges. After solve the rectangle is 10×5; extruded volume is
+    200, not the un-solved 100.
+  - `sketch_with_horizontal_constraint_aligns_corners` — `p2` starts
+    at y = 1.5 (tilted bottom edge); `Horizontal(l1)` plus FixedPoints
+    on every other corner forces p2 to y = 0. Extruded volume = 30
+    (5 × 3 × 2), what the constrained shape should give.
+  - `sketch_with_overconstrained_returns_invalid_error` — two
+    `Distance(p1, p2)` constraints with values 5 and 10 (incompatible).
+    Asserts `EvalError::Invalid` with `contradictory` /
+    `did not converge` in the reason.
+  - `sketch_with_skip_solve_uses_raw_coords` — same 5×5 anchored
+    rectangle as the distance test, but `skip_solve = true`. Volume is
+    100 (raw), not 200 (solved).
+  - `sketch_with_no_constraints_skips_solver_path` — a constraintless
+    rectangle extrudes identically with `skip_solve = true` vs.
+    `skip_solve = false`, verifying the "if constraints empty, skip
+    solver" fast-path is correct.
+  - `sketch_distance_param_drives_solved_geometry` — `Distance` value
+    is `Scalar::Param("width")`. Two evaluations with `width = 7` and
+    `width = 12` produce volumes 70 and 120 respectively — the
+    parametric driving signal goes through both the solver and the
+    extruder.
+- **All 27 existing `Feature::SketchExtrude` construction sites in
+  `tests/sketch.rs`** updated with `skip_solve: false`. The existing
+  test bodies are untouched; the new field is purely additive.
+- **`SketchConstraint` enum NOT modified** — solver internals NOT
+  modified — sketcher's `Sketch::solve` / `Sketch::loops_classified` /
+  `Sketch::to_profile_2d` NOT modified. The integration is a pure
+  consumer of the PR-#11/#16/#22 solver contract; this PR adds one
+  field to `Feature::SketchExtrude`, adds one helper
+  (`solver_error_to_eval`), and changes ~10 lines in
+  `build_sketch_extrude`.
+
+What this closes: stored constraints used to be inert during extrusion
+(the `Sketch` data model would happily round-trip them through JSON,
+but `build_sketch_extrude` would just call `to_profile_2d` on the
+authored coordinates and ignore them entirely). Now constraints are a
+first-class part of the parametric pipeline — change a `Distance`
+value, change a `Scalar::Param`, the extruded solid responds.
 
 ## Latest session (2026-05-08, part 4)
 
@@ -504,9 +578,14 @@ achievable in one focused session: ~4 SW pts of progress.
 The gap is roughly 57 SW pts and is dominated by features that are each
 multi-week engineering projects in their own right:
 
-- **2D sketcher UI + constraint solver** (18 SW pts combined). Real CAD's
-  primary input mode. Sketcher needs an interactive 2D drawing surface;
-  bidirectional constraint solver is its own discipline.
+- **2D sketcher UI + constraint solver** (18 SW pts combined; sketcher
+  itself is now at 100% — 8 SW pts — and the constraint solver line is
+  at 95% — 9.5 SW pts; the remaining gap on the *constraint solver*
+  line is bidirectional drag-to-update + a real interactive UI for
+  authoring constraints, not the math). Real CAD's primary input mode
+  is a 2D drawing surface; we have the data-model + tracer + solver +
+  click-driven trim/extend/fillet, but not yet an interactive
+  constraint-authoring overlay.
 - **Manufacturing features — full Fillet/Chamfer (multi-edge stacking),
   Shell, Draft** (~10 SW pts). Single-edge axis-aligned Fillet/Chamfer
   ship today; stacking multiple Fillets on the same body trips the

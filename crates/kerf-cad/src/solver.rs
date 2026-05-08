@@ -1367,6 +1367,12 @@ fn param_referenced(sketch: &Sketch, param: &str) -> bool {
                 }
             }
             SketchPrim::Line { .. } => {}
+            SketchPrim::TrimLine { .. } | SketchPrim::ExtendLine { .. } => {}
+            SketchPrim::FilletCorner { radius, .. } => {
+                if scans_scalar(radius) {
+                    return true;
+                }
+            }
         }
     }
     for c in &sketch.constraints {
