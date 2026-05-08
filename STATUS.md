@@ -54,15 +54,36 @@ kernel + authoring + viewer + production output).
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
-| Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
+| Manufacturing features (170+ — see catalog, multi-edge Fillets now handles 4-corner) | 12% | 96% | 11.52 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.0%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~65.1%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-06)
+## Latest session (2026-05-08)
+
+GAP C (multi-edge fillet stitch repair) shipped. The 4-corner z-edge
+Fillets ignored test (`fillets_all_four_z_corners_succeeds`) now
+passes; sequential subtract chain on a box body produces a valid
+filleted solid. ~65.0% → ~65.1% (+0.1 SW pt: small Manufacturing
+sub-bump). 727 tests → 731 (one previously-ignored, plus three new
+prune unit tests).
+
+- **Stitch rescue + prune**: `stitch_with_rescue(kept, dropped, tol)`
+  added a two-stage repair before the manifold check. Stage 1d (excursion
+  vertex prune) removes detour vertices that intersection-edge
+  propagation thread into a kept polygon — vertices unique to one
+  polygon whose adjacent edges have no twin elsewhere. Stage 1e
+  (dropped-pile rescue) promotes a dropped face whose polygon contains
+  the reverse of a 1-half-edge orphan, with a relaxed coplanarity
+  gate (coplanar partners preferred, non-coplanar accepted on second
+  pass for cylinder-facet seam edges). pipeline.rs's `boolean_solid`
+  passes the dropped pool through. **Manufacturing category bumps 95%
+  → 96%.**
+
+## Earlier session (2026-05-06)
 
 GAP 1 (Picking → edit) shipped. GAP 2 Plan B (SweepPath) shipped. Bonus
 faceted torus + Donut feature shipped. ~52.7% → ~54.7% (+2 SW pts), 518
@@ -151,7 +172,7 @@ real kernel additions:
 - **Decorative composites**: Arrow, Funnel, TruncatedPyramid.
 - **Transforms**: ScaleXYZ.
 
-727 tests pass, 9 ignored. 220+ Features in catalog.
+731 tests pass, 8 ignored. 220+ Features in catalog.
 
 The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
 are real manufacturing features even if multi-edge fillet is still
@@ -230,10 +251,13 @@ proprietary product): years.
 **Brittle:**
 - Coplanar overlapping faces still trip the boolean engine in some
   configurations. Not all multi-cylinder unions work.
-- Stacking multiple `Fillet`s on the same body fails at the second
-  fillet whose wedge cutter meets the first fillet's rounded face.
-  Single-corner fillets work; designs that want multiple fillets must
-  union pre-filleted parts.
+- Stacking multiple chained `Fillet`s on the same body still fails
+  at the second fillet whose wedge cutter meets the first fillet's
+  rounded face — but the **plural `Fillets`** feature now handles
+  4-corner z-edge configurations via stitch rescue (dropped-pile
+  partner promotion + excursion-vertex prune). Designs that want
+  multiple fillets should use `Fillets` rather than chained
+  `Fillet`s where possible.
 - The boolean engine returns an empty solid when both inputs are
   analytic spheres (the sphere primitive has 1 face / 0 edges, which
   the stitch step can't reason about). That's why `HollowSphere` was
