@@ -9,6 +9,7 @@ import init, {
   target_ids_of,
 } from "./wasm/kerf_cad_wasm.js";
 import { exportThreeViewPng } from "./drawings.js";
+import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js";
 
 await init();
 
@@ -565,3 +566,60 @@ document.querySelectorAll("[data-example]").forEach((a) => {
 });
 
 ok("waiting for a model — drop a JSON or click an example");
+
+// --- 2D sketcher panel ---
+const sketcherPanel = document.getElementById("sketcher-panel")!;
+const sketcherHost = document.getElementById("sketcher-host")!;
+const sketcherToggle = document.getElementById("sketcher-toggle")!;
+const sketcherClose = document.getElementById("sketcher-close")!;
+
+const sketcher = mountSketcher(sketcherHost, {
+  // Validate by attempting to build a SketchExtrude through the WASM. The
+  // rust loop tracer rejects open / branching / disjoint sketches with a
+  // clear error message that we surface to the user.
+  onValidate: (sk: Sketch): string | null => {
+    try {
+      const json = buildExtrudeModelJson(sk, [0, 0, 1], "_validate");
+      // Just trying to evaluate exercises Sketch::to_profile_2d.
+      evaluate_with_face_ids(json, "_validate", "{}", SEGMENTS);
+      return null;
+    } catch (e) {
+      return String(e);
+    }
+  },
+  // Splice the extruded sketch into the main 3D viewer by loading the
+  // wrapped Model JSON the same way drag-drop does.
+  onExtrude: (sk: Sketch, dir) => {
+    const json = buildExtrudeModelJson(sk, dir, "out");
+    loadJson(json);
+  },
+});
+
+sketcherToggle.addEventListener("click", () => {
+  sketcherPanel.classList.toggle("visible");
+  if (sketcherPanel.classList.contains("visible")) {
+    sketcher.redraw();
+  }
+});
+sketcherClose.addEventListener("click", () => sketcherPanel.classList.remove("visible"));
+
+// Keyboard shortcuts inside the sketcher (only when its panel is open).
+window.addEventListener("keydown", (e) => {
+  if (!sketcherPanel.classList.contains("visible")) return;
+  sketcher.handleKey(e);
+});
+
+// Sketcher example loader.
+document.querySelectorAll<HTMLAnchorElement>("[data-sk-example]").forEach((a) => {
+  a.addEventListener("click", async () => {
+    const name = a.dataset.skExample!;
+    try {
+      const r = await fetch(`/examples/${name}.json`);
+      const json = await r.text();
+      const sk = JSON.parse(json) as Sketch;
+      sketcher.loadSketch(sk);
+    } catch (e) {
+      err(`could not load sketch example: ${e}`);
+    }
+  });
+});

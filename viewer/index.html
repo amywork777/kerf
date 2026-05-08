@@ -78,6 +78,34 @@
   .examples { margin-top: 12px; font-size: 12px; color: var(--muted); }
   .examples a { color: var(--accent); text-decoration: none; cursor: pointer; }
   .examples a:hover { text-decoration: underline; }
+
+  /* --- sketcher panel --- */
+  #sketcher-toggle { margin-top: 14px; }
+  #sketcher-panel { display: none; position: fixed; right: 16px; top: 16px;
+    width: 440px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; padding: 12px; z-index: 50; box-shadow: 0 4px 24px rgba(0,0,0,0.4); }
+  #sketcher-panel.visible { display: block; }
+  #sketcher-panel h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600;
+    display: flex; justify-content: space-between; align-items: center; }
+  #sketcher-panel h2 .close { color: var(--muted); cursor: pointer; padding: 0 6px;
+    border-radius: 3px; }
+  #sketcher-panel h2 .close:hover { color: #ff7b72; background: rgba(255,123,114,0.1); }
+  #sketcher-host .sk-toolbar { display: flex; gap: 4px; margin-bottom: 8px; }
+  #sketcher-host .sk-toolbar button { flex: 1; padding: 4px 6px; font-size: 14px; }
+  #sketcher-host .sk-toolbar button.active { border-color: var(--accent); color: var(--accent); }
+  #sketcher-host .sk-canvas { display: block; width: 400px; height: 400px;
+    border: 1px solid var(--line); border-radius: 4px; background: var(--bg);
+    margin: 0 auto; cursor: crosshair; }
+  #sketcher-host .sk-row { display: flex; gap: 8px; margin-top: 6px; align-items: center;
+    color: var(--muted); font-size: 11px; }
+  #sketcher-host .sk-row label { display: flex; gap: 4px; align-items: center; }
+  #sketcher-host .sk-row button { flex: 1; }
+  #sketcher-host .sk-status { margin-top: 6px; font-family: ui-monospace,Menlo,monospace;
+    font-size: 11px; color: var(--muted); padding: 4px 8px; border: 1px solid var(--line);
+    border-radius: 4px; background: var(--bg); min-height: 20px; }
+  .sk-examples { margin-top: 8px; font-size: 11px; color: var(--muted); }
+  .sk-examples a { color: var(--accent); cursor: pointer; }
+  .sk-examples a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -132,8 +160,21 @@
       </div>
     </div>
     <div id="status">no model loaded</div>
+    <button id="sketcher-toggle">Open 2D sketcher</button>
   </aside>
   <div id="stage"></div>
+</div>
+
+<div id="sketcher-panel">
+  <h2>
+    2D Sketcher
+    <span class="close" id="sketcher-close" title="Close">✕</span>
+  </h2>
+  <div id="sketcher-host"></div>
+  <div class="sk-examples">
+    Try a sketch:
+    <a data-sk-example="sketch_rectangle">rectangle</a>
+  </div>
 </div>
 <script type="module" src="/src/main.ts"></script>
 </body>
