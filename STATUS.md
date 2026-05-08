@@ -58,11 +58,33 @@ kernel + authoring + viewer + production output).
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
-| Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.0%** |
+| Assembly (multi-body + mates)             | 8%        | 30%      | 2.4    |
+| **Solidworks-tier total**                 | **100%**  |          | **~67.4%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-06)
+## Latest session (2026-05-08)
+
+Assembly + mates data model shipped. ~65.0% → ~67.4% (+2.4 SW pts),
+727 tests → 742 tests, 0 failed.
+
+- **Assembly + simple mates**: new `kerf_cad::assembly` module. Top-
+  level `Assembly` is a list of `Instance`s (each holding a `Model` plus
+  a `default_pose`) plus an ordered list of `Mate`s. `Pose` is
+  axis-angle + translation, full `Scalar` so poses can reference the
+  assembly's parameter table. Three mate variants — `Coincident`
+  (point-to-point), `Concentric` (axis alignment via Rodrigues +
+  translation projection), `Distance` (along current approach
+  direction). Solver applies mates in declaration order, freezes
+  instance_b after positioning, and returns a typed `MateError`
+  carrying the conflicting mate index when an over-constrained mate
+  is encountered. `Assembly::evaluate` returns posed `Solid`s by
+  reusing the existing `transform::translate_solid` and
+  `transform::rotate_solid` helpers. Full JSON serde round-trip.
+  No new linalg dep — Rodrigues' formula and axis-angle composition
+  via quaternion multiplication are inline. **Assembly category 0% →
+  30% (+2.4 SW pts).**
+
+## Earlier session (2026-05-06)
 
 GAP 1 (Picking → edit) shipped. GAP 2 Plan B (SweepPath) shipped. Bonus
 faceted torus + Donut feature shipped. ~52.7% → ~54.7% (+2 SW pts), 518
@@ -182,8 +204,11 @@ multi-week engineering projects in their own right:
   major kernel addition.
 - **Sweep / loft** (6 SW pts after Revolve). Sweep along a curve, loft
   between profiles. Each is its own primitive with topology bookkeeping.
-- **Assembly + mates** (8 SW pts). Multiple bodies with relative
-  positioning constraints.
+- **Assembly + mates** (8 SW pts → ~5.6 SW pts remaining). Data model
+  + Coincident/Concentric/Distance solver shipped. Still missing:
+  iterative multi-pass solver for cyclic/symmetric mate networks,
+  parallel/perpendicular/tangent mates, and assembly-level booleans
+  (e.g., interference checking).
 - **Picking → edit** loop (~3 SW pts). Currently we pick a face but can't
   fillet *that* face; we'd need entity-id exposure across the JSON model.
 
