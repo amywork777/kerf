@@ -17,4 +17,4 @@ pub use feature::{Feature, FilletEdge, Profile2D};
 pub use model::{Model, ModelError};
 pub use scalar::{lits, Scalar};
 pub use sketch::{Sketch, SketchConstraint, SketchError, SketchPlane, SketchPrim};
-pub use solver::{SolverConfig, SolverError};
+pub use solver::{DiagnosticReport, SolverConfig, SolverError};
