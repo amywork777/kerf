@@ -48,7 +48,7 @@ pub fn tessellate_with_face_index(solid: &Solid, lateral_segments: usize) -> (Fa
     (soup, face_index)
 }
 
-fn tessellate_one_face_into(
+pub(crate) fn tessellate_one_face_into(
     soup: &mut FaceSoup,
     solid: &Solid,
     face_id: kerf_topo::FaceId,
