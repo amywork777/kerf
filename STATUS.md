@@ -53,122 +53,75 @@ kernel + authoring + viewer + production output).
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
-| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod, TwistedExtrude, HelicalRib, ScrewThread, SpiralWedge, DoubleHelix, TaperedCoil, **SweepProfile**, **LoftMulti**, **SweepWithTwist**, **SweepWithScale**, **HelicalThread**, **TwistedTube**) | 6% | 100% | 6.0 |
-| Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
-| Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
+| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
+| Manufacturing features (175+ — see catalog) | 12% | 100% | 12.0 |
+| Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow, MidPlaneRef, PerpRefPlane, OffsetRefPlane, CoordinateAxes, OriginPoint) | 3% | 100% | 3.0 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~66.8%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~66.05%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08, sweep/loft 100%)
+## Latest session (2026-05-08)
 
-Six more sweep/loft features shipped on top of the morning's six,
-finishing the Sweep/loft scorecard line — 85% → 100% (+0.9 SW pt). 743
-tests → 761 (+18 new), 0 failed, 9 ignored — workspace stays green.
+Two scorecard buckets pushed to 100%: Reference geometry (3% weight, 85% →
+100% = +0.45 SW pts) and Manufacturing (12% weight, 95% → 100% = +0.6 SW
+pts). Combined: ~+1.05 SW pts. 727 tests → 750 tests, 0 failed.
 
-The previous batch (TwistedExtrude … TaperedCoil) all sit on top of
-either `extrude_lofted` (single-segment) or `sweep_cylinder_segment`
-(helical chains). What they didn't cover was the missing primitive at
-the heart of every commercial-tier sweep workflow: **swept profiles** —
-an arbitrary 2D profile carried along an arbitrary 3D path. This
-session fills that gap and stacks five variants on the same engine.
+- **Reference geometry batch 3**: 5 new features all built without
+  booleans (or with single-shape unions only) so they're rock-solid.
+  - **MidPlaneRef** { position_a, position_b, axis, extents,
+    marker_thickness } — thin RefPlane-style box at the midpoint of two
+    points along a chosen axis.
+  - **PerpRefPlane** { axis, point, extents, marker_thickness } —
+    explicit "plane perpendicular to axis through point" reference,
+    cleaner than RefPlane's position+axis form.
+  - **OffsetRefPlane** { base_position, axis, offset, extents,
+    marker_thickness } — parallel plane offset by a Scalar value (offset
+    can be negative).
+  - **CoordinateAxes** { length, bar_radius, head_length, segments } —
+    three perpendicular thin cylinders along x, y, z spanning [-l, +l],
+    using the Marker3D 3-bar union recipe (staggered lengths so caps
+    don't sit coplanar with another bar's lateral surface).
+    `head_length` is currently unused (kept for backward compatibility);
+    multi-cylinder coplanar-cap configurations made the
+    cylinder+cone+permute path fail under 3-way union, so we ship the
+    Marker3D-style bars-only triad.
+  - **OriginPoint** { marker_radius } — tiny faceted sphere at world
+    origin. Specialization of RefPoint with implicit position = (0,0,0).
+  - **Reference geometry bumps 85% → 100%.**
+- **Manufacturing batch 4**: 5 new features, all standalone primitives
+  (no `input`) — they represent canonical mfg shapes and don't extend
+  an external body. Booleans are kept tightly scoped.
+  - **CenterDrill** { drill_radius, drill_depth, chamfer_radius,
+    chamfer_depth, segments } — frustum chamfer (drill_radius → chamfer_radius)
+    on top of a downward drill cone (apex at -drill_depth, mirrored via
+    `mirror_solid`). Used as the cutter shape that would be subtracted
+    from a body to start a hole.
+  - **OilHole** { body_radius, body_height, hole_radius, entry, exit,
+    body_segments, hole_segments } — cylindrical body along +z minus an
+    angled cylinder defined by two world points (uses
+    `sweep_cylinder_segment`, the same diagonal-cylinder helper that
+    powers SweepPath/AngleArc).
+  - **ReliefCut** { small_radius, small_height, large_radius,
+    large_height, relief_width, relief_depth, segments } — stepped
+    shaft modeled as THREE concentric cylinders along +z: large body,
+    narrowed relief band (lr - rd) at the top of the large section,
+    small body. The narrowed middle band represents the undercut groove
+    at the base of the shoulder. Three unions, no diff cutters needed.
+  - **WrenchFlats** { shaft_radius, shaft_length, flats_z_start,
+    flats_length, flat_distance, segments } — cylinder minus two boxes
+    (one each ±y) machining off opposite sides of the shaft to leave
+    `flat_distance` between flats.
+  - **Knurl** { radius, height, groove_depth, groove_count } — cylinder
+    with axial grooves rendered via a star-style alternating-radius
+    `extrude_polygon`. Same algorithm as KnurledGrip but inverted
+    (notches are valleys not ridges) and with a simpler API.
+  - **Manufacturing bumps 95% → 100%.**
 
-- **SweepProfile**: true sweep of a 2D profile along a 3D polyline path.
-  The new `build_sweep_profile` helper computes a per-segment local
-  frame (tangent + perpendicular X / Y from a world-up cross-product),
-  lifts the profile points into world space at each path endpoint, and
-  calls `extrude_lofted` between the two endpoints. Successive segments
-  are unioned. Frame is recomputed per segment from its own tangent —
-  no parallel transport — so consecutive segments may have a discrete
-  rotation about the tangent at the joint, which `try_union` welds
-  watertight.
-- **LoftMulti**: N-profile loft. Existing `Loft` is binary (bottom +
-  top); this generalizes to any number of profiles at any number of
-  positions. All profiles must share the same vertex count. Each
-  consecutive pair becomes one `extrude_lofted` segment, all unioned.
-  Profile positions are world-space anchors with the profile XY
-  parallel to world XY.
-- **SweepWithTwist**: profile sweep where the profile rotates
-  progressively around the path tangent. `twist_angle` is the *total*
-  rotation distributed linearly across the path — at sample i (of N),
-  the profile is rotated by `twist_angle * i / (N-1)` degrees around
-  its centroid in the local XY plane before being lifted. Both
-  endpoints of segment i share the same twist as their neighbors'
-  shared endpoint, so the watertight join is preserved.
-- **SweepWithScale**: same path-sweep, with the profile scaled linearly
-  from `start_scale` (first path point) to `end_scale` (last). Scale
-  is applied around the centroid in local XY. Frustum-like solids
-  (square 1.0 → 0.5 over height 2 produces volume ≈ 1.17, between the
-  trapezoidal upper bound 1.25 and the prismatic lower bound 0.5).
-- **HelicalThread**: proper screw-thread approximation built on top of
-  the new sweep helper. Internally constructs a triangular V-thread
-  profile (apex pointing radially outward, base on the local Y axis),
-  samples a helix at `segments_per_turn * turns + 1` points, and feeds
-  the result into `build_sweep_profile`. The cross-section orientation
-  follows the helix tangent — a meaningful improvement over
-  `ScrewThread` which just chains identical triangular cylinders along
-  the helix.
-- **TwistedTube**: hollow cylinder with progressive twist. Built as a
-  difference of two `extrude_lofted`-style solids: an outer
-  `slices`-gon profile and an inner profile, each rotated by
-  `twist_turns * 360°` around its centroid between bottom and top.
-  Inner cutter extends slightly past both caps for a clean
-  through-bore. The annulus volume bound is loose
-  (`π(R²−r²)·h × 0.5..1.5`) to absorb the ruled-side-quad bowing.
+Total feature catalog: 230+ Features. 750 tests pass, 9 ignored.
 
-All six features plumb cleanly through `Feature::id()`, `inputs()`
-(empty inputs — they're primitives), JSON round-trip via serde, and the
-viewer (kept unchanged — these features are kernel-side only). The
-`build_sweep_profile` helper is the load-bearing addition: it's reused
-verbatim by SweepProfile, SweepWithTwist, SweepWithScale, and
-HelicalThread (with optional `twist_rad` and `scale_range` modifiers
-threaded through). The Sweep/loft scorecard line is now structurally
-complete — all major Solidworks/Fusion sweep modes (along-path,
-loft-N, with-twist, with-scale, helical-thread) are present and
-tested.
-
-## Latest session (2026-05-08, sweep variants)
-
-Six new sweep features shipped, pushing the Sweep/loft scorecard line
-from 70% → 85% (+0.9 SW pt). 727 tests → 743 (+16 new), 0 failed, 9
-ignored — workspace stays green.
-
-- **TwistedExtrude**: extrude a polygon while linearly rotating about
-  its centroid. Built as a single `extrude_lofted` between the original
-  profile at z=0 and a rotated copy at z=height. Side faces become
-  ruled (non-planar) quads, which the topology validator accepts but
-  which slightly inflate the divergence-theorem volume — bounds in the
-  test are loosened accordingly.
-- **HelicalRib**: rectangular cross-section sweep along a helix.
-  Reuses `sweep_cylinder_segment` with `segments=4` so the cylinder's
-  local frame becomes a square, giving a screw-root / decorative-ridge
-  cross-section.
-- **ScrewThread**: triangular V-thread cross-section sweep. Same path
-  as Coil but `segments=3`, approximating a standard machine thread.
-- **SpiralWedge**: helical sweep where the wire radius grows linearly
-  from `wire_radius_start` to `wire_radius_end`. Each chord segment
-  evaluates `r_seg` at its midpoint and calls `sweep_cylinder_segment`
-  with that radius.
-- **DoubleHelix**: two intertwined helices offset 180° in starting
-  angle, unioned into one solid. Resembles DNA / decorative twist.
-  The two-strand union is documented as a stitch-risk configuration —
-  the volume-bounded test tolerates `Err` returns.
-- **TaperedCoil**: helix where the coil radius decreases linearly
-  with z, forming a conical spring. Each chord uses the linearly
-  interpolated `r_a` and `r_b` for its endpoints.
-
-All six variants follow the existing pattern from Coil/Spring: the
-match arm in `eval.rs` resolves params, validates positive-finite
-constraints, walks `total_samples` chord points along the helix, and
-chains short cylinders via `try_union`. The high-risk variants
-(HelicalRib, ScrewThread, SpiralWedge, DoubleHelix, TaperedCoil) use
-the tolerated `match m.evaluate { Ok ... Err _ => {} }` pattern in
-their volume-bounded tests so a stitch hiccup doesn't tank the suite.
-Every variant has a JSON round-trip test confirming serde stability.
-
-## Latest session (2026-05-06)
+## Earlier session (2026-05-06)
 
 GAP 1 (Picking → edit) shipped. GAP 2 Plan B (SweepPath) shipped. Bonus
 faceted torus + Donut feature shipped. ~52.7% → ~54.7% (+2 SW pts), 518
