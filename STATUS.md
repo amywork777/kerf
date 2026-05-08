@@ -53,14 +53,81 @@ kernel + authoring + viewer + production output).
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
-| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod, TwistedExtrude, HelicalRib, ScrewThread, SpiralWedge, DoubleHelix, TaperedCoil) | 6% | 85% | 5.1 |
+| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod, TwistedExtrude, HelicalRib, ScrewThread, SpiralWedge, DoubleHelix, TaperedCoil, **SweepProfile**, **LoftMulti**, **SweepWithTwist**, **SweepWithScale**, **HelicalThread**, **TwistedTube**) | 6% | 100% | 6.0 |
 | Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.9%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~66.8%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
+
+## Latest session (2026-05-08, sweep/loft 100%)
+
+Six more sweep/loft features shipped on top of the morning's six,
+finishing the Sweep/loft scorecard line — 85% → 100% (+0.9 SW pt). 743
+tests → 761 (+18 new), 0 failed, 9 ignored — workspace stays green.
+
+The previous batch (TwistedExtrude … TaperedCoil) all sit on top of
+either `extrude_lofted` (single-segment) or `sweep_cylinder_segment`
+(helical chains). What they didn't cover was the missing primitive at
+the heart of every commercial-tier sweep workflow: **swept profiles** —
+an arbitrary 2D profile carried along an arbitrary 3D path. This
+session fills that gap and stacks five variants on the same engine.
+
+- **SweepProfile**: true sweep of a 2D profile along a 3D polyline path.
+  The new `build_sweep_profile` helper computes a per-segment local
+  frame (tangent + perpendicular X / Y from a world-up cross-product),
+  lifts the profile points into world space at each path endpoint, and
+  calls `extrude_lofted` between the two endpoints. Successive segments
+  are unioned. Frame is recomputed per segment from its own tangent —
+  no parallel transport — so consecutive segments may have a discrete
+  rotation about the tangent at the joint, which `try_union` welds
+  watertight.
+- **LoftMulti**: N-profile loft. Existing `Loft` is binary (bottom +
+  top); this generalizes to any number of profiles at any number of
+  positions. All profiles must share the same vertex count. Each
+  consecutive pair becomes one `extrude_lofted` segment, all unioned.
+  Profile positions are world-space anchors with the profile XY
+  parallel to world XY.
+- **SweepWithTwist**: profile sweep where the profile rotates
+  progressively around the path tangent. `twist_angle` is the *total*
+  rotation distributed linearly across the path — at sample i (of N),
+  the profile is rotated by `twist_angle * i / (N-1)` degrees around
+  its centroid in the local XY plane before being lifted. Both
+  endpoints of segment i share the same twist as their neighbors'
+  shared endpoint, so the watertight join is preserved.
+- **SweepWithScale**: same path-sweep, with the profile scaled linearly
+  from `start_scale` (first path point) to `end_scale` (last). Scale
+  is applied around the centroid in local XY. Frustum-like solids
+  (square 1.0 → 0.5 over height 2 produces volume ≈ 1.17, between the
+  trapezoidal upper bound 1.25 and the prismatic lower bound 0.5).
+- **HelicalThread**: proper screw-thread approximation built on top of
+  the new sweep helper. Internally constructs a triangular V-thread
+  profile (apex pointing radially outward, base on the local Y axis),
+  samples a helix at `segments_per_turn * turns + 1` points, and feeds
+  the result into `build_sweep_profile`. The cross-section orientation
+  follows the helix tangent — a meaningful improvement over
+  `ScrewThread` which just chains identical triangular cylinders along
+  the helix.
+- **TwistedTube**: hollow cylinder with progressive twist. Built as a
+  difference of two `extrude_lofted`-style solids: an outer
+  `slices`-gon profile and an inner profile, each rotated by
+  `twist_turns * 360°` around its centroid between bottom and top.
+  Inner cutter extends slightly past both caps for a clean
+  through-bore. The annulus volume bound is loose
+  (`π(R²−r²)·h × 0.5..1.5`) to absorb the ruled-side-quad bowing.
+
+All six features plumb cleanly through `Feature::id()`, `inputs()`
+(empty inputs — they're primitives), JSON round-trip via serde, and the
+viewer (kept unchanged — these features are kernel-side only). The
+`build_sweep_profile` helper is the load-bearing addition: it's reused
+verbatim by SweepProfile, SweepWithTwist, SweepWithScale, and
+HelicalThread (with optional `twist_rad` and `scale_range` modifiers
+threaded through). The Sweep/loft scorecard line is now structurally
+complete — all major Solidworks/Fusion sweep modes (along-path,
+loft-N, with-twist, with-scale, helical-thread) are present and
+tested.
 
 ## Latest session (2026-05-08, sweep variants)
 
