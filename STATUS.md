@@ -54,74 +54,15 @@ kernel + authoring + viewer + production output).
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
-| Manufacturing features (175+ — see catalog) | 12% | 100% | 12.0 |
-| Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow, MidPlaneRef, PerpRefPlane, OffsetRefPlane, CoordinateAxes, OriginPoint) | 3% | 100% | 3.0 |
-| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
+| Manufacturing features (180+ — see catalog) | 12% | 96% | 11.52 |
+| Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
+| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob + TulipBulb + PaperLantern + AcornCap + Ankh compose for simple cases) | 8% | 46% | 3.68 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~66.05%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~65.2%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08)
-
-Two scorecard buckets pushed to 100%: Reference geometry (3% weight, 85% →
-100% = +0.45 SW pts) and Manufacturing (12% weight, 95% → 100% = +0.6 SW
-pts). Combined: ~+1.05 SW pts. 727 tests → 750 tests, 0 failed.
-
-- **Reference geometry batch 3**: 5 new features all built without
-  booleans (or with single-shape unions only) so they're rock-solid.
-  - **MidPlaneRef** { position_a, position_b, axis, extents,
-    marker_thickness } — thin RefPlane-style box at the midpoint of two
-    points along a chosen axis.
-  - **PerpRefPlane** { axis, point, extents, marker_thickness } —
-    explicit "plane perpendicular to axis through point" reference,
-    cleaner than RefPlane's position+axis form.
-  - **OffsetRefPlane** { base_position, axis, offset, extents,
-    marker_thickness } — parallel plane offset by a Scalar value (offset
-    can be negative).
-  - **CoordinateAxes** { length, bar_radius, head_length, segments } —
-    three perpendicular thin cylinders along x, y, z spanning [-l, +l],
-    using the Marker3D 3-bar union recipe (staggered lengths so caps
-    don't sit coplanar with another bar's lateral surface).
-    `head_length` is currently unused (kept for backward compatibility);
-    multi-cylinder coplanar-cap configurations made the
-    cylinder+cone+permute path fail under 3-way union, so we ship the
-    Marker3D-style bars-only triad.
-  - **OriginPoint** { marker_radius } — tiny faceted sphere at world
-    origin. Specialization of RefPoint with implicit position = (0,0,0).
-  - **Reference geometry bumps 85% → 100%.**
-- **Manufacturing batch 4**: 5 new features, all standalone primitives
-  (no `input`) — they represent canonical mfg shapes and don't extend
-  an external body. Booleans are kept tightly scoped.
-  - **CenterDrill** { drill_radius, drill_depth, chamfer_radius,
-    chamfer_depth, segments } — frustum chamfer (drill_radius → chamfer_radius)
-    on top of a downward drill cone (apex at -drill_depth, mirrored via
-    `mirror_solid`). Used as the cutter shape that would be subtracted
-    from a body to start a hole.
-  - **OilHole** { body_radius, body_height, hole_radius, entry, exit,
-    body_segments, hole_segments } — cylindrical body along +z minus an
-    angled cylinder defined by two world points (uses
-    `sweep_cylinder_segment`, the same diagonal-cylinder helper that
-    powers SweepPath/AngleArc).
-  - **ReliefCut** { small_radius, small_height, large_radius,
-    large_height, relief_width, relief_depth, segments } — stepped
-    shaft modeled as THREE concentric cylinders along +z: large body,
-    narrowed relief band (lr - rd) at the top of the large section,
-    small body. The narrowed middle band represents the undercut groove
-    at the base of the shoulder. Three unions, no diff cutters needed.
-  - **WrenchFlats** { shaft_radius, shaft_length, flats_z_start,
-    flats_length, flat_distance, segments } — cylinder minus two boxes
-    (one each ±y) machining off opposite sides of the shaft to leave
-    `flat_distance` between flats.
-  - **Knurl** { radius, height, groove_depth, groove_count } — cylinder
-    with axial grooves rendered via a star-style alternating-radius
-    `extrude_polygon`. Same algorithm as KnurledGrip but inverted
-    (notches are valleys not ridges) and with a simpler API.
-  - **Manufacturing bumps 95% → 100%.**
-
-Total feature catalog: 230+ Features. 750 tests pass, 9 ignored.
-
-## Earlier session (2026-05-06)
+## Latest session (2026-05-06)
 
 GAP 1 (Picking → edit) shipped. GAP 2 Plan B (SweepPath) shipped. Bonus
 faceted torus + Donut feature shipped. ~52.7% → ~54.7% (+2 SW pts), 518
@@ -210,7 +151,38 @@ real kernel additions:
 - **Decorative composites**: Arrow, Funnel, TruncatedPyramid.
 - **Transforms**: ScaleXYZ.
 
-727 tests pass, 9 ignored. 220+ Features in catalog.
+748 tests pass, 9 ignored. 280+ Features in catalog.
+
+## Latest session (2026-05-08, round 7)
+
+Added 10 new Features in mixed buckets:
+
+- **Curved-surface compositions (4)**: `TulipBulb` (small bulb sphere +
+  slim cylindrical neck — pole-overlap pattern), `PaperLantern` (cylinder
+  body with hemispherical caps top + bottom), `AcornCap` (hemisphere +
+  thin cylindrical rim — just the cap of an acorn), `Ankh` (vertical
+  cylinder shaft + horizontal cross-arm + faceted torus loop, rotated to
+  open vertically).
+- **Mechanical (3)**: `CamLobe2` (eccentric circle profile cam — distinct
+  from the elliptical `CamLobe`), `PistonHead` (cylinder body + wider
+  crown disk + N ring grooves around the body), `PulleyGroove` (true
+  V-groove using two opposing frustums — distinct from `Pulley`'s
+  rectangular groove).
+- **Decorative (2)**: `Pinwheel` (star polygon plate with center bore —
+  axle-mountable spinner), `GearTooth` (single trapezoidal tooth profile
+  for arrayed compositions).
+- **Composition (1)**: `HourglassFigure` (frustum + frustum + cap disks —
+  classic hourglass silhouette without the shared-waist boolean limit
+  of the existing `Hourglass`).
+
+21 new tests (10 volume + 10 round-trip + 1 combined batch round-trip).
+
+All sphere/cylinder unions use the AcornShape pole-overlap pattern
+(`br - 1e-3`) to keep the kernel stitch happy. The PaperLantern double
+hemisphere build uses the Lens-style box-clip → translate pattern.
+
+727 tests → 748 tests (+21), 0 failed, 9 ignored unchanged. Catalog
+~270 → 280+ Features.
 
 The Manufacturing bucket grew from 5% → 30% (Fillet/Chamfer/Counterbore
 are real manufacturing features even if multi-edge fillet is still

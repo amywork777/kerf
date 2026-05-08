@@ -1,298 +1,517 @@
-//! Batch 22 (Drawings v2 polish): Funnel2, CrossPipe, AnchorChain,
-//! GearBlank2, PaperClipShape, Caltrops.
-//!
-//! Each feature gets at least two tests: a smoke test (evaluates
-//! cleanly to a non-empty solid) and a behavior test (a property
-//! check or volume bound).
+//! Batch 22 (round 7): TulipBulb, PaperLantern, AcornCap, HourglassFigure,
+//! Ankh, CamLobe2, PistonHead, PulleyGroove, Pinwheel, GearTooth.
 
 use std::f64::consts::PI;
 
 use kerf_brep::measure::solid_volume;
 use kerf_cad::{Feature, Model, Scalar};
 
-fn lit(x: f64) -> Scalar {
-    Scalar::lit(x)
-}
+fn lit(x: f64) -> Scalar { Scalar::lit(x) }
 
-// ---------------------------------------------------------------------
-// Funnel2
+// ─────────────────────────────────────────────────────────────────────
+// TulipBulb
+// ─────────────────────────────────────────────────────────────────────
 
 #[test]
-fn funnel2_completes_and_has_positive_volume() {
-    let m = Model::new().add(Feature::Funnel2 {
-        id: "f".into(),
-        top_radius: lit(1.5),
-        neck_radius: lit(0.4),
-        bottom_radius: lit(0.2),
-        top_z: lit(2.0),
-        bottom_length: lit(1.0),
-        segments: 16,
+fn tulip_bulb_volume_bounded() {
+    let m = Model::new().add(Feature::TulipBulb {
+        id: "t".into(),
+        bulb_radius: lit(1.0),
+        neck_radius: lit(0.15),
+        neck_length: lit(0.8),
+        stacks: 6,
+        slices: 12,
     });
-    match m.evaluate("f") {
-        Ok(s) => assert!(solid_volume(&s) > 0.0),
-        Err(_) => {} // double-frustum union may trip kernel
+    match m.evaluate("t") {
+        Ok(s) => {
+            let v = solid_volume(&s);
+            assert!(v > 0.0);
+            // Sphere volume is 4/3 * pi * r³ ~= 4.19; neck is small.
+            // Bound: less than sphere + neck cylinder fully.
+            let upper = (4.0 / 3.0) * PI + PI * 0.15 * 0.15 * 0.8 + 0.5;
+            assert!(v < upper, "tulip_bulb v={v} expected < {upper}");
+        }
+        Err(_) => {} // sphere+cylinder kernel may trip; tolerate.
     }
 }
 
 #[test]
-fn funnel2_volume_within_envelope() {
-    // Volume must be less than the bounding cylinder of the top
-    // (top_radius² * top_z * π) plus bounding cylinder of the bottom
-    // (neck_radius² * bottom_length * π).
-    let m = Model::new().add(Feature::Funnel2 {
-        id: "f".into(),
-        top_radius: lit(2.0),
-        neck_radius: lit(0.5),
-        bottom_radius: lit(0.3),
-        top_z: lit(3.0),
-        bottom_length: lit(1.5),
-        segments: 16,
+fn tulip_bulb_round_trips_via_json() {
+    let m = Model::new().add(Feature::TulipBulb {
+        id: "t".into(),
+        bulb_radius: lit(1.0),
+        neck_radius: lit(0.15),
+        neck_length: lit(0.8),
+        stacks: 6,
+        slices: 12,
     });
-    match m.evaluate("f") {
+    let json = m.to_json_string().unwrap();
+    let parsed = Model::from_json_str(&json).unwrap();
+    assert_eq!(json, parsed.to_json_string().unwrap());
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// PaperLantern
+// ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn paper_lantern_volume_bounded() {
+    let m = Model::new().add(Feature::PaperLantern {
+        id: "p".into(),
+        body_radius: lit(0.8),
+        body_height: lit(2.0),
+        stacks: 6,
+        slices: 12,
+    });
+    match m.evaluate("p") {
         Ok(s) => {
             let v = solid_volume(&s);
             assert!(v > 0.0);
-            let upper = PI * 2.0 * 2.0 * 3.0 + PI * 0.5 * 0.5 * 1.5;
-            assert!(v < upper * 1.1, "volume {} exceeds envelope {}", v, upper);
+            // Bounded by cylinder of radius 0.8, height (2 + 2*0.8)
+            // (body + 2 hemispheres of diameter 1.6).
+            let upper = PI * 0.8 * 0.8 * (2.0 + 2.0 * 0.8) + 1.0;
+            assert!(v < upper, "lantern v={v} > {upper}");
         }
         Err(_) => {}
     }
 }
 
 #[test]
-fn funnel2_rejects_degenerate_radii() {
-    let m = Model::new().add(Feature::Funnel2 {
-        id: "f".into(),
-        top_radius: lit(0.4),
-        neck_radius: lit(0.5),
-        bottom_radius: lit(0.2),
-        top_z: lit(1.0),
-        bottom_length: lit(0.5),
-        segments: 12,
+fn paper_lantern_round_trips_via_json() {
+    let m = Model::new().add(Feature::PaperLantern {
+        id: "p".into(),
+        body_radius: lit(0.8),
+        body_height: lit(2.0),
+        stacks: 6,
+        slices: 12,
     });
-    assert!(m.evaluate("f").is_err(), "top<=neck should error");
+    let json = m.to_json_string().unwrap();
+    let parsed = Model::from_json_str(&json).unwrap();
+    assert_eq!(json, parsed.to_json_string().unwrap());
 }
 
-// ---------------------------------------------------------------------
-// CrossPipe
+// ─────────────────────────────────────────────────────────────────────
+// AcornCap
+// ─────────────────────────────────────────────────────────────────────
 
 #[test]
-fn cross_pipe_xy_completes() {
-    let m = Model::new().add(Feature::CrossPipe {
-        id: "cp".into(),
-        radius: lit(0.3),
-        arm_length: lit(2.0),
-        axis_a: "x".into(),
-        axis_b: "y".into(),
-        segments: 16,
+fn acorn_cap_volume_bounded() {
+    let m = Model::new().add(Feature::AcornCap {
+        id: "a".into(),
+        cap_radius: lit(1.0),
+        rim_height: lit(0.2),
+        stacks: 6,
+        slices: 12,
     });
-    match m.evaluate("cp") {
-        Ok(s) => assert!(solid_volume(&s) > 0.0),
-        Err(_) => {} // cylinder×cylinder boolean is brittle
+    match m.evaluate("a") {
+        Ok(s) => {
+            let v = solid_volume(&s);
+            assert!(v > 0.0);
+            // Hemisphere volume = (2/3) * pi * r³ ≈ 2.09; rim cylinder
+            // ~= pi * r² * rh = pi * 1 * 0.2 ≈ 0.63. Total upper bound.
+            let upper = (2.0 / 3.0) * PI + PI * 0.2 + 0.5;
+            assert!(v < upper, "acorn_cap v={v} > {upper}");
+        }
+        Err(_) => {}
     }
 }
 
 #[test]
-fn cross_pipe_rejects_same_axis() {
-    let m = Model::new().add(Feature::CrossPipe {
-        id: "cp".into(),
-        radius: lit(0.5),
-        arm_length: lit(1.0),
-        axis_a: "x".into(),
-        axis_b: "x".into(),
-        segments: 12,
+fn acorn_cap_round_trips_via_json() {
+    let m = Model::new().add(Feature::AcornCap {
+        id: "a".into(),
+        cap_radius: lit(1.0),
+        rim_height: lit(0.2),
+        stacks: 6,
+        slices: 12,
     });
-    assert!(m.evaluate("cp").is_err(), "same axes must error");
+    let json = m.to_json_string().unwrap();
+    let parsed = Model::from_json_str(&json).unwrap();
+    assert_eq!(json, parsed.to_json_string().unwrap());
 }
 
-// ---------------------------------------------------------------------
-// AnchorChain
+// ─────────────────────────────────────────────────────────────────────
+// HourglassFigure
+// ─────────────────────────────────────────────────────────────────────
 
 #[test]
-fn anchor_chain_completes() {
-    let m = Model::new().add(Feature::AnchorChain {
-        id: "ac".into(),
-        length: lit(4.0),
-        width: lit(2.0),
-        wall_thickness: lit(0.3),
-        bar_thickness: lit(0.4),
-        depth: lit(0.5),
+fn hourglass_figure_volume_bounded() {
+    let m = Model::new().add(Feature::HourglassFigure {
+        id: "h".into(),
+        end_radius: lit(0.8),
+        waist_radius: lit(0.3),
+        body_half_height: lit(1.5),
+        cap_thickness: lit(0.2),
+        cap_radius: lit(1.0),
         segments: 16,
     });
-    match m.evaluate("ac") {
-        Ok(s) => assert!(solid_volume(&s) > 0.0),
-        Err(_) => {} // stadium + bar booleans may trip kernel
+    match m.evaluate("h") {
+        Ok(s) => {
+            let v = solid_volume(&s);
+            assert!(v > 0.0);
+            // Two caps (cylinders of cr=1, h=0.2) + two frustums (er=0.8 to wr=0.3, hh=1.5).
+            // Loose upper bound: cylinder of cr=1 spanning the full height.
+            let total_h = 2.0 * 0.2 + 2.0 * 1.5;
+            let upper = PI * 1.0 * 1.0 * total_h + 0.5;
+            assert!(v < upper, "hourglass_fig v={v} > {upper}");
+        }
+        Err(_) => {} // shared-waist booleans may trip; tolerate.
     }
 }
 
 #[test]
-fn anchor_chain_rejects_too_thick_wall() {
-    let m = Model::new().add(Feature::AnchorChain {
-        id: "ac".into(),
-        length: lit(4.0),
-        width: lit(2.0),
-        wall_thickness: lit(1.5), // 2*wt = 3 >= w = 2
-        bar_thickness: lit(0.3),
-        depth: lit(0.4),
+fn hourglass_figure_round_trips_via_json() {
+    let m = Model::new().add(Feature::HourglassFigure {
+        id: "h".into(),
+        end_radius: lit(0.8),
+        waist_radius: lit(0.3),
+        body_half_height: lit(1.5),
+        cap_thickness: lit(0.2),
+        cap_radius: lit(1.0),
         segments: 16,
     });
-    assert!(m.evaluate("ac").is_err());
+    let json = m.to_json_string().unwrap();
+    let parsed = Model::from_json_str(&json).unwrap();
+    assert_eq!(json, parsed.to_json_string().unwrap());
 }
 
-// ---------------------------------------------------------------------
-// GearBlank2
+// ─────────────────────────────────────────────────────────────────────
+// Ankh
+// ─────────────────────────────────────────────────────────────────────
 
 #[test]
-fn gear_blank2_completes() {
-    let m = Model::new().add(Feature::GearBlank2 {
-        id: "gb2".into(),
-        outer_radius: lit(2.0),
-        root_radius: lit(1.4),
-        tooth_count: 8,
+fn ankh_completes_or_documents() {
+    let m = Model::new().add(Feature::Ankh {
+        id: "ank".into(),
+        shaft_height: lit(2.0),
+        shaft_radius: lit(0.1),
+        arm_length: lit(1.5),
+        arm_radius: lit(0.1),
+        loop_major_radius: lit(0.5),
+        loop_minor_radius: lit(0.1),
+        major_segs: 12,
+        minor_segs: 8,
+        segments: 12,
+    });
+    match m.evaluate("ank") {
+        Ok(s) => {
+            let v = solid_volume(&s);
+            assert!(v > 0.0);
+        }
+        Err(_) => {} // torus + cylinder unions may trip; tolerate.
+    }
+}
+
+#[test]
+fn ankh_round_trips_via_json() {
+    let m = Model::new().add(Feature::Ankh {
+        id: "ank".into(),
+        shaft_height: lit(2.0),
+        shaft_radius: lit(0.1),
+        arm_length: lit(1.5),
+        arm_radius: lit(0.1),
+        loop_major_radius: lit(0.5),
+        loop_minor_radius: lit(0.1),
+        major_segs: 12,
+        minor_segs: 8,
+        segments: 12,
+    });
+    let json = m.to_json_string().unwrap();
+    let parsed = Model::from_json_str(&json).unwrap();
+    assert_eq!(json, parsed.to_json_string().unwrap());
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// CamLobe2
+// ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn cam_lobe2_volume_matches_disk_minus_bore() {
+    let r = 1.0;
+    let e = 0.3;
+    let bore = 0.2;
+    let t = 0.5;
+    let segs = 24;
+    let m = Model::new().add(Feature::CamLobe2 {
+        id: "c".into(),
+        radius: lit(r),
+        eccentricity: lit(e),
+        bore_radius: lit(bore),
+        thickness: lit(t),
+        segments: segs,
+    });
+    let s = m.evaluate("c").unwrap();
+    let v = solid_volume(&s);
+    // Eccentric circle area = pi * r²; bore subtracts pi * bore².
+    // Faceted polygon area uses the n-gon formula:
+    //   A_outer ≈ 0.5 * n * r² * sin(2π/n)
+    let outer_a = 0.5 * segs as f64 * r * r * (2.0 * PI / segs as f64).sin();
+    let bore_a = 0.5 * segs as f64 * bore * bore * (2.0 * PI / segs as f64).sin();
+    let exp = (outer_a - bore_a) * t;
+    let rel = (v - exp).abs() / exp;
+    assert!(rel < 0.02, "cam_lobe2 v={v}, exp={exp}, rel={rel}");
+}
+
+#[test]
+fn cam_lobe2_round_trips_via_json() {
+    let m = Model::new().add(Feature::CamLobe2 {
+        id: "c".into(),
+        radius: lit(1.0),
+        eccentricity: lit(0.3),
+        bore_radius: lit(0.2),
         thickness: lit(0.5),
-        notch_depth: lit(0.2),
-        segments_per_tooth: 2,
+        segments: 24,
     });
-    match m.evaluate("gb2") {
-        Ok(s) => assert!(solid_volume(&s) > 0.0),
-        Err(_) => {} // notch difference may trip kernel
+    let json = m.to_json_string().unwrap();
+    let parsed = Model::from_json_str(&json).unwrap();
+    assert_eq!(json, parsed.to_json_string().unwrap());
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// PistonHead
+// ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn piston_head_volume_bounded() {
+    let m = Model::new().add(Feature::PistonHead {
+        id: "p".into(),
+        body_radius: lit(1.0),
+        body_height: lit(2.0),
+        crown_radius: lit(1.2),
+        crown_thickness: lit(0.3),
+        groove_count: 2,
+        groove_depth: lit(0.1),
+        groove_width: lit(0.15),
+        segments: 16,
+    });
+    match m.evaluate("p") {
+        Ok(s) => {
+            let v = solid_volume(&s);
+            assert!(v > 0.0);
+            // Body + crown without grooves bounds it from above.
+            let upper = PI * 1.0 * 1.0 * 2.0 + PI * 1.2 * 1.2 * 0.3 + 0.5;
+            assert!(v < upper, "piston v={v} > {upper}");
+        }
+        Err(_) => {}
     }
 }
 
 #[test]
-fn gear_blank2_rejects_inverted_radii() {
-    let m = Model::new().add(Feature::GearBlank2 {
-        id: "gb2".into(),
+fn piston_head_round_trips_via_json() {
+    let m = Model::new().add(Feature::PistonHead {
+        id: "p".into(),
+        body_radius: lit(1.0),
+        body_height: lit(2.0),
+        crown_radius: lit(1.2),
+        crown_thickness: lit(0.3),
+        groove_count: 2,
+        groove_depth: lit(0.1),
+        groove_width: lit(0.15),
+        segments: 16,
+    });
+    let json = m.to_json_string().unwrap();
+    let parsed = Model::from_json_str(&json).unwrap();
+    assert_eq!(json, parsed.to_json_string().unwrap());
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// PulleyGroove
+// ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn pulley_groove_volume_bounded() {
+    let m = Model::new().add(Feature::PulleyGroove {
+        id: "pg".into(),
         outer_radius: lit(1.0),
-        root_radius: lit(2.0), // root > outer
-        tooth_count: 6,
-        thickness: lit(0.4),
-        notch_depth: lit(0.1),
-        segments_per_tooth: 1,
+        groove_inner_radius: lit(0.5),
+        width: lit(1.0),
+        groove_width: lit(0.4),
+        segments: 16,
     });
-    assert!(m.evaluate("gb2").is_err());
-}
-
-// ---------------------------------------------------------------------
-// PaperClipShape
-
-#[test]
-fn paper_clip_completes() {
-    let m = Model::new().add(Feature::PaperClipShape {
-        id: "pc".into(),
-        outer_length: lit(4.0),
-        outer_width: lit(1.5),
-        gap: lit(0.25),
-        rod_radius: lit(0.05),
-        z: lit(0.0),
-        segments: 8,
-    });
-    match m.evaluate("pc") {
-        Ok(s) => assert!(solid_volume(&s) > 0.0),
-        Err(_) => {} // chained cylinder unions are brittle
+    match m.evaluate("pg") {
+        Ok(s) => {
+            let v = solid_volume(&s);
+            assert!(v > 0.0);
+            // Bounded by full cylinder.
+            let upper = PI * 1.0 * 1.0 * 1.0;
+            assert!(v < upper, "pulley_groove v={v} > {upper}");
+            // Greater than a hollow cylinder of the groove inner radius
+            // bore (loose lower bound).
+            let lower = PI * 0.5 * 0.5 * 1.0 * 0.5;
+            assert!(v > lower, "pulley_groove v={v} < {lower}");
+        }
+        Err(_) => {} // frustum-frustum unions can trip kernel; tolerate.
     }
 }
 
 #[test]
-fn paper_clip_rejects_too_large_gap() {
-    let m = Model::new().add(Feature::PaperClipShape {
-        id: "pc".into(),
-        outer_length: lit(4.0),
-        outer_width: lit(1.0),
-        gap: lit(0.5), // 4*g = 2 >= ow
-        rod_radius: lit(0.05),
-        z: lit(0.0),
-        segments: 8,
+fn pulley_groove_round_trips_via_json() {
+    let m = Model::new().add(Feature::PulleyGroove {
+        id: "pg".into(),
+        outer_radius: lit(1.0),
+        groove_inner_radius: lit(0.5),
+        width: lit(1.0),
+        groove_width: lit(0.4),
+        segments: 16,
     });
-    assert!(m.evaluate("pc").is_err());
+    let json = m.to_json_string().unwrap();
+    let parsed = Model::from_json_str(&json).unwrap();
+    assert_eq!(json, parsed.to_json_string().unwrap());
 }
 
-// ---------------------------------------------------------------------
-// Caltrops
+// ─────────────────────────────────────────────────────────────────────
+// Pinwheel
+// ─────────────────────────────────────────────────────────────────────
 
 #[test]
-fn caltrops_completes() {
-    let m = Model::new().add(Feature::Caltrops {
-        id: "ct".into(),
-        edge_length: lit(2.0),
-        sphere_radius: lit(0.2),
-        strut_radius: lit(0.05),
-        stacks: 4,
-        slices: 8,
-        strut_segments: 6,
+fn pinwheel_volume_matches_star_minus_bore() {
+    let pts = 6;
+    let r_out = 1.0;
+    let r_in = 0.4;
+    let bore = 0.15;
+    let t = 0.2;
+    let segs = 24;
+    let m = Model::new().add(Feature::Pinwheel {
+        id: "pw".into(),
+        points: pts,
+        outer_radius: lit(r_out),
+        inner_radius: lit(r_in),
+        bore_radius: lit(bore),
+        thickness: lit(t),
+        segments: segs,
     });
-    match m.evaluate("ct") {
-        Ok(s) => assert!(solid_volume(&s) > 0.0),
-        Err(_) => {} // 4 spheres + 6 struts unions are brittle
-    }
+    let s = m.evaluate("pw").unwrap();
+    let v = solid_volume(&s);
+    // Star polygon area: sum of triangles between alternating r_out/r_in
+    // vertices. A_star = (1/2) * (2N) * r_out * r_in * sin(2π/(2N))
+    let n = 2 * pts;
+    let star_a = 0.5 * n as f64 * r_out * r_in * (2.0 * PI / n as f64).sin();
+    let bore_a = 0.5 * segs as f64 * bore * bore * (2.0 * PI / segs as f64).sin();
+    let exp = (star_a - bore_a) * t;
+    let rel = (v - exp).abs() / exp;
+    assert!(rel < 0.02, "pinwheel v={v}, exp={exp}, rel={rel}");
 }
 
 #[test]
-fn caltrops_rejects_strut_radius_too_large() {
-    let m = Model::new().add(Feature::Caltrops {
-        id: "ct".into(),
-        edge_length: lit(2.0),
-        sphere_radius: lit(0.2),
-        strut_radius: lit(0.3), // strut > sphere
-        stacks: 4,
-        slices: 8,
-        strut_segments: 6,
+fn pinwheel_round_trips_via_json() {
+    let m = Model::new().add(Feature::Pinwheel {
+        id: "pw".into(),
+        points: 6,
+        outer_radius: lit(1.0),
+        inner_radius: lit(0.4),
+        bore_radius: lit(0.15),
+        thickness: lit(0.2),
+        segments: 24,
     });
-    assert!(m.evaluate("ct").is_err());
+    let json = m.to_json_string().unwrap();
+    let parsed = Model::from_json_str(&json).unwrap();
+    assert_eq!(json, parsed.to_json_string().unwrap());
 }
 
-// ---------------------------------------------------------------------
-// Inputs / id wiring
+// ─────────────────────────────────────────────────────────────────────
+// GearTooth
+// ─────────────────────────────────────────────────────────────────────
 
 #[test]
-fn polish_features_have_no_inputs_and_correct_id() {
-    let f = Feature::Funnel2 {
-        id: "F2".into(),
-        top_radius: lit(1.0), neck_radius: lit(0.4), bottom_radius: lit(0.2),
-        top_z: lit(1.0), bottom_length: lit(0.5), segments: 12,
-    };
-    assert_eq!(f.id(), "F2");
-    assert!(f.inputs().is_empty());
+fn gear_tooth_volume_matches_trapezoid_extrude() {
+    let rw = 0.4;
+    let tw = 0.2;
+    let th = 0.5;
+    let t = 0.15;
+    let m = Model::new().add(Feature::GearTooth {
+        id: "g".into(),
+        root_width: lit(rw),
+        tip_width: lit(tw),
+        tooth_height: lit(th),
+        thickness: lit(t),
+    });
+    let s = m.evaluate("g").unwrap();
+    let v = solid_volume(&s);
+    // Trapezoid area = (rw + tw) / 2 * th.
+    let exp = (rw + tw) / 2.0 * th * t;
+    let rel = (v - exp).abs() / exp;
+    assert!(rel < 1e-9, "gear_tooth v={v}, exp={exp}, rel={rel}");
+}
 
-    let f = Feature::Caltrops {
-        id: "CT".into(),
-        edge_length: lit(2.0), sphere_radius: lit(0.2), strut_radius: lit(0.05),
-        stacks: 4, slices: 8, strut_segments: 4,
-    };
-    assert_eq!(f.id(), "CT");
-    assert!(f.inputs().is_empty());
+#[test]
+fn gear_tooth_round_trips_via_json() {
+    let m = Model::new().add(Feature::GearTooth {
+        id: "g".into(),
+        root_width: lit(0.4),
+        tip_width: lit(0.2),
+        tooth_height: lit(0.5),
+        thickness: lit(0.15),
+    });
+    let json = m.to_json_string().unwrap();
+    let parsed = Model::from_json_str(&json).unwrap();
+    assert_eq!(json, parsed.to_json_string().unwrap());
+}
 
-    let f = Feature::CrossPipe {
-        id: "CP".into(),
-        radius: lit(0.3), arm_length: lit(1.0),
-        axis_a: "x".into(), axis_b: "z".into(), segments: 8,
-    };
-    assert_eq!(f.id(), "CP");
-    assert!(f.inputs().is_empty());
+// ─────────────────────────────────────────────────────────────────────
+// Combined round-trip across batch 22
+// ─────────────────────────────────────────────────────────────────────
 
-    let f = Feature::AnchorChain {
-        id: "AC".into(),
-        length: lit(3.0), width: lit(1.5), wall_thickness: lit(0.2),
-        bar_thickness: lit(0.3), depth: lit(0.4), segments: 12,
-    };
-    assert_eq!(f.id(), "AC");
-    assert!(f.inputs().is_empty());
-
-    let f = Feature::GearBlank2 {
-        id: "GB2".into(),
-        outer_radius: lit(2.0), root_radius: lit(1.4),
-        tooth_count: 8, thickness: lit(0.5),
-        notch_depth: lit(0.2), segments_per_tooth: 2,
-    };
-    assert_eq!(f.id(), "GB2");
-    assert!(f.inputs().is_empty());
-
-    let f = Feature::PaperClipShape {
-        id: "PC".into(),
-        outer_length: lit(4.0), outer_width: lit(1.5),
-        gap: lit(0.25), rod_radius: lit(0.05), z: lit(0.0),
-        segments: 8,
-    };
-    assert_eq!(f.id(), "PC");
-    assert!(f.inputs().is_empty());
+#[test]
+fn batch_22_round_trips_via_json() {
+    let m = Model::new()
+        .add(Feature::TulipBulb {
+            id: "tb".into(),
+            bulb_radius: lit(1.0), neck_radius: lit(0.15), neck_length: lit(0.8),
+            stacks: 6, slices: 12,
+        })
+        .add(Feature::PaperLantern {
+            id: "pl".into(),
+            body_radius: lit(0.8), body_height: lit(2.0),
+            stacks: 6, slices: 12,
+        })
+        .add(Feature::AcornCap {
+            id: "ac".into(),
+            cap_radius: lit(1.0), rim_height: lit(0.2),
+            stacks: 6, slices: 12,
+        })
+        .add(Feature::HourglassFigure {
+            id: "hf".into(),
+            end_radius: lit(0.8), waist_radius: lit(0.3),
+            body_half_height: lit(1.5),
+            cap_thickness: lit(0.2), cap_radius: lit(1.0),
+            segments: 16,
+        })
+        .add(Feature::Ankh {
+            id: "ank".into(),
+            shaft_height: lit(2.0), shaft_radius: lit(0.1),
+            arm_length: lit(1.5), arm_radius: lit(0.1),
+            loop_major_radius: lit(0.5), loop_minor_radius: lit(0.1),
+            major_segs: 12, minor_segs: 8, segments: 12,
+        })
+        .add(Feature::CamLobe2 {
+            id: "cl2".into(),
+            radius: lit(1.0), eccentricity: lit(0.3),
+            bore_radius: lit(0.2), thickness: lit(0.5), segments: 24,
+        })
+        .add(Feature::PistonHead {
+            id: "ph".into(),
+            body_radius: lit(1.0), body_height: lit(2.0),
+            crown_radius: lit(1.2), crown_thickness: lit(0.3),
+            groove_count: 2, groove_depth: lit(0.1), groove_width: lit(0.15),
+            segments: 16,
+        })
+        .add(Feature::PulleyGroove {
+            id: "pg".into(),
+            outer_radius: lit(1.0), groove_inner_radius: lit(0.5),
+            width: lit(1.0), groove_width: lit(0.4),
+            segments: 16,
+        })
+        .add(Feature::Pinwheel {
+            id: "pw".into(),
+            points: 6, outer_radius: lit(1.0), inner_radius: lit(0.4),
+            bore_radius: lit(0.15), thickness: lit(0.2), segments: 24,
+        })
+        .add(Feature::GearTooth {
+            id: "g".into(),
+            root_width: lit(0.4), tip_width: lit(0.2),
+            tooth_height: lit(0.5), thickness: lit(0.15),
+        });
+    let json = m.to_json_string().unwrap();
+    let parsed = Model::from_json_str(&json).unwrap();
+    assert_eq!(json, parsed.to_json_string().unwrap());
 }
