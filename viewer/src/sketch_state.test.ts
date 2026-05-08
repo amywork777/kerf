@@ -8,6 +8,9 @@
 //   (or `pnpm test` once we wire it up).
 
 import {
+  applyExtendClick,
+  applyFilletClick,
+  applyTrimClick,
   buildExtrudeModelJson,
   constraintRefs,
   constraintTag,
@@ -203,6 +206,148 @@ test("NamedRefPlane round-trips", () => {
   };
   const back = JSON.parse(JSON.stringify(sk)) as Sketch;
   assertEq(back.plane, { NamedRefPlane: "top" });
+});
+
+// ---- 6. Multi-click canvas UX: applyTrimClick / applyExtendClick / applyFilletClick ----
+test("applyTrimClick projects click onto line and emits Point + TrimLine", () => {
+  // A horizontal line from (0,0) to (4,0). Click at (2.5, 0.3) should
+  // project onto the line at (2.5, 0), emit a Point there, then a
+  // TrimLine referencing that new Point.
+  const sketch: Sketch = {
+    plane: "Xy",
+    primitives: [
+      { kind: "Point", id: "p1", x: 0, y: 0 },
+      { kind: "Point", id: "p2", x: 4, y: 0 },
+      { kind: "Line", id: "l1", from: "p1", to: "p2" },
+    ],
+    constraints: [],
+  };
+  const r = applyTrimClick(sketch, "l1", { x: 2.5, y: 0.3 }, {
+    nextPointId: () => "p_new",
+    nextTrimId: () => "tr_new",
+  });
+  if (r === null) throw new Error("expected non-null result");
+  // Two primitives: the new Point (projected onto the line), then TrimLine.
+  assertEq(r.primitives.length, 2);
+  const pt = r.primitives[0];
+  assert(pt.kind === "Point" && pt.id === "p_new");
+  if (pt.kind === "Point") {
+    assert(Math.abs(pt.x - 2.5) < 1e-9, `proj x = ${pt.x}`);
+    assert(Math.abs(pt.y - 0.0) < 1e-9, `proj y = ${pt.y}`);
+  }
+  const tr = r.primitives[1];
+  assert(tr.kind === "TrimLine" && tr.id === "tr_new");
+  if (tr.kind === "TrimLine") {
+    assertEq(tr.line, "l1");
+    assertEq(tr.at_point, "p_new");
+  }
+});
+
+test("applyTrimClick reuses existing point when provided", () => {
+  const sketch: Sketch = {
+    plane: "Xy",
+    primitives: [
+      { kind: "Point", id: "p1", x: 0, y: 0 },
+      { kind: "Point", id: "p2", x: 4, y: 0 },
+      { kind: "Point", id: "ex", x: 2.0, y: 0 },
+      { kind: "Line", id: "l1", from: "p1", to: "p2" },
+    ],
+    constraints: [],
+  };
+  const r = applyTrimClick(sketch, "l1", { x: 2.0, y: 0.05 }, {
+    existingPointId: "ex",
+    nextTrimId: () => "tr_x",
+  });
+  if (r === null) throw new Error("expected non-null result");
+  // Only TrimLine emitted (no new Point because we reused "ex").
+  assertEq(r.primitives.length, 1);
+  const tr = r.primitives[0];
+  assert(tr.kind === "TrimLine");
+  if (tr.kind === "TrimLine") {
+    assertEq(tr.at_point, "ex");
+    assertEq(tr.line, "l1");
+  }
+});
+
+test("applyExtendClick emits Point at click and ExtendLine to it", () => {
+  const sketch: Sketch = {
+    plane: "Xy",
+    primitives: [
+      { kind: "Point", id: "p1", x: 0, y: 0 },
+      { kind: "Point", id: "p2", x: 2, y: 0 },
+      { kind: "Line", id: "l1", from: "p1", to: "p2" },
+    ],
+    constraints: [],
+  };
+  const r = applyExtendClick(sketch, "l1", { x: 5, y: 0 }, {
+    nextPointId: () => "p_target",
+    nextExtendId: () => "ex_1",
+  });
+  if (r === null) throw new Error("expected non-null result");
+  assertEq(r.primitives.length, 2);
+  const pt = r.primitives[0];
+  assert(pt.kind === "Point");
+  if (pt.kind === "Point") {
+    assertEq(pt.id, "p_target");
+    assertEq(pt.x, 5);
+    assertEq(pt.y, 0);
+  }
+  const ex = r.primitives[1];
+  assert(ex.kind === "ExtendLine");
+  if (ex.kind === "ExtendLine") {
+    assertEq(ex.line, "l1");
+    assertEq(ex.to_point, "p_target");
+  }
+});
+
+test("applyFilletClick rejects non-positive radius", () => {
+  const sketch: Sketch = {
+    plane: "Xy",
+    primitives: [
+      { kind: "Point", id: "corner", x: 1, y: 1 },
+    ],
+    constraints: [],
+  };
+  assertEq(applyFilletClick(sketch, "corner", 0), null);
+  assertEq(applyFilletClick(sketch, "corner", -0.5), null);
+  assertEq(applyFilletClick(sketch, "corner", Number.NaN), null);
+  // Non-existent corner Point.
+  assertEq(applyFilletClick(sketch, "missing", 0.5), null);
+});
+
+test("applyFilletClick emits FilletCorner for valid input", () => {
+  const sketch: Sketch = {
+    plane: "Xy",
+    primitives: [
+      { kind: "Point", id: "corner", x: 1, y: 1 },
+    ],
+    constraints: [],
+  };
+  const r = applyFilletClick(sketch, "corner", 0.5, {
+    nextFilletId: () => "f_42",
+  });
+  if (r === null) throw new Error("expected non-null result");
+  assertEq(r.primitives.length, 1);
+  const fc = r.primitives[0];
+  assert(fc.kind === "FilletCorner");
+  if (fc.kind === "FilletCorner") {
+    assertEq(fc.id, "f_42");
+    assertEq(fc.corner_point, "corner");
+    assertEq(fc.radius, 0.5);
+  }
+});
+
+test("applyTrimClick returns null for unknown line id", () => {
+  const sketch: Sketch = {
+    plane: "Xy",
+    primitives: [
+      { kind: "Point", id: "p1", x: 0, y: 0 },
+      { kind: "Point", id: "p2", x: 4, y: 0 },
+      { kind: "Line", id: "l1", from: "p1", to: "p2" },
+    ],
+    constraints: [],
+  };
+  assertEq(applyTrimClick(sketch, "missing", { x: 2, y: 0 }), null);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -16,10 +16,12 @@
 //!
 //! Disjoint sub-loops on a sketch are tolerated — each becomes its own
 //! `Profile2D`. Downstream features (`SketchExtrude`, `SketchRevolve`)
-//! decide what to do with multiple profiles. `SketchExtrude` will union
-//! disjoint loops into a single solid (and reject overlapping inner loops
-//! with `SketchError::DisjointSubLoops` since polygon-with-holes isn't
-//! supported yet — overlaps therefore have no well-defined boolean meaning).
+//! decide what to do with multiple profiles. `SketchExtrude` classifies
+//! loops via `Sketch::loops_classified`: outer loops + nested inner
+//! loops become polygon-with-holes groups (one solid with cutouts per
+//! group); fully-disjoint outers union into a multi-bodied solid; loops
+//! that *cross* (partial overlap, neither fully nested nor fully
+//! disjoint) are rejected with `SketchError::DisjointSubLoops`.
 //!
 //! 2D editing operations — `TrimLine`, `ExtendLine`, `FilletCorner` — are
 //! authored as `SketchPrim` variants too. They are resolved BEFORE loop
@@ -257,6 +259,157 @@ impl Sketch {
     ) -> Result<Vec<Profile2D>, SketchError> {
         let resolved = self.resolve(params)?;
         resolved.trace_loops()
+    }
+
+    /// Trace the sketch into a list of polygon-with-holes groups.
+    ///
+    /// Each [`OuterAndHoles`] entry has one CCW outer loop and zero or more
+    /// CW inner-loop holes nested strictly inside it. Multiple disjoint
+    /// outers (top-level loops that don't contain each other) become
+    /// multiple entries. Loops that *cross* (partial overlap, neither
+    /// fully inside nor fully outside another) are rejected with
+    /// [`SketchError::DisjointSubLoops`].
+    ///
+    /// Compared to [`Sketch::to_profile_2d`], this classifier is what
+    /// downstream feature builders should use when they want a single
+    /// polygon-with-holes profile per disjoint group instead of unioning
+    /// every loop into a separate body.
+    pub fn loops_classified(
+        &self,
+        params: &HashMap<String, f64>,
+    ) -> Result<Vec<OuterAndHoles>, SketchError> {
+        let profiles = self.to_profile_2d(params)?;
+        classify_profiles(&profiles, params)
+    }
+}
+
+/// One outer polygon plus zero or more hole polygons nested fully inside
+/// it. Outer is oriented CCW; each hole is oriented CW. All coordinates
+/// resolved to plain `[f64; 2]` (no `$param` references remain).
+#[derive(Debug, Clone, PartialEq)]
+pub struct OuterAndHoles {
+    pub outer: Vec<[f64; 2]>,
+    pub holes: Vec<Vec<[f64; 2]>>,
+}
+
+/// Classify a set of resolved profiles into nested polygon-with-holes
+/// groups. Algorithm:
+///
+/// 1. Resolve every profile to a `Vec<[f64;2]>` and flag any pair that
+///    crosses (`polygons_cross` is true) — rejected with
+///    [`SketchError::DisjointSubLoops`].
+/// 2. For each profile, compute its containment depth: the number of
+///    other profiles whose interior contains the first vertex of this
+///    profile.
+/// 3. Profiles with even depth (0, 2, ...) are outers; profiles with odd
+///    depth (1, 3, ...) are holes. Each hole is attached to its
+///    immediate parent (the outer of depth = hole.depth - 1 that
+///    contains it). Reject depth >= 2 (nested-nested) for now — only
+///    one level of holes is supported.
+/// 4. Re-orient outers to CCW (positive signed area) and holes to CW
+///    (negative signed area). The caller may re-flip as needed.
+fn classify_profiles(
+    profiles: &[Profile2D],
+    params: &HashMap<String, f64>,
+) -> Result<Vec<OuterAndHoles>, SketchError> {
+    if profiles.is_empty() {
+        return Ok(vec![]);
+    }
+    let resolved: Vec<Vec<[f64; 2]>> = profiles
+        .iter()
+        .map(|p| profile_points_xy(p, params))
+        .collect::<Result<_, _>>()?;
+
+    // Reject crossing pairs.
+    for i in 0..resolved.len() {
+        for j in (i + 1)..resolved.len() {
+            if polygons_cross(&resolved[i], &resolved[j]) {
+                return Err(SketchError::DisjointSubLoops);
+            }
+        }
+    }
+
+    // Compute containment depth for each profile (count of other profiles
+    // whose interior contains a representative vertex of this profile).
+    let n = resolved.len();
+    let mut depth = vec![0_usize; n];
+    for i in 0..n {
+        let rep = resolved[i][0];
+        for j in 0..n {
+            if i == j {
+                continue;
+            }
+            if point_in_polygon(rep, &resolved[j]) {
+                depth[i] += 1;
+            }
+        }
+    }
+
+    // Build a parent index for each profile: the smallest-area enclosing
+    // outer (or for holes, the immediate parent outer at depth-1).
+    let mut parent: Vec<Option<usize>> = vec![None; n];
+    for i in 0..n {
+        if depth[i] == 0 {
+            continue;
+        }
+        // Find the j with depth[j] == depth[i] - 1 that contains i.
+        let target_depth = depth[i] - 1;
+        let rep = resolved[i][0];
+        for (j, poly_j) in resolved.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            if depth[j] == target_depth && point_in_polygon(rep, poly_j) {
+                parent[i] = Some(j);
+                break;
+            }
+        }
+    }
+
+    // Reject deep nesting (depth >= 2). Polygon-with-holes today supports
+    // exactly one level: outer + holes.
+    for d in &depth {
+        if *d >= 2 {
+            return Err(SketchError::DisjointSubLoops);
+        }
+    }
+
+    // Build OuterAndHoles entries. Index outers, attach each depth-1 hole
+    // to its parent.
+    let mut groups: Vec<OuterAndHoles> = Vec::new();
+    let mut outer_to_group: HashMap<usize, usize> = HashMap::new();
+    for i in 0..n {
+        if depth[i] == 0 {
+            let outer_oriented = ensure_orientation(&resolved[i], true);
+            outer_to_group.insert(i, groups.len());
+            groups.push(OuterAndHoles {
+                outer: outer_oriented,
+                holes: Vec::new(),
+            });
+        }
+    }
+    for i in 0..n {
+        if depth[i] == 1 {
+            let p = parent[i].expect("hole at depth 1 must have a parent outer");
+            let g_idx = *outer_to_group.get(&p).expect("parent outer indexed");
+            let hole_oriented = ensure_orientation(&resolved[i], false);
+            groups[g_idx].holes.push(hole_oriented);
+        }
+    }
+    Ok(groups)
+}
+
+/// Force orientation: `ccw=true` means positive signed area; `ccw=false`
+/// means negative. Reverses if needed.
+fn ensure_orientation(poly: &[[f64; 2]], ccw: bool) -> Vec<[f64; 2]> {
+    let area = signed_area(poly);
+    let positive = area >= 0.0;
+    if positive == ccw {
+        poly.to_vec()
+    } else {
+        let mut rev = poly.to_vec();
+        rev.reverse();
+        rev
     }
 }
 
@@ -1200,5 +1353,138 @@ mod tests {
         s.primitives.retain(|p| p.id() != "l4");
         let err = s.to_profile_2d(&HashMap::new()).unwrap_err();
         assert!(matches!(err, SketchError::AmbiguousValence { .. }));
+    }
+
+    fn rect_with_circle_hole() -> Sketch {
+        // Outer 4×4 rectangle around the origin's quadrant + a circle of
+        // radius 0.5 centered at (2, 2) (well inside the rectangle).
+        Sketch {
+            plane: SketchPlane::Xy,
+            primitives: vec![
+                SketchPrim::Point { id: "p1".into(), x: Scalar::lit(0.0), y: Scalar::lit(0.0) },
+                SketchPrim::Point { id: "p2".into(), x: Scalar::lit(4.0), y: Scalar::lit(0.0) },
+                SketchPrim::Point { id: "p3".into(), x: Scalar::lit(4.0), y: Scalar::lit(4.0) },
+                SketchPrim::Point { id: "p4".into(), x: Scalar::lit(0.0), y: Scalar::lit(4.0) },
+                SketchPrim::Line { id: "l1".into(), from: "p1".into(), to: "p2".into() },
+                SketchPrim::Line { id: "l2".into(), from: "p2".into(), to: "p3".into() },
+                SketchPrim::Line { id: "l3".into(), from: "p3".into(), to: "p4".into() },
+                SketchPrim::Line { id: "l4".into(), from: "p4".into(), to: "p1".into() },
+                SketchPrim::Point { id: "c".into(), x: Scalar::lit(2.0), y: Scalar::lit(2.0) },
+                SketchPrim::Circle {
+                    id: "k".into(),
+                    center: "c".into(),
+                    radius: Scalar::lit(0.5),
+                    n_segments: 24,
+                },
+            ],
+            constraints: vec![],
+        }
+    }
+
+    #[test]
+    fn loops_classified_one_outer_one_hole() {
+        let s = rect_with_circle_hole();
+        let groups = s.loops_classified(&HashMap::new()).unwrap();
+        assert_eq!(groups.len(), 1, "one polygon-with-holes group expected");
+        assert_eq!(groups[0].holes.len(), 1, "one hole expected");
+        // Outer is CCW (positive signed area).
+        assert!(signed_area(&groups[0].outer) > 0.0);
+        // Hole is CW (negative signed area) per OuterAndHoles convention.
+        assert!(signed_area(&groups[0].holes[0]) < 0.0);
+    }
+
+    #[test]
+    fn loops_classified_two_disjoint_outers() {
+        // Two separated rectangles — both outers, no holes.
+        let s = Sketch {
+            plane: SketchPlane::Xy,
+            primitives: vec![
+                SketchPrim::Point { id: "a1".into(), x: Scalar::lit(0.0), y: Scalar::lit(0.0) },
+                SketchPrim::Point { id: "a2".into(), x: Scalar::lit(1.0), y: Scalar::lit(0.0) },
+                SketchPrim::Point { id: "a3".into(), x: Scalar::lit(1.0), y: Scalar::lit(1.0) },
+                SketchPrim::Point { id: "a4".into(), x: Scalar::lit(0.0), y: Scalar::lit(1.0) },
+                SketchPrim::Line { id: "la1".into(), from: "a1".into(), to: "a2".into() },
+                SketchPrim::Line { id: "la2".into(), from: "a2".into(), to: "a3".into() },
+                SketchPrim::Line { id: "la3".into(), from: "a3".into(), to: "a4".into() },
+                SketchPrim::Line { id: "la4".into(), from: "a4".into(), to: "a1".into() },
+                SketchPrim::Point { id: "b1".into(), x: Scalar::lit(5.0), y: Scalar::lit(0.0) },
+                SketchPrim::Point { id: "b2".into(), x: Scalar::lit(6.0), y: Scalar::lit(0.0) },
+                SketchPrim::Point { id: "b3".into(), x: Scalar::lit(6.0), y: Scalar::lit(1.0) },
+                SketchPrim::Point { id: "b4".into(), x: Scalar::lit(5.0), y: Scalar::lit(1.0) },
+                SketchPrim::Line { id: "lb1".into(), from: "b1".into(), to: "b2".into() },
+                SketchPrim::Line { id: "lb2".into(), from: "b2".into(), to: "b3".into() },
+                SketchPrim::Line { id: "lb3".into(), from: "b3".into(), to: "b4".into() },
+                SketchPrim::Line { id: "lb4".into(), from: "b4".into(), to: "b1".into() },
+            ],
+            constraints: vec![],
+        };
+        let groups = s.loops_classified(&HashMap::new()).unwrap();
+        assert_eq!(groups.len(), 2);
+        assert!(groups.iter().all(|g| g.holes.is_empty()));
+    }
+
+    #[test]
+    fn loops_classified_two_holes_in_one_outer() {
+        // 10×10 outer with two non-overlapping circle holes.
+        let s = Sketch {
+            plane: SketchPlane::Xy,
+            primitives: vec![
+                SketchPrim::Point { id: "p1".into(), x: Scalar::lit(0.0), y: Scalar::lit(0.0) },
+                SketchPrim::Point { id: "p2".into(), x: Scalar::lit(10.0), y: Scalar::lit(0.0) },
+                SketchPrim::Point { id: "p3".into(), x: Scalar::lit(10.0), y: Scalar::lit(10.0) },
+                SketchPrim::Point { id: "p4".into(), x: Scalar::lit(0.0), y: Scalar::lit(10.0) },
+                SketchPrim::Line { id: "l1".into(), from: "p1".into(), to: "p2".into() },
+                SketchPrim::Line { id: "l2".into(), from: "p2".into(), to: "p3".into() },
+                SketchPrim::Line { id: "l3".into(), from: "p3".into(), to: "p4".into() },
+                SketchPrim::Line { id: "l4".into(), from: "p4".into(), to: "p1".into() },
+                SketchPrim::Point { id: "c1".into(), x: Scalar::lit(3.0), y: Scalar::lit(5.0) },
+                SketchPrim::Point { id: "c2".into(), x: Scalar::lit(7.0), y: Scalar::lit(5.0) },
+                SketchPrim::Circle {
+                    id: "k1".into(),
+                    center: "c1".into(),
+                    radius: Scalar::lit(0.5),
+                    n_segments: 16,
+                },
+                SketchPrim::Circle {
+                    id: "k2".into(),
+                    center: "c2".into(),
+                    radius: Scalar::lit(0.5),
+                    n_segments: 16,
+                },
+            ],
+            constraints: vec![],
+        };
+        let groups = s.loops_classified(&HashMap::new()).unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].holes.len(), 2);
+    }
+
+    #[test]
+    fn loops_classified_overlapping_loops_reject() {
+        // Two rectangles whose boundaries cross — must be rejected.
+        let s = Sketch {
+            plane: SketchPlane::Xy,
+            primitives: vec![
+                SketchPrim::Point { id: "a1".into(), x: Scalar::lit(0.0), y: Scalar::lit(0.0) },
+                SketchPrim::Point { id: "a2".into(), x: Scalar::lit(2.0), y: Scalar::lit(0.0) },
+                SketchPrim::Point { id: "a3".into(), x: Scalar::lit(2.0), y: Scalar::lit(2.0) },
+                SketchPrim::Point { id: "a4".into(), x: Scalar::lit(0.0), y: Scalar::lit(2.0) },
+                SketchPrim::Line { id: "la1".into(), from: "a1".into(), to: "a2".into() },
+                SketchPrim::Line { id: "la2".into(), from: "a2".into(), to: "a3".into() },
+                SketchPrim::Line { id: "la3".into(), from: "a3".into(), to: "a4".into() },
+                SketchPrim::Line { id: "la4".into(), from: "a4".into(), to: "a1".into() },
+                SketchPrim::Point { id: "b1".into(), x: Scalar::lit(1.0), y: Scalar::lit(1.0) },
+                SketchPrim::Point { id: "b2".into(), x: Scalar::lit(3.0), y: Scalar::lit(1.0) },
+                SketchPrim::Point { id: "b3".into(), x: Scalar::lit(3.0), y: Scalar::lit(3.0) },
+                SketchPrim::Point { id: "b4".into(), x: Scalar::lit(1.0), y: Scalar::lit(3.0) },
+                SketchPrim::Line { id: "lb1".into(), from: "b1".into(), to: "b2".into() },
+                SketchPrim::Line { id: "lb2".into(), from: "b2".into(), to: "b3".into() },
+                SketchPrim::Line { id: "lb3".into(), from: "b3".into(), to: "b4".into() },
+                SketchPrim::Line { id: "lb4".into(), from: "b4".into(), to: "b1".into() },
+            ],
+            constraints: vec![],
+        };
+        let err = s.loops_classified(&HashMap::new()).unwrap_err();
+        assert!(matches!(err, SketchError::DisjointSubLoops));
     }
 }
