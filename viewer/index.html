@@ -20,6 +20,39 @@
   #app { display: grid; grid-template-columns: 320px 1fr; height: 100%; }
   #panel { padding: 16px; overflow-y: auto; border-right: 1px solid var(--line);
     background: var(--panel); }
+  #main-area { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+  #stage { flex: 1; position: relative; min-height: 0; overflow: hidden; }
+
+  /* --- toolbar --- */
+  #toolbar {
+    height: 42px;
+    min-height: 42px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+  }
+  #toolbar-inner button {
+    flex: unset;
+    padding: 4px 10px;
+    font-size: 12px;
+    white-space: nowrap;
+    height: 30px;
+    line-height: 1;
+    border-radius: 4px;
+  }
+  #toolbar-inner button:hover { border-color: var(--accent); color: var(--accent); }
+  #toolbar-inner button:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    border-color: var(--line);
+    color: var(--muted);
+  }
+  #toolbar-inner button:disabled:hover {
+    border-color: var(--line);
+    color: var(--muted);
+  }
   #panel h1 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
   #panel .sub { color: var(--muted); margin: 0 0 16px; font-size: 12px; }
   #drop { border: 1px dashed var(--line); border-radius: 6px; padding: 18px;
@@ -203,7 +236,10 @@
     <div id="status">no model loaded</div>
     <button id="sketcher-toggle">Open 2D sketcher</button>
   </aside>
-  <div id="stage"></div>
+  <div id="main-area">
+    <div id="toolbar"></div>
+    <div id="stage"></div>
+  </div>
 </div>
 
 <div id="sketcher-panel">

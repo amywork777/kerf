@@ -11,6 +11,7 @@ import init, {
 import { exportThreeViewPng } from "./drawings.js";
 import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js";
 import { mountPropertyManager, type PropertyManagerHandle } from "./property-manager.js";
+import { mountToolbar } from "./toolbar.js";
 
 await init();
 
@@ -890,3 +891,59 @@ document.querySelectorAll<HTMLAnchorElement>("[data-sk-example]").forEach((a) =>
     }
   });
 });
+
+// --- feature-insertion toolbar ---
+const toolbarHost = document.getElementById("toolbar")!;
+const toolbar = mountToolbar(toolbarHost, {
+  getModel: () => model ? { json: model.json, targetId: model.targetId } : null,
+  setModel: (json: string, newTargetId?: string) => {
+    try {
+      const ids = target_ids_of(json) as string[];
+      const params = (parameters_of(json) ?? {}) as Record<string, number>;
+      const targetId = newTargetId && ids.includes(newTargetId)
+        ? newTargetId
+        : ids.includes("out") ? "out" : ids[ids.length - 1]!;
+      model = {
+        json,
+        targetId,
+        parameters: model ? { ...model.parameters, ...params } : { ...params },
+        defaults: { ...params },
+      };
+      renderTargets(ids);
+      renderFeatureTree();
+      actionsEl.hidden = false;
+      actions2El.hidden = false;
+      viewsEl.hidden = false;
+      rebuild(false);
+    } catch (e) {
+      err(String(e));
+    }
+  },
+  openSketcher: () => {
+    sketcherPanel.classList.add("visible");
+    sketcher.redraw();
+  },
+  getSelection: () => {
+    if (highlightedEdge >= 0) return { edgeId: highlightedEdge };
+    if (highlightedFace >= 0) return { faceId: highlightedFace };
+    return null;
+  },
+  triggerFillet: () => {
+    // Edge picking → fillet is handled interactively; hint user.
+    ok("Click an axis-aligned edge on the model to add a fillet");
+  },
+  triggerChamfer: () => {
+    ok("Click an edge on the model to add a chamfer");
+  },
+});
+
+// Keep toolbar disabled states in sync when a model loads.
+const _origLoadJson = loadJson;
+// Patch: after loadJson runs, refresh the toolbar.
+// We shadow loadJson locally so we don't modify it above.
+(window as unknown as Record<string, unknown>).__kerfToolbarRefresh = () => toolbar.refresh();
+
+// Override the example-load and file-drop flows so the toolbar updates.
+// The cleanest approach: listen for model changes via MutationObserver on #actions.
+const actionsObserver = new MutationObserver(() => toolbar.refresh());
+actionsObserver.observe(actionsEl, { attributes: true, attributeFilter: ["hidden"] });
