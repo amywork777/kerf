@@ -108,14 +108,11 @@ function buildRevolve(json: string, currentTargetId: string): { newJson: string;
 
 function buildShell(json: string, currentTargetId: string): { newJson: string; newId: string } {
   const id = nextId(json, "shell");
-  // Shell is not in the feature catalog; use CornerCut as a best-effort
-  // placeholder and prefix the id with "shell_" so the test can detect it.
   const feature: Record<string, unknown> = {
-    kind: "CornerCut",
+    kind: "Shell",
     id,
     input: currentTargetId,
-    corner: [0, 0, 0],
-    extents: [1, 1, 1],
+    thickness: 1.0,
   };
   return { newJson: appendFeature(json, feature), newId: id };
 }

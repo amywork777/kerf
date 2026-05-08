@@ -201,8 +201,10 @@ describe("mountToolbar", () => {
     expect(setModel).toHaveBeenCalledOnce();
     const parsed = JSON.parse(setModel.mock.calls[0]![0]);
     const added = parsed.features[1];
-    // Shell appends a CornerCut or similar; just check id prefix
+    expect(added.kind).toBe("Shell");
     expect(added.id).toMatch(/^shell_/);
+    expect(added.input).toBe("box_1");
+    expect(added.thickness).toBe(1.0);
   });
 
   it("refresh() updates disabled state when model is loaded after mount", () => {

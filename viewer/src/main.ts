@@ -920,8 +920,7 @@ const toolbar = mountToolbar(toolbarHost, {
     }
   },
   openSketcher: () => {
-    sketcherPanel.classList.add("visible");
-    sketcher.redraw();
+    sketcherToggle.click();
   },
   getSelection: () => {
     if (highlightedEdge >= 0) return { edgeId: highlightedEdge };
@@ -937,13 +936,11 @@ const toolbar = mountToolbar(toolbarHost, {
   },
 });
 
-// Keep toolbar disabled states in sync when a model loads.
-const _origLoadJson = loadJson;
-// Patch: after loadJson runs, refresh the toolbar.
-// We shadow loadJson locally so we don't modify it above.
-(window as unknown as Record<string, unknown>).__kerfToolbarRefresh = () => toolbar.refresh();
-
-// Override the example-load and file-drop flows so the toolbar updates.
-// The cleanest approach: listen for model changes via MutationObserver on #actions.
-const actionsObserver = new MutationObserver(() => toolbar.refresh());
-actionsObserver.observe(actionsEl, { attributes: true, attributeFilter: ["hidden"] });
+// Refresh toolbar disabled state whenever the model becomes available or
+// goes away. `actionsEl.hidden` flips with model presence in every code
+// path that mutates `model`, so observing it covers loadJson, file drops,
+// example clicks, and the toolbar's own setModel callback.
+new MutationObserver(() => toolbar.refresh()).observe(actionsEl, {
+  attributes: true,
+  attributeFilter: ["hidden"],
+});
