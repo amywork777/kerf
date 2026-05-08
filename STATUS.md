@@ -58,11 +58,72 @@ kernel + authoring + viewer + production output).
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
-| Assembly (multi-body + mates)             | 8%        | 50%      | 4.0    |
-| **Solidworks-tier total**                 | **100%**  |          | **~69.0%** |
+| Assembly (multi-body + mates)             | 8%        | 80%      | 6.4    |
+| **Solidworks-tier total**                 | **100%**  |          | **~71.4%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08, part 2)
+## Latest session (2026-05-08, part 3)
+
+Assembly advancement: four new mate variants (`Symmetry`, `Width`,
+`PathMate`, `Lock`), sub-assembly composition through a pluggable
+loader, and AABB-based interference detection. ~69.0% → ~71.4%
+(+2.4 SW pts), 756 tests → 771 tests, 0 failed.
+
+- **Symmetry** mate: `instance_b` is set to the mirror image of
+  `instance_a` across a world-space plane (`plane_origin`,
+  `plane_normal`). B's translation is reflected; B's rotation axis is
+  reflected through the plane (component along normal flipped) and
+  angle negated, so B's orientation is the proper rotation that
+  mirrors A's.
+- **Width** mate: pushes `instance_b` perpendicular to A's axis line
+  until the radial distance from B's centroid to the line equals
+  `distance`. Translates only. Rejects negative distances with
+  `MateError::Invalid`.
+- **PathMate**: positions a single instance along a polyline at
+  parameter `t ∈ [0,1]`, using arc-length parameterization (so an
+  L-shaped path with equal-length legs lands its midpoint at exactly
+  `t = 0.5`). `t = 0` snaps to first waypoint, `t = 1` to the last.
+  Rejects `t` outside `[0,1]` and degenerate paths (<2 waypoints,
+  zero total length).
+- **Lock** mate: forces `instance_b`'s pose to equal `instance_a`'s
+  exactly (translation + rotation axis + angle). The "no relative
+  motion" mate, useful for welded/glued/threaded sub-assemblies.
+- **Sub-assembly composition**: `AssemblyRef::Path` was previously
+  rejected by `evaluate` with `UnresolvedRef`. New
+  `Assembly::evaluate_with_loader<F>(loader)` takes a closure
+  `Fn(&str) -> Result<Assembly, AssemblyError>` and recursively
+  evaluates referenced sub-assemblies, unioning their solids into a
+  composite for the containing instance, then applying the
+  containing instance's pose. Tests use a `HashMap<String, String>`-
+  backed mock loader so the fixture stays in-memory. The historical
+  `evaluate` is preserved as a thin wrapper over a loader that
+  always errors `UnresolvedRef`.
+- **Interference detection**:
+  `Assembly::detect_interference(&self, params) -> Vec<(String,
+  String, f64)>` evaluates the assembly, computes each instance's
+  AABB from its posed solid's vertex geometry, and returns every
+  pair whose AABBs overlap with the analytic overlap volume. Pairs
+  are returned in lexicographic `(a, b)` order with `a ≤ b` for
+  determinism.
+- **JSON serde** round-trips the new mate variants automatically
+  (they're tagged enum variants of `Mate`). Tested in
+  `symmetry_round_trip_json`.
+- **15 new tests** in `tests/assembly_advanced.rs`, including the
+  required `symmetry_mate_mirrors_lid`, `symmetry_round_trip_json`,
+  `width_mate_distance_validates`, `path_mate_at_t_zero_at_start`,
+  `path_mate_at_t_one_at_end`, `lock_mate_freezes_instance_b`,
+  `sub_assembly_loads_from_loader`,
+  `interference_detection_finds_overlapping_aabb`,
+  `interference_no_overlap_returns_empty`, plus
+  `width_mate_negative_distance_rejected`,
+  `path_mate_at_t_half_arc_length`, `path_mate_out_of_range_rejected`,
+  `lock_mate_with_rotated_a_propagates_rotation`,
+  `sub_assembly_loader_error_propagates`, and
+  `interference_three_instances_detects_two_pairs`. All 11 PR #7 tests
+  + 14 PR #17 tests still pass.
+  **Assembly category 50% → 80% (+2.4 SW pts).**
+
+## Earlier session (2026-05-08, part 2)
 
 Assembly mate solver completed. Three new mate variants
 (`ParallelPlane`, `AngleMate`, `TangentMate`) plus cycle-aware
@@ -249,13 +310,15 @@ multi-week engineering projects in their own right:
   major kernel addition.
 - **Sweep / loft** (6 SW pts after Revolve). Sweep along a curve, loft
   between profiles. Each is its own primitive with topology bookkeeping.
-- **Assembly + mates** (8 SW pts → ~4.0 SW pts remaining). Data model
+- **Assembly + mates** (8 SW pts → ~1.6 SW pts remaining). Data model
   + Coincident/Concentric/Distance/ParallelPlane/AngleMate/TangentMate
-  + cycle-aware iterative solver shipped. Still missing: full 6-DOF
-  symbolic solver for highly-constrained networks, perpendicular mate
-  (one-line wrapper around AngleMate at π/2), gear mates, assembly-
-  level booleans (interference checking, common volumes), and
-  `AssemblyRef::Path` resolution.
+  + Symmetry/Width/PathMate/Lock + cycle-aware iterative solver +
+  AABB interference detection + sub-assembly composition through
+  `evaluate_with_loader` shipped. Still missing: full 6-DOF symbolic
+  solver for highly-constrained networks, perpendicular mate (one-
+  line wrapper around AngleMate at π/2), gear / cam / belt mates,
+  exact-volume interference (currently AABB-overlap proxy only), and
+  motion / animation along PathMate.
 - **Picking → edit** loop (~3 SW pts). Currently we pick a face but can't
   fillet *that* face; we'd need entity-id exposure across the JSON model.
 
