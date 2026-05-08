@@ -10,6 +10,7 @@ import init, {
 } from "./wasm/kerf_cad_wasm.js";
 import { exportThreeViewPng } from "./drawings.js";
 import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js";
+import { mountPropertyManager, type PropertyManagerHandle } from "./property-manager.js";
 
 await init();
 
@@ -480,6 +481,7 @@ type ModelState = {
   defaults: Record<string, number>;
 };
 let model: ModelState | null = null;
+let pmHandle: PropertyManagerHandle | null = null;
 
 const SEGMENTS = 24;
 
@@ -548,33 +550,25 @@ function rebuild(fit: boolean = false) {
 }
 
 function renderParams() {
-  paramsEl.innerHTML = "";
-  if (!model) return;
-  const keys = Object.keys(model.defaults).sort();
-  for (const k of keys) {
-    const def = model.defaults[k]!;
-    const cur = model.parameters[k] ?? def;
-    // Slider range: ±2x of |def| (or ±10 if def is 0)
-    const span = Math.max(Math.abs(def) * 2, 10);
-    const min = def === 0 ? -span : Math.min(def - span, def * -0.2);
-    const max = def === 0 ? span : Math.max(def + span, def * 2);
-    const step = Math.max((max - min) / 200, 0.001);
-
-    const row = document.createElement("div");
-    row.className = "row";
-    row.innerHTML = `
-      <label><span>${k}</span><span class="val" data-name="${k}">${cur.toFixed(3)}</span></label>
-      <input type="range" min="${min}" max="${max}" step="${step}" value="${cur}" data-name="${k}" />`;
-    paramsEl.appendChild(row);
-    const input = row.querySelector("input")!;
-    const valSpan = row.querySelector(".val") as HTMLElement;
-    input.addEventListener("input", () => {
-      const v = Number(input.value);
-      model!.parameters[k] = v;
-      valSpan.textContent = v.toFixed(3);
-      rebuild();
-    });
+  if (!model) {
+    paramsEl.innerHTML = "";
+    pmHandle = null;
+    return;
   }
+  if (pmHandle) {
+    pmHandle.refresh();
+    return;
+  }
+  pmHandle = mountPropertyManager(paramsEl, {
+    getParams: () => model!.parameters,
+    getDefaults: () => model!.defaults,
+    setParam: (name, value) => {
+      model!.parameters[name] = value;
+    },
+    onChange: () => {
+      rebuild();
+    },
+  });
 }
 
 function renderTargets(ids: string[]) {
@@ -693,6 +687,7 @@ function loadJson(json: string) {
     const params = (parameters_of(json) ?? {}) as Record<string, number>;
     // Prefer a target named "out" if present, else last id.
     const targetId = ids.includes("out") ? "out" : ids[ids.length - 1]!;
+    pmHandle = null; // reset so mountPropertyManager re-mounts for new model
     model = {
       json,
       targetId,
