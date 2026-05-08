@@ -154,9 +154,9 @@ impl SketchPrim {
     }
 }
 
-/// Geometric constraints. Stored on the sketch and round-tripped through
-/// JSON, but NOT enforced today — there is no solver. They are
-/// forward-compatible slots for a future bidirectional constraint engine.
+/// Geometric constraints. Round-tripped through JSON. Enforced by
+/// [`Sketch::solve`] in `crate::solver`, which adjusts Point coordinates
+/// to drive the residual sum to zero.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind")]
 pub enum SketchConstraint {
@@ -174,6 +174,56 @@ pub enum SketchConstraint {
     Perpendicular { line_a: String, line_b: String },
     /// A point should be pinned in place.
     FixedPoint { point: String },
+    /// A line should be tangent to a circle (the line's distance from
+    /// the circle's center equals the circle's radius).
+    TangentLineToCircle { line: String, circle: String },
+    /// A point should lie on a line (perpendicular distance = 0).
+    CoincidentOnLine { point: String, line: String },
+    /// Two lines should have equal length.
+    EqualLength { line_a: String, line_b: String },
+    /// Two circles should have equal radius. (Resolves both radii at
+    /// solve time; if the circles' radii are literal `Scalar::Lit`s,
+    /// only the constraint check matters — the solver does not perturb
+    /// radii, so this is satisfied iff the literal values agree.
+    /// More usefully it pairs with `Scalar::Param` radii sharing the
+    /// same parameter, where the radii are equal by construction.)
+    EqualRadius { circle_a: String, circle_b: String },
+    /// A point should lie on a circle (distance from center = radius).
+    /// Residual is `(|p - center|² - radius²)` (polynomial — smooth and
+    /// kink-free, no abs() in residual).
+    PointOnCircle { point: String, circle: String },
+    /// Two circles should be tangent externally (distance between
+    /// centers = r_a + r_b). Residual:
+    /// `(|c_a - c_b|² - (r_a + r_b)²)`.
+    CircleTangentExternal { circle_a: String, circle_b: String },
+    /// Two circles should be tangent internally (distance between
+    /// centers = |r_a - r_b|). Residual:
+    /// `(|c_a - c_b|² - (r_a - r_b)²)`.
+    CircleTangentInternal { circle_a: String, circle_b: String },
+    /// Two angles between line pairs should be equal. Each angle is
+    /// represented by its two lines; the residual compares the cosines
+    /// of the angles (cos θ_a · |la|·|la'| - cos θ_b · |lb|·|lb'|·…
+    /// scaled correctly). Implementation: equality of *normalized*
+    /// dot products `dot(la, la') / (|la|·|la'|) ==
+    /// dot(lb, lb') / (|lb|·|lb'|)` so the constraint is scale-free.
+    EqualAngle {
+        line_a1: String,
+        line_a2: String,
+        line_b1: String,
+        line_b2: String,
+    },
+    /// A point is the midpoint of a line.
+    /// Residual: `|2p - (from + to)|² = 0`. Two scalar rows (x and y).
+    MidPoint { point: String, line: String },
+    /// A point at a signed perpendicular distance from a line. Sign:
+    /// positive when the point is on the left of the directed line
+    /// (from `from` toward `to`), negative on the right.
+    /// Residual: `(perp_signed - distance)`.
+    DistanceFromLine {
+        point: String,
+        line: String,
+        distance: Scalar,
+    },
 }
 
 /// A parametric 2D sketch: primitives + constraints, on a plane.

@@ -7,8 +7,311 @@
 
 use kerf_brep::solid_volume;
 use kerf_cad::{
-    Feature, Model, Scalar, Sketch, SketchConstraint, SketchPlane, SketchPrim,
+    EvalError, Feature, Model, Scalar, Sketch, SketchConstraint, SketchPlane, SketchPrim,
 };
+
+// ===========================================================================
+// Sketch solver integration: `build_sketch_extrude` runs `Sketch::solve`
+// before tracing, so constraint-driven geometry actually shapes the
+// extruded solid. The tests below exercise:
+//   1. Distance constraint pulling two corners apart from initial 5 → 10.
+//   2. Horizontal constraint flattening a tilted edge.
+//   3. Over-/contradictory constraints surfacing as `EvalError::Invalid`
+//      with the conflicting constraint indices in the reason string.
+//   4. `skip_solve = true` honoring raw authored coordinates.
+//   5. No-constraint sketches behaving identically to the pre-integration
+//      pipeline (the solver path is a no-op, no clone/no perturbation).
+// ===========================================================================
+
+/// 4-corner rectangle whose corners are fully anchored by `FixedPoint` plus
+/// `Horizontal`/`Vertical` line constraints, so the solver's solution is
+/// uniquely determined regardless of the initial coordinates.
+///
+/// The two top corners (`p3`, `p4`) are deliberately *unfixed* so the
+/// solver has DOFs to move; the bottom edge anchors `p1`, `p2` with
+/// `FixedPoint`, the left edge with `Vertical`, the right edge with
+/// `Vertical`, the top edge with `Horizontal`. The final geometry is
+/// `[0, w] × [0, h]` after solve.
+fn anchored_rect_sketch(
+    initial_w: f64,
+    initial_h: f64,
+    distance_value: f64,
+    target_h: f64,
+) -> Sketch {
+    Sketch {
+        plane: SketchPlane::Xy,
+        primitives: vec![
+            SketchPrim::Point { id: "p1".into(), x: Scalar::lit(0.0), y: Scalar::lit(0.0) },
+            SketchPrim::Point { id: "p2".into(), x: Scalar::lit(initial_w), y: Scalar::lit(0.0) },
+            SketchPrim::Point { id: "p3".into(), x: Scalar::lit(initial_w), y: Scalar::lit(initial_h) },
+            SketchPrim::Point { id: "p4".into(), x: Scalar::lit(0.0), y: Scalar::lit(initial_h) },
+            SketchPrim::Line { id: "l1".into(), from: "p1".into(), to: "p2".into() },
+            SketchPrim::Line { id: "l2".into(), from: "p2".into(), to: "p3".into() },
+            SketchPrim::Line { id: "l3".into(), from: "p3".into(), to: "p4".into() },
+            SketchPrim::Line { id: "l4".into(), from: "p4".into(), to: "p1".into() },
+        ],
+        constraints: vec![
+            // Pin the bottom-left and bottom-right by anchoring p1 at
+            // origin and constraining the bottom edge to length
+            // `distance_value`. p1 stays put; p2 is dragged horizontally
+            // (Horizontal on l1) to whatever satisfies Distance(p1, p2).
+            SketchConstraint::FixedPoint { point: "p1".into() },
+            SketchConstraint::Horizontal { line: "l1".into() },
+            SketchConstraint::Distance {
+                a: "p1".into(),
+                b: "p2".into(),
+                value: Scalar::lit(distance_value),
+            },
+            // Right and left edges vertical.
+            SketchConstraint::Vertical { line: "l2".into() },
+            SketchConstraint::Vertical { line: "l4".into() },
+            // Top edge horizontal.
+            SketchConstraint::Horizontal { line: "l3".into() },
+            // Pin the height by constraining p1 ↔ p4 distance.
+            SketchConstraint::Distance {
+                a: "p1".into(),
+                b: "p4".into(),
+                value: Scalar::lit(target_h),
+            },
+        ],
+    }
+}
+
+/// Authored geometry: a "tilted rectangle" — `p2` starts at (5, 1.5) so the
+/// bottom edge is angled. With a `Horizontal` constraint on the bottom
+/// edge, the solver must drag `p2` down to the x-axis.
+///
+/// All other corners are anchored via `FixedPoint` so the solve is
+/// fully-constrained and the bottom edge ends up at exactly y = 0.
+fn tilted_rect_sketch_for_horizontal() -> Sketch {
+    Sketch {
+        plane: SketchPlane::Xy,
+        primitives: vec![
+            SketchPrim::Point { id: "p1".into(), x: Scalar::lit(0.0), y: Scalar::lit(0.0) },
+            // p2 starts off-axis (y=1.5) — Horizontal constraint must
+            // pull it back to y=0.
+            SketchPrim::Point { id: "p2".into(), x: Scalar::lit(5.0), y: Scalar::lit(1.5) },
+            SketchPrim::Point { id: "p3".into(), x: Scalar::lit(5.0), y: Scalar::lit(3.0) },
+            SketchPrim::Point { id: "p4".into(), x: Scalar::lit(0.0), y: Scalar::lit(3.0) },
+            SketchPrim::Line { id: "l1".into(), from: "p1".into(), to: "p2".into() },
+            SketchPrim::Line { id: "l2".into(), from: "p2".into(), to: "p3".into() },
+            SketchPrim::Line { id: "l3".into(), from: "p3".into(), to: "p4".into() },
+            SketchPrim::Line { id: "l4".into(), from: "p4".into(), to: "p1".into() },
+        ],
+        constraints: vec![
+            // Anchor every point except p2; only p2 is free, so the
+            // solver must move it to satisfy Horizontal(l1).
+            SketchConstraint::FixedPoint { point: "p1".into() },
+            SketchConstraint::FixedPoint { point: "p3".into() },
+            SketchConstraint::FixedPoint { point: "p4".into() },
+            SketchConstraint::Horizontal { line: "l1".into() },
+            SketchConstraint::Vertical { line: "l2".into() },
+        ],
+    }
+}
+
+/// Tier 3, test 1. A rectangle whose width is wrong in the authored
+/// coordinates: bottom edge is 5 wide, but a `Distance(p1, p2) = 10`
+/// constraint says it should be 10. After build_sketch_extrude runs
+/// `Sketch::solve`, the extruded solid has volume `10 * 5 * 4 = 200`,
+/// not the un-solved `5 * 5 * 4 = 100`.
+#[test]
+fn sketch_with_distance_constraint_extrudes_to_correct_size() {
+    let h_extrude = 4.0;
+    let target_w = 10.0;
+    let target_h = 5.0;
+    let sketch = anchored_rect_sketch(5.0, 5.0, target_w, target_h);
+    let m = Model::new().add(Feature::SketchExtrude {
+        id: "out".into(),
+        sketch,
+        direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(h_extrude)],
+        skip_solve: false,
+    });
+    let v = solid_volume(&m.evaluate("out").unwrap());
+    let expected = target_w * target_h * h_extrude;
+    assert!(
+        (v - expected).abs() < 1e-4,
+        "v={v}, expected {expected} (10×5×4 = 200 — solver should have stretched the authored 5-wide rectangle to 10-wide before extrusion)"
+    );
+}
+
+/// Tier 3, test 2. The bottom edge is authored tilted (p2.y = 1.5);
+/// a `Horizontal` constraint pulls p2 back down. After solve the bottom
+/// edge sits at y = 0 and the rectangle is exactly [0,5] × [0,3]; volume
+/// is `5 * 3 * 2 = 30`. Without the solver call the un-solved tilted
+/// quad has a different (smaller) area and its extrusion would not
+/// reach 30.
+#[test]
+fn sketch_with_horizontal_constraint_aligns_corners() {
+    let h_extrude = 2.0;
+    let sketch = tilted_rect_sketch_for_horizontal();
+    let m = Model::new().add(Feature::SketchExtrude {
+        id: "out".into(),
+        sketch,
+        direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(h_extrude)],
+        skip_solve: false,
+    });
+    let v = solid_volume(&m.evaluate("out").unwrap());
+    let expected = 5.0 * 3.0 * h_extrude; // 30
+    assert!(
+        (v - expected).abs() < 1e-4,
+        "v={v}, expected {expected} (Horizontal constraint should have flattened the tilted bottom edge before extrusion)"
+    );
+}
+
+/// Tier 3, test 3. Two `Distance` constraints on the same Point pair with
+/// conflicting values. `build_sketch_extrude` should surface this as
+/// `EvalError::Invalid`, and the human-readable reason should mention
+/// "conflicting" with the constraint indices identified by the bisector.
+#[test]
+fn sketch_with_overconstrained_returns_invalid_error() {
+    let sketch = Sketch {
+        plane: SketchPlane::Xy,
+        primitives: vec![
+            SketchPrim::Point { id: "p1".into(), x: Scalar::lit(0.0), y: Scalar::lit(0.0) },
+            SketchPrim::Point { id: "p2".into(), x: Scalar::lit(1.0), y: Scalar::lit(0.0) },
+            SketchPrim::Point { id: "p3".into(), x: Scalar::lit(1.0), y: Scalar::lit(1.0) },
+            SketchPrim::Point { id: "p4".into(), x: Scalar::lit(0.0), y: Scalar::lit(1.0) },
+            SketchPrim::Line { id: "l1".into(), from: "p1".into(), to: "p2".into() },
+            SketchPrim::Line { id: "l2".into(), from: "p2".into(), to: "p3".into() },
+            SketchPrim::Line { id: "l3".into(), from: "p3".into(), to: "p4".into() },
+            SketchPrim::Line { id: "l4".into(), from: "p4".into(), to: "p1".into() },
+        ],
+        constraints: vec![
+            // Both Distance constraints on (p1, p2) — incompatible values.
+            SketchConstraint::Distance {
+                a: "p1".into(),
+                b: "p2".into(),
+                value: Scalar::lit(5.0),
+            },
+            SketchConstraint::Distance {
+                a: "p1".into(),
+                b: "p2".into(),
+                value: Scalar::lit(10.0),
+            },
+        ],
+    };
+    let m = Model::new().add(Feature::SketchExtrude {
+        id: "out".into(),
+        sketch,
+        direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(1.0)],
+        skip_solve: false,
+    });
+    let err = m.evaluate("out").unwrap_err();
+    match err {
+        EvalError::Invalid { id, reason } => {
+            assert_eq!(id, "out");
+            // The reason should explicitly mention "contradictory" or
+            // "did not converge" and ideally surface the conflicting
+            // constraint indices for the user's diagnostic.
+            assert!(
+                reason.contains("contradictory") || reason.contains("did not converge"),
+                "expected contradictory/over-constrained signature in reason; got {reason:?}"
+            );
+        }
+        other => panic!("expected EvalError::Invalid, got {other:?}"),
+    }
+}
+
+/// Tier 3, test 4. With `skip_solve = true`, the solver is bypassed even
+/// though the sketch carries a `Distance` constraint that would have
+/// changed the geometry. The extruded volume reflects the *raw authored*
+/// 5×5 rectangle (volume 100), not the solved 10×5 rectangle (volume 200).
+#[test]
+fn sketch_with_skip_solve_uses_raw_coords() {
+    let h_extrude = 4.0;
+    // Author a 5×5 rectangle but stuff a Distance(p1,p2)=10 constraint
+    // into the sketch. With skip_solve=true the constraint is ignored.
+    let sketch = anchored_rect_sketch(5.0, 5.0, 10.0, 5.0);
+    let m = Model::new().add(Feature::SketchExtrude {
+        id: "out".into(),
+        sketch,
+        direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(h_extrude)],
+        skip_solve: true, // bypass — read raw coords verbatim.
+    });
+    let v = solid_volume(&m.evaluate("out").unwrap());
+    let expected_raw = 5.0 * 5.0 * h_extrude; // 100
+    assert!(
+        (v - expected_raw).abs() < 1e-9,
+        "v={v}, expected {expected_raw} — skip_solve must bypass the constraint solver"
+    );
+}
+
+/// Tier 3, test 5. A sketch with no constraints must extrude identically
+/// regardless of `skip_solve` — the integration's "if constraints empty,
+/// skip solve" fast-path is correct (no clone, no perturbation).
+#[test]
+fn sketch_with_no_constraints_skips_solver_path() {
+    let h_extrude = 3.0;
+    let sketch = rect_sketch(2.0, 4.0); // 8.0 area, 0 constraints.
+    let m_solve = Model::new().add(Feature::SketchExtrude {
+        id: "out".into(),
+        sketch: sketch.clone(),
+        direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(h_extrude)],
+        skip_solve: false,
+    });
+    let m_skip = Model::new().add(Feature::SketchExtrude {
+        id: "out".into(),
+        sketch,
+        direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(h_extrude)],
+        skip_solve: true,
+    });
+    let v_solve = solid_volume(&m_solve.evaluate("out").unwrap());
+    let v_skip = solid_volume(&m_skip.evaluate("out").unwrap());
+    let expected = 2.0 * 4.0 * h_extrude; // 24
+    assert!(
+        (v_solve - expected).abs() < 1e-9 && (v_skip - expected).abs() < 1e-9,
+        "v_solve={v_solve}, v_skip={v_skip}, expected {expected}"
+    );
+    // Sanity: same volume on both paths.
+    assert!((v_solve - v_skip).abs() < 1e-12);
+}
+
+/// Tier 3, test 6 (bonus). The Scalar::Param resolution in a Distance
+/// constraint must propagate through to the solver — the same sketch
+/// extruded with two different `params` HashMaps should yield two
+/// different solved volumes. Closes the loop on parametric driving.
+#[test]
+fn sketch_distance_param_drives_solved_geometry() {
+    let mut sketch = anchored_rect_sketch(5.0, 5.0, 0.0, 5.0);
+    // Replace the literal Distance(p1, p2) value with a $width param.
+    for c in &mut sketch.constraints {
+        if let SketchConstraint::Distance { a, b, value } = c {
+            if a == "p1" && b == "p2" {
+                *value = Scalar::param("width");
+            }
+        }
+    }
+    let h_extrude = 2.0;
+
+    // First evaluation: width = 7. Volume should be 7 * 5 * 2 = 70.
+    let mut m1 = Model::new().add(Feature::SketchExtrude {
+        id: "out".into(),
+        sketch: sketch.clone(),
+        direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(h_extrude)],
+        skip_solve: false,
+    });
+    m1.parameters.insert("width".into(), 7.0);
+    let v1 = solid_volume(&m1.evaluate("out").unwrap());
+    assert!(
+        (v1 - 70.0).abs() < 1e-4,
+        "v1={v1}, expected 70.0 (width=7)"
+    );
+
+    // Second evaluation: width = 12. Volume should be 12 * 5 * 2 = 120.
+    let mut m2 = Model::new().add(Feature::SketchExtrude {
+        id: "out".into(),
+        sketch,
+        direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(h_extrude)],
+        skip_solve: false,
+    });
+    m2.parameters.insert("width".into(), 12.0);
+    let v2 = solid_volume(&m2.evaluate("out").unwrap());
+    assert!(
+        (v2 - 120.0).abs() < 1e-4,
+        "v2={v2}, expected 120.0 (width=12)"
+    );
+}
 
 fn rect_sketch(w: f64, h: f64) -> Sketch {
     Sketch {
@@ -35,6 +338,7 @@ fn sketch_rectangle_extrudes_to_box() {
         id: "out".into(),
         sketch: rect_sketch(2.0, 3.0),
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(4.0)],
+        skip_solve: false,
     });
     let v = solid_volume(&m.evaluate("out").unwrap());
     assert!((v - 24.0).abs() < 1e-9, "v={v}, expected 24.0");
@@ -65,6 +369,7 @@ fn sketch_circle_extrudes_to_cylinder() {
         id: "out".into(),
         sketch,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(h)],
+        skip_solve: false,
     });
     let v = solid_volume(&m.evaluate("out").unwrap());
     let theta = 2.0 * std::f64::consts::PI / (n as f64);
@@ -78,6 +383,7 @@ fn sketch_round_trip_json() {
         id: "out".into(),
         sketch: rect_sketch(2.0, 3.0),
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(4.0)],
+        skip_solve: false,
     });
     let json = m.to_json_string().unwrap();
     let m2 = Model::from_json_str(&json).unwrap();
@@ -95,6 +401,7 @@ fn sketch_open_loop_rejects() {
         id: "out".into(),
         sketch: s,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(4.0)],
+        skip_solve: false,
     });
     let err = m.evaluate("out").unwrap_err();
     let msg = format!("{err}");
@@ -138,6 +445,7 @@ fn constraint_storage_round_trip() {
         id: "out".into(),
         sketch: s.clone(),
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(4.0)],
+        skip_solve: false,
     });
     let json = m.to_json_string().unwrap();
     let m2 = Model::from_json_str(&json).unwrap();
@@ -209,6 +517,7 @@ fn sketch_unknown_point_rejects() {
         id: "out".into(),
         sketch: s,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(1.0)],
+        skip_solve: false,
     });
     assert!(m.evaluate("out").is_err());
 }
@@ -240,6 +549,7 @@ fn sketch_param_driven_rectangle_resolves() {
                 id: "out".into(),
                 sketch,
                 direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(2.0)],
+                            skip_solve: false,
             })
     };
     let v1 = solid_volume(&mk_model(2.0, 3.0).evaluate("out").unwrap());
@@ -271,6 +581,7 @@ fn sketch_reverse_orientation_still_extrudes() {
         id: "out".into(),
         sketch: s,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(4.0)],
+        skip_solve: false,
     });
     let v = solid_volume(&m.evaluate("out").unwrap());
     assert!((v - 24.0).abs() < 1e-9, "v={v}");
@@ -297,6 +608,7 @@ fn sketch_branching_valence_rejects() {
         id: "out".into(),
         sketch: s,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(1.0)],
+        skip_solve: false,
     });
     assert!(m.evaluate("out").is_err());
 }
@@ -342,6 +654,7 @@ fn sketch_two_disjoint_loops_extrudes_to_two_solids() {
         id: "out".into(),
         sketch: s,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(1.0)],
+        skip_solve: false,
     });
     let v = solid_volume(&m.evaluate("out").unwrap());
     assert!(
@@ -368,6 +681,7 @@ fn sketch_overlapping_inner_loop_rejects() {
         id: "out".into(),
         sketch: s,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(1.0)],
+        skip_solve: false,
     });
     let err = m.evaluate("out").unwrap_err();
     let msg = format!("{err}");
@@ -408,6 +722,7 @@ fn sketch_named_ref_plane_applies_transform() {
             id: "out".into(),
             sketch,
             direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(1.0)],
+                    skip_solve: false,
         });
     let solid = m.evaluate("out").unwrap();
     let v = solid_volume(&solid);
@@ -449,6 +764,7 @@ fn sketch_named_ref_plane_z_axis_translates_only() {
             id: "out".into(),
             sketch,
             direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(4.0)],
+                    skip_solve: false,
         });
     let solid = m.evaluate("out").unwrap();
     let v = solid_volume(&solid);
@@ -474,6 +790,7 @@ fn sketch_named_ref_plane_unknown_id_rejects() {
         id: "out".into(),
         sketch,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(1.0)],
+        skip_solve: false,
     });
     let err = m.evaluate("out").unwrap_err();
     let msg = format!("{err}");
@@ -517,6 +834,7 @@ fn sketch_trim_line_at_point() {
         id: "out".into(),
         sketch,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(4.0)],
+        skip_solve: false,
     });
     let v = solid_volume(&m.evaluate("out").unwrap());
     assert!((v - 24.0).abs() < 1e-9, "trimmed v={v}");
@@ -550,6 +868,7 @@ fn sketch_extend_line_to_point() {
         id: "out".into(),
         sketch,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(4.0)],
+        skip_solve: false,
     });
     let v = solid_volume(&m.evaluate("out").unwrap());
     assert!((v - 24.0).abs() < 1e-9, "extended v={v}");
@@ -581,6 +900,7 @@ fn sketch_fillet_corner_radius() {
         id: "out".into(),
         sketch,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(1.0)],
+        skip_solve: false,
     });
     let v = solid_volume(&m.evaluate("out").unwrap());
     // Filleted square area: the fillet arc bulges toward the corner,
@@ -649,6 +969,7 @@ fn sketch_fillet_too_large_rejects() {
         id: "out".into(),
         sketch,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(1.0)],
+        skip_solve: false,
     });
     let err = m.evaluate("out").unwrap_err();
     let msg = format!("{err}");
@@ -677,6 +998,7 @@ fn sketch_trim_unknown_line_rejects() {
         id: "out".into(),
         sketch,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(1.0)],
+        skip_solve: false,
     });
     let err = m.evaluate("out").unwrap_err();
     let msg = format!("{err}");
@@ -719,6 +1041,7 @@ fn sketch_fillet_two_corners_compose() {
         id: "out".into(),
         sketch,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(1.0)],
+        skip_solve: false,
     });
     let v = solid_volume(&m.evaluate("out").unwrap());
     // Two corners filleted, each removing (1 - π/4) = 0.2146.
@@ -774,6 +1097,7 @@ fn sketch_polygon_with_one_hole_extrudes() {
         id: "out".into(),
         sketch: s,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(2.0)],
+        skip_solve: false,
     });
     let v = solid_volume(&m.evaluate("out").unwrap());
     assert!(
@@ -827,6 +1151,7 @@ fn sketch_polygon_with_two_holes_extrudes() {
         id: "out".into(),
         sketch: s,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(1.0)],
+        skip_solve: false,
     });
     let v = solid_volume(&m.evaluate("out").unwrap());
     assert!(
@@ -878,6 +1203,7 @@ fn sketch_holes_overlapping_rejects() {
         id: "out".into(),
         sketch: s,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(1.0)],
+        skip_solve: false,
     });
     let err = m.evaluate("out").unwrap_err();
     let msg = format!("{err}");
@@ -920,6 +1246,7 @@ fn sketch_polygon_with_circular_hole_extrudes() {
         id: "out".into(),
         sketch: s,
         direction: [Scalar::lit(0.0), Scalar::lit(0.0), Scalar::lit(2.0)],
+        skip_solve: false,
     });
     // The boolean engine struggles with high-segment-count circles inside
     // a polygon-with-holes diff. We accept either a successful build (volume

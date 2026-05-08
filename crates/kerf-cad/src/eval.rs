@@ -265,8 +265,11 @@ fn build(
         Feature::Revolve { profile, .. } => build_revolve(id, profile, params),
 
         Feature::SketchExtrude {
-            sketch, direction, ..
-        } => build_sketch_extrude(id, sketch, direction, params, model),
+            sketch,
+            direction,
+            skip_solve,
+            ..
+        } => build_sketch_extrude(id, sketch, direction, *skip_solve, params, model),
 
         Feature::SketchRevolve { sketch, .. } => build_sketch_revolve(id, sketch, params),
 
@@ -5809,17 +5812,64 @@ fn build_extrude(
     Ok(extrude_polygon(&pts, dir))
 }
 
+/// Lower a `SolverError` from `Sketch::solve` into an `EvalError::Invalid`.
+/// Contradictory and OverConstrained surface with the conflicting-constraint
+/// indices (when the bisector populated them) embedded in the human-readable
+/// reason — callers parse `EvalError` via its `Display`/`Debug`, so a single
+/// `Invalid` variant with a structured reason is the lowest-impact surfacing.
+fn solver_error_to_eval(id: &str, err: crate::solver::SolverError) -> EvalError {
+    use crate::solver::SolverError;
+    let reason = match &err {
+        SolverError::Contradictory { residual, conflicting } => {
+            if conflicting.is_empty() {
+                format!(
+                    "sketch constraints contradictory (residual = {residual}); no minimal subset isolated"
+                )
+            } else {
+                format!(
+                    "sketch constraints contradictory (residual = {residual}); conflicting constraint indices = {conflicting:?}"
+                )
+            }
+        }
+        SolverError::OverConstrained { max_iterations, residual } => {
+            format!(
+                "sketch solver did not converge in {max_iterations} iterations (residual = {residual})"
+            )
+        }
+        other => format!("sketch solver error: {other}"),
+    };
+    EvalError::Invalid { id: id.into(), reason }
+}
+
 fn build_sketch_extrude(
     id: &str,
     sketch: &Sketch,
     direction: &[Scalar; 3],
+    skip_solve: bool,
     params: &HashMap<String, f64>,
     model: &Model,
 ) -> Result<Solid, EvalError> {
+    // Run the constraint solver in-place (on a clone — the model itself is
+    // immutable here). If the sketch has no constraints, the solver is a
+    // no-op and we skip it; if `skip_solve` is true, the caller has opted
+    // to author "raw" coordinates and bypass enforcement entirely.
+    //
+    // On success the clone's Point primitives have their x/y rewritten to
+    // the solved literals; the rest of the pipeline (`loops_classified` →
+    // `to_profile_2d`) reads those updated coords directly.
+    let solved: Option<Sketch> = if skip_solve || sketch.constraints.is_empty() {
+        None
+    } else {
+        let mut s = sketch.clone();
+        s.solve(params).map_err(|e| solver_error_to_eval(id, e))?;
+        Some(s)
+    };
+    let sketch_ref: &Sketch = solved.as_ref().unwrap_or(sketch);
+
     // Classify the sketch into polygon-with-holes groups. This rejects
     // crossing loops up-front and assigns nested inner loops as holes of
     // their enclosing outer.
-    let groups = sketch
+    let groups = sketch_ref
         .loops_classified(params)
         .map_err(|e| EvalError::Invalid {
             id: id.into(),
