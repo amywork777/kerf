@@ -5976,6 +5976,317 @@ fn build(
             })
         }
 
+        // ---- Drawings v2 polish batch ---------------------------------
+
+        Feature::Funnel2 {
+            top_radius, neck_radius, bottom_radius, top_z, bottom_length, segments, ..
+        } => {
+            let tr = resolve_one(id, top_radius, params)?;
+            let nr = resolve_one(id, neck_radius, params)?;
+            let br = resolve_one(id, bottom_radius, params)?;
+            let tz = resolve_one(id, top_z, params)?;
+            let bl = resolve_one(id, bottom_length, params)?;
+            if tr <= 0.0 || nr <= 0.0 || br <= 0.0 || tz <= 0.0 || bl <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Funnel2 requires positive radii and lengths (got tr={tr}, nr={nr}, br={br}, tz={tz}, bl={bl})"),
+                });
+            }
+            if tr <= nr {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Funnel2 top_radius ({tr}) must be > neck_radius ({nr})"),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Funnel2 segments must be >= 3 (got {segments})"),
+                });
+            }
+            // Top frustum at z ∈ [0, tz]: bottom radius nr at z=0, top radius tr at z=tz.
+            let top = frustum_faceted(nr, tr, tz, *segments);
+            // Bottom frustum at z ∈ [-bl, 0]: top radius nr at z=0, bottom radius br at z=-bl.
+            let bottom_raw = frustum_faceted(br, nr, bl, *segments);
+            let bottom = translate_solid(&bottom_raw, Vec3::new(0.0, 0.0, -bl));
+            top.try_union(&bottom).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "funnel2_union",
+                message: e.message,
+            })
+        }
+
+        Feature::CrossPipe { radius, arm_length, axis_a, axis_b, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let l = resolve_one(id, arm_length, params)?;
+            if r <= 0.0 || l <= 0.0 || *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("CrossPipe requires positive dims, segments >= 3 (got r={r}, l={l})"),
+                });
+            }
+            let ax_a = parse_axis(id, axis_a)?;
+            let ax_b = parse_axis(id, axis_b)?;
+            if ax_a == ax_b {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("CrossPipe axes must differ (got both {axis_a:?})"),
+                });
+            }
+            // Each arm: a 2*l-long cylinder centered at origin along its axis.
+            let (a_perp1, a_perp2) = perpendicular_axes(ax_a);
+            let (b_perp1, b_perp2) = perpendicular_axes(ax_b);
+            let arm_a = cylinder_along_axis(r, 2.0 * l, *segments, ax_a, -l, 0.0, 0.0);
+            let arm_b = cylinder_along_axis(r, 2.0 * l, *segments, ax_b, -l, 0.0, 0.0);
+            // (Suppress unused-var warning when both axes are simple cardinal axes.)
+            let _ = (a_perp1, a_perp2, b_perp1, b_perp2);
+            arm_a.try_union(&arm_b).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "cross_pipe_union",
+                message: e.message,
+            })
+        }
+
+        Feature::AnchorChain { length, width, wall_thickness, bar_thickness, depth, segments, .. } => {
+            let l = resolve_one(id, length, params)?;
+            let w = resolve_one(id, width, params)?;
+            let wt = resolve_one(id, wall_thickness, params)?;
+            let bt = resolve_one(id, bar_thickness, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if l <= 0.0 || w <= 0.0 || wt <= 0.0 || bt <= 0.0 || d <= 0.0 || *segments < 8 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("AnchorChain requires positive dims, segments >= 8 (got l={l}, w={w}, wt={wt}, bt={bt})"),
+                });
+            }
+            if 2.0 * wt >= w {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("AnchorChain wall too thick (got w={w}, wt={wt})"),
+                });
+            }
+            // Outer stadium then subtract two D-shaped pockets (left of bar +
+            // right of bar). Reuses the ChainLink construction with an
+            // additional crossbar union'd into the bore region.
+            let outer_r = w / 2.0;
+            let inner_r = (w / 2.0) - wt;
+            let inner_l = l - 2.0 * wt;
+            if inner_l <= 0.0 || inner_r <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("AnchorChain wall too thick (got l={l}, w={w}, wt={wt})"),
+                });
+            }
+            let n = (*segments).max(8);
+            // Outer stadium profile (CCW around outline).
+            let mut outer_prof = Vec::with_capacity(2 * n + 4);
+            for k in 0..=n {
+                let theta = -std::f64::consts::FRAC_PI_2
+                    + std::f64::consts::PI * (k as f64) / (n as f64);
+                outer_prof.push(Point3::new(l + outer_r * theta.cos() - l / 2.0, outer_r * theta.sin(), 0.0));
+            }
+            for k in 0..=n {
+                let theta = std::f64::consts::FRAC_PI_2
+                    + std::f64::consts::PI * (k as f64) / (n as f64);
+                outer_prof.push(Point3::new(outer_r * theta.cos() - l / 2.0, outer_r * theta.sin(), 0.0));
+            }
+            let outer = extrude_polygon(&outer_prof, Vec3::new(0.0, 0.0, d));
+            // Inner stadium pocket (carve out the bore).
+            let mut inner_prof = Vec::with_capacity(2 * n + 4);
+            for k in 0..=n {
+                let theta = -std::f64::consts::FRAC_PI_2
+                    + std::f64::consts::PI * (k as f64) / (n as f64);
+                inner_prof.push(Point3::new(inner_l + inner_r * theta.cos() - inner_l / 2.0, inner_r * theta.sin(), 0.0));
+            }
+            for k in 0..=n {
+                let theta = std::f64::consts::FRAC_PI_2
+                    + std::f64::consts::PI * (k as f64) / (n as f64);
+                inner_prof.push(Point3::new(inner_r * theta.cos() - inner_l / 2.0, inner_r * theta.sin(), 0.0));
+            }
+            let eps = (d * 0.05).max(1e-3);
+            let inner = extrude_polygon(&inner_prof, Vec3::new(0.0, 0.0, d + 2.0 * eps));
+            let inner_t = translate_solid(&inner, Vec3::new(0.0, 0.0, -eps));
+            let bore = outer.try_difference(&inner_t).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "anchor_chain_carve",
+                message: e.message,
+            })?;
+            // Crossbar: a thin box at x ∈ [-bt/2, bt/2], y ∈ [-(inner_r - eps2), (inner_r - eps2)].
+            // We add this as a UNION with the bored link to produce a cross
+            // separating the bore into two D-halves. Use a slightly inset y
+            // so the bar lands inside the bore wall.
+            let bar_y_max = inner_r - 1e-3;
+            let bar = box_at(
+                Vec3::new(bt, 2.0 * bar_y_max, d),
+                Point3::new(-bt / 2.0, -bar_y_max, 0.0),
+            );
+            bore.try_union(&bar).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "anchor_chain_bar",
+                message: e.message,
+            })
+        }
+
+        Feature::GearBlank2 {
+            outer_radius, root_radius, tooth_count, thickness, notch_depth, segments_per_tooth, ..
+        } => {
+            let r_out = resolve_one(id, outer_radius, params)?;
+            let r_root = resolve_one(id, root_radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            let nd = resolve_one(id, notch_depth, params)?;
+            if r_out <= 0.0 || r_root <= 0.0 || r_root >= r_out || t <= 0.0
+                || *tooth_count < 4 || *segments_per_tooth < 1 || nd <= 0.0
+            {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("GearBlank2 requires r_out > r_root > 0, t > 0, nd > 0, tooth_count >= 4 (got r_out={r_out}, r_root={r_root}, nd={nd}, tc={tooth_count})"),
+                });
+            }
+            // Same alternating profile as GearBlank, but one tooth at index 0
+            // is replaced by a "missing" arc (vertex stays at root radius
+            // instead of stepping out to outer). Adds an inset notch at the
+            // missing-tooth angular position.
+            let n = 2 * *tooth_count;
+            let mut prof = Vec::with_capacity(n);
+            for i in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+                // Skip the missing tooth (i=0 and i=1 are the outer + root
+                // pair for the first tooth — replace both with root).
+                let r = if i < 2 { r_root } else if i % 2 == 0 { r_out } else { r_root };
+                prof.push(Point3::new(r * theta.cos(), r * theta.sin(), 0.0));
+            }
+            let blank = extrude_polygon(&prof, Vec3::new(0.0, 0.0, t));
+            // Carve a small indexing notch at angle = 0 (the missing-tooth
+            // location). The notch is a thin radial slot of width nd in
+            // angular extent, depth nd inward from r_root.
+            let notch_w = (r_root * 0.15).max(1e-3);
+            let notch_box = box_at(
+                Vec3::new(nd * 2.0, notch_w, t + 2.0 * 1e-3),
+                Point3::new(r_root - nd, -notch_w / 2.0, -1e-3),
+            );
+            blank.try_difference(&notch_box).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "gear_blank2_notch",
+                message: e.message,
+            })
+        }
+
+        Feature::PaperClipShape { outer_length, outer_width, gap, rod_radius, z, segments, .. } => {
+            let ol = resolve_one(id, outer_length, params)?;
+            let ow = resolve_one(id, outer_width, params)?;
+            let g = resolve_one(id, gap, params)?;
+            let rr = resolve_one(id, rod_radius, params)?;
+            let zv = resolve_one(id, z, params)?;
+            if ol <= 0.0 || ow <= 0.0 || g <= 0.0 || rr <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("PaperClipShape requires positive dims, segments >= 6 (got ol={ol}, ow={ow}, g={g}, rr={rr})"),
+                });
+            }
+            if 4.0 * g >= ow {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("PaperClipShape gap too large for width (got g={g}, ow={ow})"),
+                });
+            }
+            // A standard paper clip: a serpentine path that goes
+            //   start (right end, lower) → up → left → up → right (fold) →
+            //   left (inner trip) → up → right (small fold) → end.
+            // We approximate with a polyline of straight segments; bend
+            // radii are implicit (each turn becomes a sharp miter, fine for
+            // the visual approximation).
+            //
+            // Coordinate system: x along outer_length, y along outer_width.
+            // Outer rectangle spans x ∈ [0, ol], y ∈ [0, ow].
+            // Inner first fold spans y ∈ [g, ow - g].
+            // Innermost second fold spans y ∈ [2g, ow - 2g].
+            let pts: Vec<[f64; 3]> = vec![
+                [ol, g, zv],                // start at right, just above bottom
+                [ol, ow, zv],                // up to top right
+                [g, ow, zv],                  // left to top
+                [g, g, zv],                  // down to bottom left
+                [ol - g * 1.4, g, zv],        // right along bottom
+                [ol - g * 1.4, ow - g, zv],    // up to inner top
+                [2.0 * g, ow - g, zv],          // left
+                [2.0 * g, 2.0 * g, zv],          // down inside
+                [ol - 2.0 * g, 2.0 * g, zv],   // right
+            ];
+            // Build the swept rod by chaining sweep_cylinder_segments and
+            // unioning. Skip degenerate (zero-length) segments.
+            let mut acc: Option<Solid> = None;
+            for i in 0..pts.len() - 1 {
+                let cyl = sweep_cylinder_segment(pts[i], pts[i + 1], rr, *segments);
+                let Some(cyl) = cyl else { continue };
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "paperclip_seg_union",
+                        message: format!("seg {i}: {}", e.message),
+                    })?,
+                });
+            }
+            acc.ok_or_else(|| EvalError::Invalid {
+                id: id.into(),
+                reason: "PaperClipShape produced no segments".into(),
+            })
+        }
+
+        Feature::Caltrops { edge_length, sphere_radius, strut_radius, stacks, slices, strut_segments, .. } => {
+            let e = resolve_one(id, edge_length, params)?;
+            let sr = resolve_one(id, sphere_radius, params)?;
+            let st = resolve_one(id, strut_radius, params)?;
+            if e <= 0.0 || sr <= 0.0 || st <= 0.0 || *stacks < 2 || *slices < 3
+                || *strut_segments < 3 || st >= sr || sr * 2.0 >= e
+            {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Caltrops requires e>2sr>2st>0, stacks>=2, slices>=3 (got e={e}, sr={sr}, st={st})"),
+                });
+            }
+            // Tetrahedron vertex positions, edge length e, centered roughly
+            // at origin: same construction as Tetrahedron's base + apex.
+            let s3 = 3.0_f64.sqrt();
+            let v0 = [0.0, e / s3, 0.0];
+            let v1 = [-e / 2.0, -e / (2.0 * s3), 0.0];
+            let v2 = [e / 2.0, -e / (2.0 * s3), 0.0];
+            let apex_z = e * (2.0_f64 / 3.0_f64).sqrt();
+            let v3 = [0.0, 0.0, apex_z];
+            let verts = [v0, v1, v2, v3];
+            let edges = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
+            // Place a sphere at each vertex.
+            let mut acc: Option<Solid> = None;
+            for v in &verts {
+                let sph_raw = sphere_faceted(sr, *stacks, *slices);
+                let sph = translate_solid(&sph_raw, Vec3::new(v[0], v[1], v[2]));
+                acc = Some(match acc.take() {
+                    None => sph,
+                    Some(prev) => prev.try_union(&sph).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "caltrops_sphere_union",
+                        message: e.message,
+                    })?,
+                });
+            }
+            // Add struts between every tetrahedron edge.
+            for &(a, b) in &edges {
+                let cyl = sweep_cylinder_segment(verts[a], verts[b], st, *strut_segments);
+                let Some(cyl) = cyl else { continue };
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "caltrops_strut_union",
+                        message: e.message,
+                    })?,
+                });
+            }
+            acc.ok_or_else(|| EvalError::Invalid {
+                id: id.into(),
+                reason: "Caltrops produced no parts".into(),
+            })
+        }
+
         Feature::Translate { input, offset, .. } => {
             let base = cache_get(cache, input)?;
             let o = resolve3(id, offset, params)?;

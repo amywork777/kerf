@@ -51,18 +51,67 @@ kernel + authoring + viewer + production output).
 | Picking / selection (face → owner Feature)| 5%        | 70%      | 3.5    |
 | Feature tree UI                           | 5%        | 60%      | 3.0    |
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
-| Drawings (3-view + dimensions)            | 4%        | 90%      | 3.6    |
+| Drawings (3-view + dimensions)            | 4%        | 100%     | 4.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
-| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
-| Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
+| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, PaperClipShape, AngleArc, DistanceRod) | 6% | 72% | 4.32 |
+| Manufacturing features (170+ — see catalog) | 12% | 96% | 11.52 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
-| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
+| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob + Caltrops compose for simple cases) | 8% | 47% | 3.76 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~66.6%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~67.4%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08, part 2)
+## Latest session (2026-05-08, part 3)
+
+Drawings to 100% + polish batch shipped. ~66.6% → ~67.4% (+0.8 SW pt).
+cargo workspace 738 → 764 tests (+26), 0 failed. Viewer-side untouched
+(no UI changes needed for back-end silhouette / snap helpers; the WASM
+bindings already expose the new entry points to the front-end).
+
+- **True silhouette extraction** (`kerf_brep::dimension::silhouette_loops`).
+  Replaces the convex-hull silhouette with a half-edge / front-facing-
+  triangle-union walker. Strategy: project every front-facing triangle
+  (normal·view_dir < 0) to 2D and find the boundary of the projected
+  union via odd-incidence parity per 2D edge. Fan-triangulation
+  diagonals shared between adjacent front triangles cancel out;
+  outline edges (front + back, or front + nothing) survive.
+  Stitched into closed loops via greedy CW-most chaining at
+  multi-incident vertices. Falls back to the convex hull on
+  degenerate inputs (zero-area projections, no front triangles).
+  L-bracket from above now renders with 6-vertex concave outline,
+  not the 4-vertex bounding rectangle.
+- **Hidden-line / dashed back-edge rendering**. The renderer
+  classifies any silhouette loop that isn't the largest-area outline
+  as "interior" (cavity walls, inner outlines of disjoint shells,
+  curved-surface front/back seams) and emits them as dashed
+  `<polyline class="kerf-hidden">` paths in the SVG output. Strokes
+  use 0.6px / 4-3 dasharray, 0.7 opacity so they read as "behind the
+  outline" without dominating the visual.
+- **Vertex-snap on curved + line edges**
+  (`kerf_brep::dimension::collect_snap_candidates` +
+  `snap_pick(solid, pick_pt, tol)`). Returns the closest snap
+  candidate within the tolerance, or `None`. Candidate kinds:
+  vertex positions (line endpoints, circle seam endpoints), circle
+  centers (axis of holes / shafts), and line midpoints. Returns the
+  matched `SnapKind` so the UI can highlight the appropriate marker
+  (sphere vs crosshair). `tol_3d <= 0` and NaN are no-ops, not
+  errors. **Drawings category: 90% → 100%.**
+- **Polish batch (6 features, 14 tests)**: `Funnel2`,
+  `CrossPipe`, `AnchorChain`, `GearBlank2`, `PaperClipShape`,
+  `Caltrops`. Each in `feature.rs` + `eval.rs` with input
+  validation, a smoke test (positive volume), a degenerate-input
+  rejection test, and an id/inputs wiring check. `Funnel2` is a
+  cone-to-cone double frustum; `CrossPipe` is a 90° T-junction
+  union of two cylinders; `AnchorChain` is a stadium ring with a
+  centered crossbar (marine-style); `GearBlank2` is a gear blank
+  with one missing tooth + index notch; `PaperClipShape` is a
+  serpentine bent-wire chain via `sweep_cylinder_segment`;
+  `Caltrops` is 4 spheres at tetrahedron vertices joined by 6
+  cylindrical struts. Five buckets gain (Manufacturing,
+  Sweep/loft, Curved-surface, plus Drawings).
+
+## Earlier session (2026-05-08, part 2)
 
 Drawings UI wiring shipped. ~66.0% → ~66.6% (+0.6 SW pt). cargo workspace
 738 tests still passing; viewer-side gains 8 vitest tests covering the

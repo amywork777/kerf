@@ -2916,7 +2916,102 @@ pub enum Feature {
         id: String,
         inputs: Vec<String>,
     },
-}
+
+
+
+    // --- Drawings v2 polish batch (2026-05-08, part 3) -------------------
+
+    /// Funnel2: a tapered double-cone funnel — a wide top frustum joined
+    /// to a narrow bottom frustum at a shared neck radius. Same z-anchored
+    /// silhouette as Funnel but with a conical (rather than cylindrical)
+    /// spout, useful for rendering hourglass-style funnels and chemistry
+    /// glassware. Top sits at z ∈ [neck_z, top_z] tapering from
+    /// `neck_radius` at the bottom to `top_radius` at the top. Bottom
+    /// sits at z ∈ [-bottom_length, 0] tapering from `neck_radius` at the
+    /// top to `bottom_radius` at the bottom.
+    Funnel2 {
+        id: String,
+        top_radius: Scalar,
+        neck_radius: Scalar,
+        bottom_radius: Scalar,
+        top_z: Scalar,
+        bottom_length: Scalar,
+        segments: usize,
+    },
+
+    /// CrossPipe: 90° T/cross-pipe junction — two perpendicular cylinders
+    /// of `radius` joined at the origin. `axis_a` and `axis_b` are the
+    /// axis names for each cylinder ("x", "y", or "z"); the two must be
+    /// different. Each arm extends `arm_length` away from the origin in
+    /// both directions along its axis. Useful for plumbing T-fittings.
+    CrossPipe {
+        id: String,
+        radius: Scalar,
+        arm_length: Scalar,
+        axis_a: String,
+        axis_b: String,
+        segments: usize,
+    },
+
+    /// AnchorChain: a thicker chain link variant — extruded oval (stadium)
+    /// outline, like ChainLink, but with a centered crossbar (a thin box)
+    /// across the inside opening. Used for marine anchor chain. The
+    /// crossbar adds to the link rather than replacing the bore: the
+    /// pocket is split into two D-shaped halves.
+    AnchorChain {
+        id: String,
+        length: Scalar,
+        width: Scalar,
+        wall_thickness: Scalar,
+        bar_thickness: Scalar,
+        depth: Scalar,
+        segments: usize,
+    },
+
+    /// GearBlank2: gear blank with a "missing tooth" notch — same as
+    /// GearBlank but with one tooth left out (a flat at the missing
+    /// position) and an indexing notch carved into the root at the
+    /// notch position. Visual-only approximation: the notch is a
+    /// rectangular cut on the root circle, NOT a true involute tooth.
+    /// Useful for index/timing gears.
+    GearBlank2 {
+        id: String,
+        outer_radius: Scalar,
+        root_radius: Scalar,
+        tooth_count: usize,
+        thickness: Scalar,
+        notch_depth: Scalar,
+        segments_per_tooth: usize,
+    },
+
+    /// PaperClipShape: bent-wire approximation of a standard paper clip
+    /// — a chain of cylinder segments laid out along a serpentine
+    /// rectangular path. Three nested rectangles connected at their
+    /// short ends, each rectangle smaller than the last. Lies in the
+    /// xy-plane at the requested `z` height; rod radius is `rod_radius`.
+    PaperClipShape {
+        id: String,
+        outer_length: Scalar,
+        outer_width: Scalar,
+        gap: Scalar,
+        rod_radius: Scalar,
+        z: Scalar,
+        segments: usize,
+    },
+
+    /// Caltrops: 4 spheres at the vertices of a regular tetrahedron,
+    /// joined by 6 cylindrical struts (one per tetrahedron edge). Visual
+    /// approximation of the four-spike caltrop weapon. `sphere_radius`
+    /// is the bead at each vertex; `strut_radius` is the connector rod.
+    Caltrops {
+        id: String,
+        edge_length: Scalar,
+        sphere_radius: Scalar,
+        strut_radius: Scalar,
+        stacks: usize,
+        slices: usize,
+        strut_segments: usize,
+    },}
 
 impl Feature {
     pub fn id(&self) -> &str {
@@ -3163,6 +3258,12 @@ impl Feature {
             | Feature::BoltCircle { id, .. }
             | Feature::HexHole { id, .. }
             | Feature::SquareHole { id, .. }
+            | Feature::Funnel2 { id, .. }
+            | Feature::CrossPipe { id, .. }
+            | Feature::AnchorChain { id, .. }
+            | Feature::GearBlank2 { id, .. }
+            | Feature::PaperClipShape { id, .. }
+            | Feature::Caltrops { id, .. }
             | Feature::Translate { id, .. }
             | Feature::Scale { id, .. }
             | Feature::ScaleXYZ { id, .. }
@@ -3407,7 +3508,13 @@ impl Feature {
             | Feature::Nut { .. }
             | Feature::Washer { .. }
             | Feature::RoundBoss { .. }
-            | Feature::RectBoss { .. } => Vec::new(),
+            | Feature::RectBoss { .. }
+            | Feature::Funnel2 { .. }
+            | Feature::CrossPipe { .. }
+            | Feature::AnchorChain { .. }
+            | Feature::GearBlank2 { .. }
+            | Feature::PaperClipShape { .. }
+            | Feature::Caltrops { .. } => Vec::new(),
             Feature::HoleArray { input, .. }
             | Feature::BoltCircle { input, .. }
             | Feature::HexHole { input, .. }
