@@ -424,7 +424,7 @@ version = "0.1.0"
 dependencies = [
  "kerf-brep",
  "kerf-cad",
- "kerf-topo",
+ "kerf-geom",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",

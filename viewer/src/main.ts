@@ -7,25 +7,10 @@ import init, {
   evaluate_with_face_ids,
   parameters_of,
   target_ids_of,
-  feature_kinds,
+  render_drawing_svg,
 } from "./wasm/kerf_cad_wasm.js";
 import { exportThreeViewPng } from "./drawings.js";
-import {
-  newHistory,
-  pushSnapshot,
-  undo as historyUndo,
-  redo as historyRedo,
-  canUndo,
-  canRedo,
-  type Snapshot,
-} from "./state.js";
-import { mountErrorOverlay, extractFeatureIdFromError } from "./overlay.js";
-import {
-  groupByCategory,
-  searchKinds,
-  defaultInstance,
-  type Category,
-} from "./catalog.js";
+import { DimensionsPanel } from "./dimensions.js";
 
 await init();
 
@@ -46,24 +31,7 @@ const actions2El = document.getElementById("actions2")!;
 const featureTreeEl = document.getElementById("feature-tree")!;
 const featureListEl = document.getElementById("feature-list")!;
 const featureCountEl = document.getElementById("feature-count")!;
-const selectedFeatureEl = document.getElementById("selected-feature")!;
-const selectedFeatureBodyEl = document.getElementById("selected-feature-body")!;
-const selectedFeatureTitleEl = document.getElementById("selected-feature-title")!;
-const undoBtn = document.getElementById("undo-btn") as HTMLButtonElement;
-const redoBtn = document.getElementById("redo-btn") as HTMLButtonElement;
-const historyActionsEl = document.getElementById("history-actions")!;
-const catalogEl = document.getElementById("catalog")!;
-const catalogToggleEl = document.getElementById("catalog-toggle")!;
-const catalogToggleLabel = document.getElementById("catalog-toggle-label")!;
-const catalogBodyEl = document.getElementById("catalog-body")!;
-const catalogSearchEl = document.getElementById("catalog-search") as HTMLInputElement;
-const catalogListEl = document.getElementById("catalog-list")!;
-selectedFeatureEl.querySelector(".sf-close")?.addEventListener("click", () => {
-  selectedFeatureId = null;
-  highlightedFace = -1;
-  refreshFaceColors();
-  renderSelectedFeaturePanel();
-});
+const dimensionsPanelEl = document.getElementById("dimensions-panel") as HTMLElement;
 
 // --- three.js scene ---
 const scene = new THREE.Scene();
@@ -105,11 +73,9 @@ const meshMaterial = new THREE.MeshStandardMaterial({
 let currentMesh: THREE.Mesh | null = null;
 let currentWireframe: THREE.LineSegments | null = null;
 let currentFaceIds: Uint32Array | null = null;
-let currentFaceOwnerTags: string[] | null = null;
 let currentFaceCount = 0;
 let highlightedFace = -1;
 let hoveredFace = -1;
-let selectedFeatureId: string | null = null;
 
 function fitToView(box: THREE.Box3) {
   const center = box.getCenter(new THREE.Vector3());
@@ -126,7 +92,6 @@ function fitToView(box: THREE.Box3) {
 function setMesh(
   triangles: Float32Array,
   faceIds: Uint32Array,
-  faceOwnerTags: string[],
   faceCount: number,
   fit: boolean,
 ) {
@@ -141,7 +106,6 @@ function setMesh(
     currentWireframe = null;
   }
   currentFaceIds = faceIds;
-  currentFaceOwnerTags = faceOwnerTags;
   currentFaceCount = faceCount;
   highlightedFace = -1;
   hoveredFace = -1;
@@ -235,22 +199,36 @@ function pickFaceAt(clientX: number, clientY: number): number {
   return tri < currentFaceIds.length ? currentFaceIds[tri]! : -1;
 }
 
+/**
+ * Cast a ray and return the WORLD-space hit point, or null if the click
+ * missed the mesh. Used by the dimensions panel for point picking.
+ */
+function pickWorldPointAt(clientX: number, clientY: number): THREE.Vector3 | null {
+  if (!currentMesh) return null;
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  const hits = raycaster.intersectObject(currentMesh, false);
+  if (hits.length === 0) return null;
+  return hits[0]!.point.clone();
+}
+
 renderer.domElement.addEventListener("click", (e) => {
+  // If the dimensions panel is in pick-mode, route the click there (and
+  // skip the normal face-selection effect so highlighting doesn't clobber
+  // the pick markers).
+  if (dimensionsPanel?.isPicking()) {
+    const p = pickWorldPointAt(e.clientX, e.clientY);
+    if (p) dimensionsPanel.onScenePick(p);
+    else ok("missed — click on the model");
+    return;
+  }
   const fid = pickFaceAt(e.clientX, e.clientY);
   highlightedFace = fid;
   refreshFaceColors();
   if (fid >= 0) {
-    const owner = currentFaceOwnerTags?.[fid] ?? "";
-    if (owner) {
-      selectedFeatureId = owner;
-      renderSelectedFeaturePanel();
-      ok(`selected face #${fid} → owner '${owner}'`);
-    } else {
-      ok(`selected face #${fid} (no owner tag)`);
-    }
-  } else {
-    selectedFeatureId = null;
-    renderSelectedFeaturePanel();
+    ok(`selected face #${fid} (of ${currentFaceCount})`);
   }
 });
 
@@ -279,74 +257,35 @@ type ModelState = {
   defaults: Record<string, number>;
 };
 let model: ModelState | null = null;
-const history = newHistory();
-const errorOverlay = mountErrorOverlay(stage);
 
 const SEGMENTS = 24;
 
-function snapshotOf(m: ModelState): Snapshot {
-  return {
-    json: m.json,
-    targetId: m.targetId,
-    parameters: { ...m.parameters },
-  };
-}
-
-/**
- * Capture the current model state on the undo stack *before* mutating
- * `model`. Caller must call this *before* changing any field. No-op if
- * we have no model loaded yet.
- */
-function recordHistory() {
-  if (!model) return;
-  pushSnapshot(history, snapshotOf(model));
-  refreshHistoryButtons();
-}
-
-function refreshHistoryButtons() {
-  undoBtn.disabled = !canUndo(history);
-  redoBtn.disabled = !canRedo(history);
-}
-
-function applySnapshot(snap: Snapshot) {
-  if (!model) return;
-  model.json = snap.json;
-  model.targetId = snap.targetId;
-  model.parameters = { ...snap.parameters };
-  // `defaults` is keyed by the originally-loaded parameters, so we
-  // intentionally don't overwrite them — they survive undo/redo.
-  const ids = parsedFeatureIds(model.json);
-  renderTargets(ids);
-  renderParams();
-  renderFeatureTree();
-  renderSelectedFeaturePanel();
-  rebuild();
-}
-
-function parsedFeatureIds(json: string): string[] {
-  try {
-    const parsed = JSON.parse(json);
-    return ((parsed?.features ?? []) as Array<{ id?: string }>)
-      .map((f) => f?.id)
-      .filter((x): x is string => typeof x === "string");
-  } catch {
-    return [];
-  }
-}
+// --- dimensions panel ---
+const dimensionsPanel = new DimensionsPanel(dimensionsPanelEl, {
+  getModel: () =>
+    model
+      ? { json: model.json, targetId: model.targetId, parameters: model.parameters }
+      : null,
+  renderSvg: (args) =>
+    render_drawing_svg(
+      args.json,
+      args.targetId,
+      args.paramsJson,
+      args.view,
+      args.dimensionsJson,
+      args.viewportJson,
+    ),
+  scene,
+  setStatus: (msg, isError) => (isError ? err(msg) : ok(msg)),
+});
 
 function ok(msg: string) {
   status.classList.remove("error");
   status.textContent = msg;
-  errorOverlay.hide();
 }
 function err(msg: string) {
   status.classList.add("error");
   status.textContent = msg;
-  // Promote evaluator errors to a visible overlay banner so the user
-  // can't miss them when they're scrubbing a slider that just blew up
-  // the boolean engine.
-  const featId = extractFeatureIdFromError(msg);
-  errorOverlay.show(msg, featId);
 }
 
 function rebuild(fit: boolean = false) {
@@ -361,7 +300,6 @@ function rebuild(fit: boolean = false) {
     ) as {
       triangles: number[];
       face_ids: number[];
-      face_owner_tags: string[];
       face_count: number;
       volume: number;
       shell_count: number;
@@ -371,9 +309,8 @@ function rebuild(fit: boolean = false) {
     };
     const tris = new Float32Array(result.triangles);
     const faceIds = new Uint32Array(result.face_ids);
-    const ownerTags = result.face_owner_tags ?? [];
     const dt = performance.now() - t0;
-    setMesh(tris, faceIds, ownerTags, result.face_count, fit);
+    setMesh(tris, faceIds, result.face_count, fit);
     ok(
       `target='${model.targetId}'  V/E/F/S=${result.vertex_count}/${result.edge_count}/${result.face_count_topo}/${result.shell_count}` +
         `  vol=${result.volume.toFixed(3)}  tris=${tris.length / 9}  eval=${dt.toFixed(1)}ms`,
@@ -404,22 +341,11 @@ function renderParams() {
     paramsEl.appendChild(row);
     const input = row.querySelector("input")!;
     const valSpan = row.querySelector(".val") as HTMLElement;
-    let pristine = true;
     input.addEventListener("input", () => {
-      // Snapshot once at the *start* of a slider drag, not on every
-      // intermediate `input` event — otherwise the undo stack fills up
-      // with one entry per pixel of mouse movement.
-      if (pristine) {
-        recordHistory();
-        pristine = false;
-      }
       const v = Number(input.value);
       model!.parameters[k] = v;
       valSpan.textContent = v.toFixed(3);
       rebuild();
-    });
-    input.addEventListener("change", () => {
-      pristine = true;
     });
   }
 }
@@ -436,7 +362,6 @@ function renderTargets(ids: string[]) {
   if (model) targetSelect.value = model.targetId;
   targetSelect.onchange = () => {
     if (!model) return;
-    recordHistory();
     model.targetId = targetSelect.value;
     refreshFeatureTreeSelection();
     rebuild();
@@ -494,13 +419,11 @@ function deleteFeature(id: string) {
   if (!model) return;
   const parsed = JSON.parse(model.json);
   const before = (parsed.features ?? []).length;
-  const next = (parsed.features ?? []).filter(
+  parsed.features = (parsed.features ?? []).filter(
     (f: { id?: string }) => f?.id !== id,
   );
-  const removed = before - next.length;
+  const removed = before - parsed.features.length;
   if (removed === 0) return;
-  recordHistory();
-  parsed.features = next;
   // If we just deleted the current target, fall back to the last remaining feature.
   const remainingIds = parsed.features
     .map((f: { id?: string }) => f.id)
@@ -523,109 +446,6 @@ function deleteFeature(id: string) {
   };
   renderTargets(remainingIds);
   renderFeatureTree();
-  rebuild();
-}
-
-function renderSelectedFeaturePanel() {
-  if (!model || !selectedFeatureId) {
-    selectedFeatureEl.hidden = true;
-    return;
-  }
-  const parsed = JSON.parse(model.json);
-  const features = (parsed.features ?? []) as Array<Record<string, unknown>>;
-  const feat = features.find((f) => f?.id === selectedFeatureId);
-  if (!feat) {
-    selectedFeatureEl.hidden = true;
-    return;
-  }
-  selectedFeatureEl.hidden = false;
-  selectedFeatureTitleEl.textContent = `${feat.kind} • ${feat.id}`;
-  selectedFeatureBodyEl.innerHTML = "";
-
-  const SKIP = new Set(["kind", "id", "input", "inputs"]);
-  for (const [k, v] of Object.entries(feat)) {
-    if (SKIP.has(k)) continue;
-    if (typeof v === "number") {
-      addNumericRow(k, v, [k]);
-    } else if (Array.isArray(v) && v.every((x) => typeof x === "number" || typeof x === "string")) {
-      for (let i = 0; i < v.length; i++) {
-        const elem = v[i];
-        if (typeof elem === "number") {
-          addNumericRow(`${k}[${i}]`, elem, [k, i]);
-        } else {
-          addExpressionRow(`${k}[${i}]`, String(elem), [k, i]);
-        }
-      }
-    } else if (typeof v === "string") {
-      addExpressionRow(k, v, [k]);
-    }
-  }
-
-  if (selectedFeatureBodyEl.children.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "sf-empty";
-    empty.textContent = "no editable fields";
-    selectedFeatureBodyEl.appendChild(empty);
-  }
-}
-
-function addNumericRow(label: string, value: number, path: (string | number)[]) {
-  const row = document.createElement("div");
-  row.className = "sf-row";
-  const span = Math.max(Math.abs(value) * 2, 10);
-  const min = value === 0 ? -span : Math.min(value - span, value * -0.2);
-  const max = value === 0 ? span : Math.max(value + span, value * 2);
-  const step = Math.max((max - min) / 200, 0.001);
-  row.innerHTML = `
-    <label><span>${label}</span><span class="sf-val">${value.toFixed(3)}</span></label>
-    <input type="range" min="${min}" max="${max}" step="${step}" value="${value}" />`;
-  selectedFeatureBodyEl.appendChild(row);
-  const input = row.querySelector("input")!;
-  const valSpan = row.querySelector(".sf-val") as HTMLElement;
-  let pristine = true;
-  input.addEventListener("input", () => {
-    if (pristine) {
-      recordHistory();
-      pristine = false;
-    }
-    const n = Number(input.value);
-    valSpan.textContent = n.toFixed(3);
-    setFeatureFieldAtPath(path, n);
-  });
-  input.addEventListener("change", () => {
-    pristine = true;
-  });
-}
-
-function addExpressionRow(label: string, value: string, path: (string | number)[]) {
-  const row = document.createElement("div");
-  row.className = "sf-row";
-  row.innerHTML = `
-    <label><span>${label}</span><span class="sf-muted">expr</span></label>
-    <input type="text" value="${value.replace(/"/g, "&quot;")}" />`;
-  selectedFeatureBodyEl.appendChild(row);
-  const input = row.querySelector("input")!;
-  input.addEventListener("change", () => {
-    recordHistory();
-    const raw = input.value;
-    const asNum = Number(raw);
-    setFeatureFieldAtPath(path, Number.isFinite(asNum) && raw.trim() !== "" && !raw.startsWith("$") && !/[a-zA-Z]/.test(raw) ? asNum : raw);
-  });
-}
-
-function setFeatureFieldAtPath(path: (string | number)[], value: number | string) {
-  if (!model || !selectedFeatureId) return;
-  const parsed = JSON.parse(model.json);
-  const features = (parsed.features ?? []) as Array<Record<string, unknown>>;
-  const feat = features.find((f) => f?.id === selectedFeatureId);
-  if (!feat) return;
-  let cursor: unknown = feat;
-  for (let i = 0; i < path.length - 1; i++) {
-    cursor = (cursor as Record<string | number, unknown>)[path[i]!];
-  }
-  const last = path[path.length - 1]!;
-  (cursor as Record<string | number, unknown>)[last] = value;
-  model.json = JSON.stringify(parsed, null, 2);
   rebuild();
 }
 
@@ -652,22 +472,13 @@ function loadJson(json: string) {
       parameters: { ...params },
       defaults: { ...params },
     };
-    selectedFeatureId = null;
-    // A fresh load clears history — undo across model loads would be
-    // confusing (the snapshot's parameter map wouldn't match the new
-    // model's defaults).
-    history.undoStack.length = 0;
-    history.redoStack.length = 0;
-    refreshHistoryButtons();
     renderTargets(ids);
     renderParams();
     renderFeatureTree();
-    renderSelectedFeaturePanel();
     actionsEl.hidden = false;
     actions2El.hidden = false;
     viewsEl.hidden = false;
-    historyActionsEl.hidden = false;
-    catalogEl.hidden = false;
+    dimensionsPanelEl.hidden = false;
     rebuild(true);
   } catch (e) {
     err(String(e));
@@ -694,7 +505,6 @@ downloadBtn.addEventListener("click", () => {
 
 resetBtn.addEventListener("click", () => {
   if (!model) return;
-  recordHistory();
   model.parameters = { ...model.defaults };
   renderParams();
   rebuild();
@@ -726,44 +536,8 @@ viewsEl.querySelectorAll<HTMLButtonElement>("button[data-view]").forEach((b) => 
   b.addEventListener("click", () => setView(b.dataset.view as any));
 });
 
-// --- undo / redo ---
-function performUndo() {
-  if (!model || !canUndo(history)) return;
-  const restored = historyUndo(history, snapshotOf(model));
-  if (!restored) return;
-  applySnapshot(restored);
-  refreshHistoryButtons();
-  ok(`undo (${history.undoStack.length} earlier · ${history.redoStack.length} ahead)`);
-}
-
-function performRedo() {
-  if (!model || !canRedo(history)) return;
-  const restored = historyRedo(history, snapshotOf(model));
-  if (!restored) return;
-  applySnapshot(restored);
-  refreshHistoryButtons();
-  ok(`redo (${history.undoStack.length} earlier · ${history.redoStack.length} ahead)`);
-}
-
-undoBtn.addEventListener("click", performUndo);
-redoBtn.addEventListener("click", performRedo);
-
 // --- keyboard shortcuts ---
 window.addEventListener("keydown", (e) => {
-  // Undo / redo: meta on macOS, ctrl elsewhere. Capture *before* the
-  // input-focused early-return so it works while a slider has focus.
-  const mod = e.metaKey || e.ctrlKey;
-  if (mod && (e.key === "z" || e.key === "Z")) {
-    e.preventDefault();
-    if (e.shiftKey) performRedo();
-    else performUndo();
-    return;
-  }
-  if (mod && (e.key === "y" || e.key === "Y")) {
-    e.preventDefault();
-    performRedo();
-    return;
-  }
   // Don't intercept while typing in a slider/input.
   const t = e.target as HTMLElement | null;
   if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) {
@@ -793,9 +567,7 @@ window.addEventListener("keydown", (e) => {
       break;
     case "Escape":
       highlightedFace = -1;
-      selectedFeatureId = null;
       refreshFaceColors();
-      renderSelectedFeaturePanel();
       break;
   }
 });
@@ -838,132 +610,5 @@ document.querySelectorAll("[data-example]").forEach((a) => {
     }
   });
 });
-
-// --- feature catalog browser ---
-const ALL_FEATURE_KINDS: string[] = (() => {
-  try {
-    return feature_kinds() as string[];
-  } catch {
-    return [];
-  }
-})();
-
-let catalogOpen = false;
-
-function refreshCatalog() {
-  const query = catalogSearchEl.value;
-  const filtered = searchKinds(ALL_FEATURE_KINDS, query);
-  const grouped = groupByCategory(filtered);
-  catalogListEl.innerHTML = "";
-  if (filtered.length === 0) {
-    const empty = document.createElement("div");
-    empty.id = "catalog-empty";
-    empty.textContent = `no kinds match “${query}”`;
-    catalogListEl.appendChild(empty);
-    return;
-  }
-  // Stable category order — primitives first because that's most of
-  // what people want; transforms/booleans last because they need
-  // wired-up inputs.
-  const ORDER: Category[] = [
-    "Primitives",
-    "Manufacturing",
-    "Sweep & Loft",
-    "Structural",
-    "Fasteners",
-    "Joinery",
-    "Reference",
-    "Transforms",
-    "Patterns & Booleans",
-    "Other",
-  ];
-  for (const cat of ORDER) {
-    const list = grouped.get(cat);
-    if (!list || list.length === 0) continue;
-    const section = document.createElement("div");
-    section.className = "cat-section";
-    const h = document.createElement("h3");
-    h.textContent = `${cat} (${list.length})`;
-    section.appendChild(h);
-    const ul = document.createElement("ul");
-    for (const kind of list) {
-      const li = document.createElement("li");
-      li.textContent = kind;
-      li.title = `insert a default-parameter ${kind} into the model`;
-      li.addEventListener("click", () => insertFeatureKind(kind));
-      ul.appendChild(li);
-    }
-    section.appendChild(ul);
-    catalogListEl.appendChild(section);
-  }
-}
-
-/**
- * Splice a default-parameter instance of `kind` into the current model
- * and re-evaluate. The new feature gets a unique id derived from the
- * kind name (`cylinder_3` if `cylinder_2` already exists, etc.) so it
- * doesn't collide with existing features.
- */
-function insertFeatureKind(kind: string) {
-  if (!model) {
-    err("load a model first, then add features from the catalog");
-    return;
-  }
-  recordHistory();
-  const parsed = JSON.parse(model.json);
-  const existing: Array<Record<string, unknown>> = parsed.features ?? [];
-  const existingIds = new Set(
-    existing
-      .map((f) => f.id)
-      .filter((x): x is string => typeof x === "string"),
-  );
-  const baseId = kind.toLowerCase();
-  let id = baseId;
-  let n = 1;
-  while (existingIds.has(id)) {
-    n += 1;
-    id = `${baseId}_${n}`;
-  }
-  const inst = defaultInstance(kind, id);
-  // Wire the new feature to the previous target where possible — it
-  // gives the user a working chain on insert for transforms/booleans
-  // instead of an immediate "_ not found" error. Skip for primitives
-  // (which don't have an `input` field).
-  if (model.targetId && existing.length > 0) {
-    if (inst.input === "_") inst.input = model.targetId;
-    if (Array.isArray(inst.inputs) && inst.inputs.every((x) => x === "_a" || x === "_b")) {
-      inst.inputs = [model.targetId, model.targetId];
-    }
-  }
-  existing.push(inst);
-  parsed.features = existing;
-  model.json = JSON.stringify(parsed, null, 2);
-  // Make the new feature the target so the user immediately sees what
-  // they inserted.
-  model.targetId = id;
-  const ids = parsedFeatureIds(model.json);
-  renderTargets(ids);
-  renderFeatureTree();
-  rebuild();
-  ok(`inserted ${kind} as '${id}' — ${existing.length} features total`);
-}
-
-catalogToggleEl.addEventListener("click", () => {
-  catalogOpen = !catalogOpen;
-  catalogBodyEl.hidden = !catalogOpen;
-  catalogToggleLabel.textContent = catalogOpen
-    ? `▼ Browse Features (${ALL_FEATURE_KINDS.length})`
-    : `▶ Browse Features (${ALL_FEATURE_KINDS.length})`;
-  if (catalogOpen) {
-    refreshCatalog();
-    catalogSearchEl.focus();
-  }
-});
-
-catalogSearchEl.addEventListener("input", refreshCatalog);
-
-// Initialise the toggle label with the count, so it reads
-// "▶ Browse Features (231)" before the user opens it.
-catalogToggleLabel.textContent = `▶ Browse Features (${ALL_FEATURE_KINDS.length})`;
 
 ok("waiting for a model — drop a JSON or click an example");

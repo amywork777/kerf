@@ -69,123 +69,40 @@
     border-radius: 3px; cursor: pointer; }
   #feature-list li:hover .del { visibility: visible; }
   #feature-list .del:hover { color: #ff7b72; background: rgba(255,123,114,0.1); }
-  #selected-feature { margin-top: 14px; padding: 10px; border: 1px solid var(--accent);
-    border-radius: 4px; background: rgba(88,166,255,0.04); }
-  #selected-feature .sf-head { display: flex; justify-content: space-between;
-    align-items: center; margin-bottom: 8px; }
-  #selected-feature-title { font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 12px; color: var(--accent); }
-  #selected-feature .sf-close { color: var(--muted); cursor: pointer; padding: 0 6px;
-    border-radius: 3px; font-size: 11px; }
-  #selected-feature .sf-close:hover { color: var(--fg); background: var(--bg); }
-  #selected-feature .sf-row { margin-bottom: 8px; }
-  #selected-feature .sf-row label { display: flex; justify-content: space-between;
-    color: var(--muted); margin-bottom: 2px; font-size: 11px;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-  #selected-feature .sf-row label .sf-val { color: var(--fg); }
-  #selected-feature .sf-row label .sf-muted { color: var(--muted); font-style: italic; }
-  #selected-feature .sf-row input[type=range] { width: 100%; }
-  #selected-feature .sf-row input[type=text] { width: 100%; padding: 4px 6px;
-    background: var(--bg); color: var(--fg); border: 1px solid var(--line);
-    border-radius: 3px; font: 11px ui-monospace, "SF Mono", Menlo, monospace; }
-  #selected-feature .sf-empty { color: var(--muted); font-style: italic; font-size: 11px; }
-  #selected-feature .sf-edge-header { color: var(--muted); margin: 8px 0 6px;
-    font-size: 11px; padding-top: 8px; border-top: 1px dashed var(--line);
-    font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-  #selected-feature .sf-edge-btn { display: block; width: 100%; text-align: left;
-    margin-bottom: 4px; padding: 5px 8px; font: 11px ui-monospace, "SF Mono",
-    Menlo, monospace; background: var(--bg); color: var(--fg);
-    border: 1px solid var(--line); border-radius: 3px; cursor: pointer;
-    transition: border-color .15s, color .15s; }
-  #selected-feature .sf-edge-btn:hover:not(:disabled) { border-color: var(--accent);
-    color: var(--accent); }
-  #selected-feature .sf-edge-btn:disabled { color: var(--muted); cursor: not-allowed; opacity: 0.6; }
   button { background: var(--bg); color: var(--fg); border: 1px solid var(--line);
     border-radius: 4px; padding: 6px 10px; font: inherit; cursor: pointer; flex: 1;
     transition: border-color .15s, color .15s; }
   button:hover { border-color: var(--accent); color: var(--accent); }
-  button:disabled { color: var(--muted); border-color: var(--line); cursor: default; }
-  button:disabled:hover { color: var(--muted); border-color: var(--line); }
   canvas { display: block; }
   #stage { position: relative; }
   .examples { margin-top: 12px; font-size: 12px; color: var(--muted); }
   .examples a { color: var(--accent); text-decoration: none; cursor: pointer; }
   .examples a:hover { text-decoration: underline; }
-
-  /* Error overlay banner — pinned to the top of the 3D stage. */
-  .error-overlay {
-    position: absolute; top: 0; left: 0; right: 0; z-index: 10;
-    display: flex; align-items: flex-start; gap: 12px;
-    padding: 12px 16px;
-    background: rgba(220, 50, 60, 0.92);
-    color: #fff;
-    border-bottom: 1px solid rgba(255,255,255,0.2);
-    box-shadow: 0 6px 24px rgba(0,0,0,0.4);
-    cursor: pointer;
-    font: 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    backdrop-filter: blur(2px);
-  }
-  .error-overlay[hidden] { display: none; }
-  .error-overlay .eo-icon {
-    flex: 0 0 22px; width: 22px; height: 22px;
-    border-radius: 50%; background: rgba(255,255,255,0.2);
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 700;
-  }
-  .error-overlay .eo-body { flex: 1; min-width: 0; }
-  .error-overlay .eo-title {
-    font-weight: 600; font-size: 13px; margin-bottom: 3px;
-    text-transform: uppercase; letter-spacing: 0.04em;
-  }
-  .error-overlay .eo-msg {
-    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px;
-    word-break: break-word;
-  }
-  .error-overlay .eo-feature {
-    margin-top: 4px; font-size: 11px; opacity: 0.92;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  }
-  .error-overlay .eo-dismiss {
-    flex: 0 0 auto; padding: 2px 8px;
-    border: 1px solid rgba(255,255,255,0.4); border-radius: 3px;
-    font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
-    align-self: flex-start;
-  }
-  .error-overlay:hover .eo-dismiss { background: rgba(255,255,255,0.15); }
-
-  /* Feature catalog browser. */
-  #catalog { margin-top: 14px; }
-  #catalog label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 12px; }
-  #catalog .cat-toggle { background: var(--bg); color: var(--fg); border: 1px solid var(--line);
-    border-radius: 4px; padding: 6px 10px; font: inherit; cursor: pointer; width: 100%;
-    text-align: left; }
-  #catalog .cat-toggle:hover { border-color: var(--accent); color: var(--accent); }
-  #catalog-body { margin-top: 8px; }
-  #catalog-body[hidden] { display: none; }
-  #catalog-search { width: 100%; padding: 6px 8px; background: var(--bg);
-    color: var(--fg); border: 1px solid var(--line); border-radius: 4px;
-    font: 12px ui-monospace, "SF Mono", Menlo, monospace; margin-bottom: 8px; }
-  #catalog-list { max-height: 240px; overflow-y: auto;
-    border: 1px solid var(--line); border-radius: 4px; padding: 6px 4px;
-    background: var(--bg); }
-  #catalog-list .cat-section { margin: 4px 0 8px; }
-  #catalog-list .cat-section h3 {
-    margin: 0 0 4px; font-size: 11px; color: var(--muted);
-    text-transform: uppercase; letter-spacing: 0.05em;
-    padding-left: 4px;
-  }
-  #catalog-list .cat-section ul { list-style: none; margin: 0; padding: 0; }
-  #catalog-list .cat-section li {
-    padding: 3px 6px; cursor: pointer; border-radius: 3px;
-    font: 11px ui-monospace, "SF Mono", Menlo, monospace;
-    color: var(--fg);
-  }
-  #catalog-list .cat-section li:hover { background: rgba(88,166,255,0.12); color: var(--accent); }
-  #catalog-empty { color: var(--muted); font-style: italic; padding: 6px;
-    font-size: 11px; }
-
-  /* Undo/redo strip — sits next to the existing actions. */
-  #history-actions { margin-top: 8px; display: flex; gap: 8px; }
+  #dimensions-panel { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+  #dimensions-panel label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 12px; }
+  #dimensions-panel select { width: 100%; padding: 6px 8px; background: var(--bg);
+    color: var(--fg); border: 1px solid var(--line); border-radius: 4px; }
+  #dimensions-panel .dim-row { display: flex; gap: 6px; margin-bottom: 8px; }
+  #dimensions-panel .dim-row > * { flex: 1; }
+  #dimensions-panel .dim-actions { display: flex; gap: 6px; margin-top: 6px; }
+  #dim-pick-btn.active { border-color: #ffb84d; color: #ffb84d; }
+  #dim-hint { color: var(--muted); font-size: 11px; margin: 6px 0 8px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  #dim-list { margin: 6px 0 0; padding: 0; list-style: none;
+    max-height: 160px; overflow-y: auto;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10.5px; }
+  #dim-list li { display: flex; align-items: center; gap: 6px;
+    padding: 3px 4px; border-radius: 3px; line-height: 1.4; }
+  #dim-list li:hover { background: var(--bg); }
+  #dim-list .dim-label { flex: 1; color: var(--fg); }
+  #dim-list .dim-del { color: var(--muted); padding: 0 4px; cursor: pointer;
+    border-radius: 3px; visibility: hidden; }
+  #dim-list li:hover .dim-del { visibility: visible; }
+  #dim-list .dim-del:hover { color: #ff7b72; background: rgba(255,123,114,0.1); }
+  #dim-list:empty::before { content: "No dimensions yet."; color: var(--muted);
+    font-style: italic; font-size: 11px; }
+  #dim-download-btn:disabled { opacity: 0.45; cursor: default; }
+  #dim-download-btn:disabled:hover { border-color: var(--line); color: var(--fg); }
 </style>
 </head>
 <body>
@@ -219,20 +136,32 @@
       <button id="download-btn">Download JSON</button>
       <button id="reset-btn">Reset params</button>
     </div>
-    <div id="history-actions" hidden>
-      <button id="undo-btn" disabled title="undo (Ctrl+Z)">↶ Undo</button>
-      <button id="redo-btn" disabled title="redo (Ctrl+Y / Ctrl+Shift+Z)">↷ Redo</button>
-    </div>
     <div id="actions2" hidden>
       <button id="drawing-btn">Export 3-view PNG</button>
     </div>
-    <div id="catalog" hidden>
-      <button class="cat-toggle" id="catalog-toggle" type="button">
-        <span id="catalog-toggle-label">▶ Browse Features</span>
-      </button>
-      <div id="catalog-body" hidden>
-        <input id="catalog-search" type="search" placeholder="search 230+ kinds…" />
-        <div id="catalog-list"></div>
+    <div id="dimensions-panel" hidden>
+      <label>Dimensions</label>
+      <div class="dim-row">
+        <select id="dim-kind" title="Dimension type">
+          <option value="linear">Linear</option>
+          <option value="radial">Radial</option>
+          <option value="angular">Angular</option>
+        </select>
+        <select id="dim-view" title="Projection view">
+          <option value="top">Top</option>
+          <option value="front">Front</option>
+          <option value="side">Side</option>
+          <option value="iso">Iso</option>
+        </select>
+      </div>
+      <div class="dim-actions">
+        <button id="dim-pick-btn">Pick points</button>
+        <button id="dim-clear-btn">Clear</button>
+      </div>
+      <div id="dim-hint">Pick 2 linear points.</div>
+      <ol id="dim-list"></ol>
+      <div class="dim-actions">
+        <button id="dim-download-btn" disabled>Download SVG</button>
       </div>
     </div>
     <div id="views" hidden>
@@ -249,16 +178,8 @@
       </label>
       <div class="hotkeys">
         <code>1</code>iso <code>2</code>front <code>3</code>top <code>4</code>side<br>
-        <code>W</code>wireframe <code>R</code>reset <code>D</code>drawing <code>S</code>save<br>
-        <code>⌘Z</code>undo <code>⌘⇧Z</code>/<code>⌘Y</code>redo
+        <code>W</code>wireframe <code>R</code>reset <code>D</code>drawing <code>S</code>save
       </div>
-    </div>
-    <div id="selected-feature" hidden>
-      <div class="sf-head">
-        <span id="selected-feature-title"></span>
-        <span class="sf-close" title="clear (Esc)">✕</span>
-      </div>
-      <div id="selected-feature-body"></div>
     </div>
     <div id="status">no model loaded</div>
   </aside>
