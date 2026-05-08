@@ -97,10 +97,10 @@ fn stake_completes() {
         body_radius: lit(0.3), body_length: lit(3.0),
         tip_length: lit(0.6), segments: 12,
     });
-    match m.evaluate("s") {
-        Ok(s) => assert!(solid_volume(&s) > 0.0),
-        Err(_) => {} // cone-mirror + cylinder union may trip kernel.
-    }
+    // Stitch GAP E (synthesize closing planar caps from cycles of orphan
+    // edges) repairs the cone-tip-meets-cylinder overlap.
+    let s = m.evaluate("s").unwrap();
+    assert!(solid_volume(&s) > 0.0);
 }
 
 #[test]
@@ -112,10 +112,11 @@ fn bipyramid_completes() {
         top_height: lit(1.5),
         bottom_height: lit(1.0),
     });
-    match m.evaluate("bp") {
-        Ok(s) => assert!(solid_volume(&s) > 0.0),
-        Err(_) => {} // pyramid-pyramid union with overlap can trip stitch.
-    }
+    // Stitch GAP E (synthesize closing planar caps from cycles of orphan
+    // edges) repairs the equator overlap left after the pyramid-pyramid
+    // union drops the interior caps.
+    let s = m.evaluate("bp").unwrap();
+    assert!(solid_volume(&s) > 0.0);
 }
 
 #[test]
