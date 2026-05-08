@@ -129,6 +129,16 @@ pub fn evaluate_with_face_ids(
         })
         .collect();
     let vol = solid_volume(&solid);
+
+    // Topology: extract dense indices for vertices, edges, faces, plus
+    // adjacency tables. Indices into these arrays match the same iteration
+    // order as `solid.topo.vertex_ids() / edge_ids() / face_ids()`. With
+    // `face_ids` (per triangle) the viewer can pick a face → look up its
+    // owner_tag, its incident edges, and its incident vertices. With
+    // `edge_endpoints` and `vertex_to_edges` it can pick an edge or vertex
+    // by raycasting against the augmented mesh and following the
+    // adjacency tables.
+    let topo = extract_topology(&solid);
     #[derive(serde::Serialize)]
     struct OutFull {
         triangles: Vec<f32>,
@@ -140,6 +150,21 @@ pub fn evaluate_with_face_ids(
         vertex_count: usize,
         edge_count: usize,
         face_count_topo: usize,
+        // Vertex positions, 3 floats per vertex (x, y, z), in
+        // `solid.topo.vertex_ids()` iteration order.
+        vertex_positions: Vec<f32>,
+        // Edge endpoints: 2 vertex indices per edge.
+        edge_endpoints: Vec<u32>,
+        // Adjacency: vertex → edges, vertex → faces, edge → faces.
+        // Each is a flat (offsets, indices) compressed-sparse-row pair so
+        // JS can iterate `indices[offsets[i]..offsets[i+1]]` to find
+        // neighbors of element i.
+        vertex_to_edges_offsets: Vec<u32>,
+        vertex_to_edges_indices: Vec<u32>,
+        vertex_to_faces_offsets: Vec<u32>,
+        vertex_to_faces_indices: Vec<u32>,
+        edge_to_faces_offsets: Vec<u32>,
+        edge_to_faces_indices: Vec<u32>,
     }
     serde_wasm_bindgen::to_value(&OutFull {
         triangles: tris,
@@ -151,8 +176,174 @@ pub fn evaluate_with_face_ids(
         vertex_count: solid.vertex_count(),
         edge_count: solid.edge_count(),
         face_count_topo: solid.face_count(),
+        vertex_positions: topo.vertex_positions,
+        edge_endpoints: topo.edge_endpoints,
+        vertex_to_edges_offsets: topo.vertex_to_edges.0,
+        vertex_to_edges_indices: topo.vertex_to_edges.1,
+        vertex_to_faces_offsets: topo.vertex_to_faces.0,
+        vertex_to_faces_indices: topo.vertex_to_faces.1,
+        edge_to_faces_offsets: topo.edge_to_faces.0,
+        edge_to_faces_indices: topo.edge_to_faces.1,
     })
     .map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Compressed-sparse-row table — a flat pair of (offsets, indices) arrays.
+struct Csr(Vec<u32>, Vec<u32>);
+
+struct TopologyTables {
+    vertex_positions: Vec<f32>,
+    edge_endpoints: Vec<u32>,
+    vertex_to_edges: Csr,
+    vertex_to_faces: Csr,
+    edge_to_faces: Csr,
+}
+
+fn extract_topology(solid: &Solid) -> TopologyTables {
+    use std::collections::HashMap;
+    use kerf_topo::{EdgeId, FaceId, VertexId};
+
+    // Dense index per id, in iteration order.
+    let v_index: HashMap<VertexId, u32> = solid
+        .topo
+        .vertex_ids()
+        .enumerate()
+        .map(|(i, vid)| (vid, i as u32))
+        .collect();
+    let e_index: HashMap<EdgeId, u32> = solid
+        .topo
+        .edge_ids()
+        .enumerate()
+        .map(|(i, eid)| (eid, i as u32))
+        .collect();
+    let f_index: HashMap<FaceId, u32> = solid
+        .topo
+        .face_ids()
+        .enumerate()
+        .map(|(i, fid)| (fid, i as u32))
+        .collect();
+
+    // Vertex positions, dense.
+    let mut vertex_positions = Vec::with_capacity(solid.topo.vertex_count() * 3);
+    for vid in solid.topo.vertex_ids() {
+        if let Some(p) = solid.vertex_geom.get(vid) {
+            vertex_positions.push(p.x as f32);
+            vertex_positions.push(p.y as f32);
+            vertex_positions.push(p.z as f32);
+        } else {
+            vertex_positions.extend_from_slice(&[0.0, 0.0, 0.0]);
+        }
+    }
+
+    // Edge endpoints: each edge's two vertices, expressed as dense indices.
+    let mut edge_endpoints = Vec::with_capacity(solid.topo.edge_count() * 2);
+    // Adjacency builders.
+    let mut v2e: Vec<Vec<u32>> = vec![Vec::new(); solid.topo.vertex_count()];
+    let mut e2f: Vec<Vec<u32>> = vec![Vec::new(); solid.topo.edge_count()];
+
+    for eid in solid.topo.edge_ids() {
+        let edge = match solid.topo.edge(eid) {
+            Some(e) => e,
+            None => {
+                edge_endpoints.push(u32::MAX);
+                edge_endpoints.push(u32::MAX);
+                continue;
+            }
+        };
+        let [he0, he1] = edge.half_edges();
+        let v0 = solid
+            .topo
+            .half_edge(he0)
+            .map(|h| h.origin())
+            .and_then(|v| v_index.get(&v).copied())
+            .unwrap_or(u32::MAX);
+        let v1 = solid
+            .topo
+            .half_edge(he1)
+            .map(|h| h.origin())
+            .and_then(|v| v_index.get(&v).copied())
+            .unwrap_or(u32::MAX);
+        edge_endpoints.push(v0);
+        edge_endpoints.push(v1);
+
+        let edge_idx = e_index[&eid];
+        if v0 != u32::MAX {
+            v2e[v0 as usize].push(edge_idx);
+        }
+        if v1 != u32::MAX && v1 != v0 {
+            v2e[v1 as usize].push(edge_idx);
+        }
+
+        // Faces incident to this edge: one per half-edge's loop's face.
+        let mut faces_seen: Vec<u32> = Vec::new();
+        for he in &[he0, he1] {
+            if let Some(h) = solid.topo.half_edge(*he) {
+                if let Some(lp) = solid.topo.loop_(h.loop_()) {
+                    if let Some(&fidx) = f_index.get(&lp.face()) {
+                        if !faces_seen.contains(&fidx) {
+                            faces_seen.push(fidx);
+                        }
+                    }
+                }
+            }
+        }
+        e2f[edge_idx as usize] = faces_seen;
+    }
+
+    // vertex_to_faces: walk each face's loops and record incident
+    // vertices.
+    let mut v2f: Vec<Vec<u32>> = vec![Vec::new(); solid.topo.vertex_count()];
+    for fid in solid.topo.face_ids() {
+        let f = match solid.topo.face(fid) {
+            Some(f) => f,
+            None => continue,
+        };
+        let face_idx = f_index[&fid];
+        let mut visit_loop = |start_he| {
+            for he_id in solid.topo.iter_loop_half_edges(start_he) {
+                if let Some(h) = solid.topo.half_edge(he_id) {
+                    if let Some(&v_idx) = v_index.get(&h.origin()) {
+                        let bucket = &mut v2f[v_idx as usize];
+                        if !bucket.contains(&face_idx) {
+                            bucket.push(face_idx);
+                        }
+                    }
+                }
+            }
+        };
+        if let Some(lp) = solid.topo.loop_(f.outer_loop()) {
+            if let Some(start) = lp.half_edge() {
+                visit_loop(start);
+            }
+        }
+        for &lid in f.inner_loops() {
+            if let Some(lp) = solid.topo.loop_(lid) {
+                if let Some(start) = lp.half_edge() {
+                    visit_loop(start);
+                }
+            }
+        }
+    }
+
+    // Convert adjacency vectors to CSR (offsets, indices) form.
+    fn to_csr(adj: &[Vec<u32>]) -> Csr {
+        let mut offsets = Vec::with_capacity(adj.len() + 1);
+        let mut indices = Vec::new();
+        offsets.push(0u32);
+        for nbrs in adj {
+            indices.extend_from_slice(nbrs);
+            offsets.push(indices.len() as u32);
+        }
+        Csr(offsets, indices)
+    }
+
+    TopologyTables {
+        vertex_positions,
+        edge_endpoints,
+        vertex_to_edges: to_csr(&v2e),
+        vertex_to_faces: to_csr(&v2f),
+        edge_to_faces: to_csr(&e2f),
+    }
 }
 
 fn solid_to_triangles(solid: &Solid, segments: usize) -> Vec<f32> {

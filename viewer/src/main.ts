@@ -7,10 +7,8 @@ import init, {
   evaluate_with_face_ids,
   parameters_of,
   target_ids_of,
-  render_drawing_svg,
 } from "./wasm/kerf_cad_wasm.js";
 import { exportThreeViewPng } from "./drawings.js";
-import { DimensionsPanel } from "./dimensions.js";
 
 await init();
 
@@ -31,7 +29,6 @@ const actions2El = document.getElementById("actions2")!;
 const featureTreeEl = document.getElementById("feature-tree")!;
 const featureListEl = document.getElementById("feature-list")!;
 const featureCountEl = document.getElementById("feature-count")!;
-const dimensionsPanelEl = document.getElementById("dimensions-panel") as HTMLElement;
 
 // --- three.js scene ---
 const scene = new THREE.Scene();
@@ -77,6 +74,26 @@ let currentFaceCount = 0;
 let highlightedFace = -1;
 let hoveredFace = -1;
 
+// Topology data for vertex / edge picking. Set on every rebuild from
+// the WASM `evaluate_with_face_ids` response.
+let currentVertexPositions: Float32Array | null = null;
+let currentEdgeEndpoints: Uint32Array | null = null;
+let currentVertexToFaces: { offsets: Uint32Array; indices: Uint32Array } | null = null;
+let currentEdgeToFaces: { offsets: Uint32Array; indices: Uint32Array } | null = null;
+let highlightedVertex = -1;
+let highlightedEdge = -1;
+
+// Picking mode: which kind of topology element does a click select?
+type PickMode = "face" | "edge" | "vertex";
+let pickMode: PickMode = "face";
+
+// Display helpers for vertex/edge picking — small markers/highlighters
+// that mount under the mesh while a non-face mode is active.
+let vertexHelper: THREE.Points | null = null;
+let edgeHelper: THREE.LineSegments | null = null;
+let vertexHighlightDot: THREE.Mesh | null = null;
+let edgeHighlightLine: THREE.LineSegments | null = null;
+
 function fitToView(box: THREE.Box3) {
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3()).length() || 50;
@@ -87,6 +104,169 @@ function fitToView(box: THREE.Box3) {
   camera.far = size * 200;
   camera.updateProjectionMatrix();
   controls.update();
+}
+
+/// Pick the nearest vertex (in world-space distance from the cursor
+/// ray) to a click. Returns -1 if no vertex is within a small NDC
+/// pixel radius.
+function pickVertexAt(clientX: number, clientY: number): number {
+  if (!currentVertexPositions) return -1;
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  const PICK_RADIUS_NDC = 0.05;
+  let best = -1;
+  let bestDist = PICK_RADIUS_NDC;
+  const tmp = new THREE.Vector3();
+  const n = currentVertexPositions.length / 3;
+  for (let i = 0; i < n; i++) {
+    tmp.set(
+      currentVertexPositions[i * 3]!,
+      currentVertexPositions[i * 3 + 1]!,
+      currentVertexPositions[i * 3 + 2]!,
+    );
+    tmp.project(camera);
+    const dx = tmp.x - ndc.x;
+    const dy = tmp.y - ndc.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d < bestDist) {
+      bestDist = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/// Pick the nearest edge by raycasting against an invisible LineSegments.
+function pickEdgeAt(clientX: number, clientY: number): number {
+  if (!currentEdgeEndpoints || !currentVertexPositions) return -1;
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  // Project edges, find shortest perpendicular distance from cursor to
+  // each edge segment in NDC space. Pick the closest within
+  // PICK_RADIUS_NDC.
+  const PICK_RADIUS_NDC = 0.03;
+  let best = -1;
+  let bestDist = PICK_RADIUS_NDC;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const n = currentEdgeEndpoints.length / 2;
+  for (let i = 0; i < n; i++) {
+    const va = currentEdgeEndpoints[i * 2]!;
+    const vb = currentEdgeEndpoints[i * 2 + 1]!;
+    if (va === 0xffffffff || vb === 0xffffffff) continue;
+    a.set(
+      currentVertexPositions[va * 3]!,
+      currentVertexPositions[va * 3 + 1]!,
+      currentVertexPositions[va * 3 + 2]!,
+    );
+    b.set(
+      currentVertexPositions[vb * 3]!,
+      currentVertexPositions[vb * 3 + 1]!,
+      currentVertexPositions[vb * 3 + 2]!,
+    );
+    a.project(camera);
+    b.project(camera);
+    // Distance from ndc to segment ab in 2D.
+    const abx = b.x - a.x;
+    const aby = b.y - a.y;
+    const ablenSq = abx * abx + aby * aby;
+    let t = 0;
+    if (ablenSq > 0) {
+      t = ((ndc.x - a.x) * abx + (ndc.y - a.y) * aby) / ablenSq;
+      t = Math.max(0, Math.min(1, t));
+    }
+    const px = a.x + t * abx;
+    const py = a.y + t * aby;
+    const d = Math.sqrt((ndc.x - px) ** 2 + (ndc.y - py) ** 2);
+    if (d < bestDist) {
+      bestDist = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/// Neighbors stored in CSR form: indices[offsets[i]..offsets[i+1]].
+function neighborsOf(
+  csr: { offsets: Uint32Array; indices: Uint32Array },
+  i: number,
+): number[] {
+  if (i < 0 || i + 1 >= csr.offsets.length) return [];
+  const lo = csr.offsets[i]!;
+  const hi = csr.offsets[i + 1]!;
+  return Array.from(csr.indices.slice(lo, hi));
+}
+
+/// Edges incident to a vertex, derived from edge_endpoints (no
+/// dedicated CSR — small enough to scan).
+function verticesIncidentEdges(vid: number): number[] {
+  if (!currentEdgeEndpoints) return [];
+  const out: number[] = [];
+  const n = currentEdgeEndpoints.length / 2;
+  for (let i = 0; i < n; i++) {
+    if (
+      currentEdgeEndpoints[i * 2] === vid ||
+      currentEdgeEndpoints[i * 2 + 1] === vid
+    ) {
+      out.push(i);
+    }
+  }
+  return out;
+}
+
+/// Update or create the small dot shown at the picked vertex.
+function refreshVertexHighlight() {
+  if (vertexHighlightDot) {
+    scene.remove(vertexHighlightDot);
+    vertexHighlightDot.geometry.dispose();
+    vertexHighlightDot = null;
+  }
+  if (highlightedVertex < 0 || !currentVertexPositions) return;
+  const vid = highlightedVertex;
+  const x = currentVertexPositions[vid * 3]!;
+  const y = currentVertexPositions[vid * 3 + 1]!;
+  const z = currentVertexPositions[vid * 3 + 2]!;
+  const sz = currentMesh?.geometry.boundingBox
+    ? currentMesh.geometry.boundingBox.getSize(new THREE.Vector3()).length()
+    : 50;
+  const sphereGeo = new THREE.SphereGeometry(sz * 0.01, 12, 8);
+  const sphereMat = new THREE.MeshBasicMaterial({ color: 0xffb84d });
+  vertexHighlightDot = new THREE.Mesh(sphereGeo, sphereMat);
+  vertexHighlightDot.position.set(x, y, z);
+  scene.add(vertexHighlightDot);
+}
+
+/// Update or create the highlighted-edge LineSegments.
+function refreshEdgeHighlight() {
+  if (edgeHighlightLine) {
+    scene.remove(edgeHighlightLine);
+    edgeHighlightLine.geometry.dispose();
+    edgeHighlightLine = null;
+  }
+  if (highlightedEdge < 0 || !currentEdgeEndpoints || !currentVertexPositions) return;
+  const eid = highlightedEdge;
+  const va = currentEdgeEndpoints[eid * 2]!;
+  const vb = currentEdgeEndpoints[eid * 2 + 1]!;
+  if (va === 0xffffffff || vb === 0xffffffff) return;
+  const positions = new Float32Array([
+    currentVertexPositions[va * 3]!,
+    currentVertexPositions[va * 3 + 1]!,
+    currentVertexPositions[va * 3 + 2]!,
+    currentVertexPositions[vb * 3]!,
+    currentVertexPositions[vb * 3 + 1]!,
+    currentVertexPositions[vb * 3 + 2]!,
+  ]);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.LineBasicMaterial({
+    color: 0xffb84d,
+    linewidth: 4,
+    depthTest: false,
+  });
+  edgeHighlightLine = new THREE.LineSegments(geo, mat);
+  scene.add(edgeHighlightLine);
 }
 
 function setMesh(
@@ -109,6 +289,10 @@ function setMesh(
   currentFaceCount = faceCount;
   highlightedFace = -1;
   hoveredFace = -1;
+  highlightedVertex = -1;
+  highlightedEdge = -1;
+  refreshVertexHighlight();
+  refreshEdgeHighlight();
 
   if (triangles.length === 0) return;
 
@@ -174,6 +358,37 @@ function refreshWireframe() {
 
 wireframeToggle.addEventListener("change", refreshWireframe);
 
+const pickModeButtons = document.querySelectorAll(
+  "#pick-mode button",
+) as NodeListOf<HTMLButtonElement>;
+pickModeButtons.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    pickMode = btn.dataset.pick as PickMode;
+    pickModeButtons.forEach((b) => b.classList.toggle("active", b === btn));
+    // Clear selection when switching modes.
+    highlightedFace = -1;
+    highlightedVertex = -1;
+    highlightedEdge = -1;
+    refreshFaceColors();
+    refreshVertexHighlight();
+    refreshEdgeHighlight();
+  });
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+  if (e.key === "f" || e.key === "F") {
+    pickMode = "face";
+    pickModeButtons.forEach((b) => b.classList.toggle("active", b.dataset.pick === "face"));
+  } else if (e.key === "e" || e.key === "E") {
+    pickMode = "edge";
+    pickModeButtons.forEach((b) => b.classList.toggle("active", b.dataset.pick === "edge"));
+  } else if (e.key === "v" || e.key === "V") {
+    pickMode = "vertex";
+    pickModeButtons.forEach((b) => b.classList.toggle("active", b.dataset.pick === "vertex"));
+  }
+});
+
 function resize() {
   const r = stage.getBoundingClientRect();
   renderer.setSize(r.width, r.height, false);
@@ -199,36 +414,43 @@ function pickFaceAt(clientX: number, clientY: number): number {
   return tri < currentFaceIds.length ? currentFaceIds[tri]! : -1;
 }
 
-/**
- * Cast a ray and return the WORLD-space hit point, or null if the click
- * missed the mesh. Used by the dimensions panel for point picking.
- */
-function pickWorldPointAt(clientX: number, clientY: number): THREE.Vector3 | null {
-  if (!currentMesh) return null;
-  const rect = renderer.domElement.getBoundingClientRect();
-  ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-  ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-  raycaster.setFromCamera(ndc, camera);
-  const hits = raycaster.intersectObject(currentMesh, false);
-  if (hits.length === 0) return null;
-  return hits[0]!.point.clone();
-}
-
 renderer.domElement.addEventListener("click", (e) => {
-  // If the dimensions panel is in pick-mode, route the click there (and
-  // skip the normal face-selection effect so highlighting doesn't clobber
-  // the pick markers).
-  if (dimensionsPanel?.isPicking()) {
-    const p = pickWorldPointAt(e.clientX, e.clientY);
-    if (p) dimensionsPanel.onScenePick(p);
-    else ok("missed — click on the model");
-    return;
-  }
-  const fid = pickFaceAt(e.clientX, e.clientY);
-  highlightedFace = fid;
-  refreshFaceColors();
-  if (fid >= 0) {
-    ok(`selected face #${fid} (of ${currentFaceCount})`);
+  if (pickMode === "face") {
+    const fid = pickFaceAt(e.clientX, e.clientY);
+    highlightedFace = fid;
+    highlightedVertex = -1;
+    highlightedEdge = -1;
+    refreshFaceColors();
+    refreshVertexHighlight();
+    refreshEdgeHighlight();
+    if (fid >= 0) {
+      ok(`selected face #${fid} (of ${currentFaceCount})`);
+    }
+  } else if (pickMode === "vertex") {
+    const vid = pickVertexAt(e.clientX, e.clientY);
+    highlightedVertex = vid;
+    highlightedFace = -1;
+    highlightedEdge = -1;
+    refreshFaceColors();
+    refreshVertexHighlight();
+    refreshEdgeHighlight();
+    if (vid >= 0 && currentVertexToFaces) {
+      const faces = neighborsOf(currentVertexToFaces, vid);
+      ok(`selected vertex #${vid} — touches ${faces.length} faces, ` +
+         `${verticesIncidentEdges(vid).length} edges`);
+    }
+  } else if (pickMode === "edge") {
+    const eid = pickEdgeAt(e.clientX, e.clientY);
+    highlightedEdge = eid;
+    highlightedFace = -1;
+    highlightedVertex = -1;
+    refreshFaceColors();
+    refreshVertexHighlight();
+    refreshEdgeHighlight();
+    if (eid >= 0 && currentEdgeToFaces) {
+      const faces = neighborsOf(currentEdgeToFaces, eid);
+      ok(`selected edge #${eid} — bordered by ${faces.length} faces`);
+    }
   }
 });
 
@@ -260,25 +482,6 @@ let model: ModelState | null = null;
 
 const SEGMENTS = 24;
 
-// --- dimensions panel ---
-const dimensionsPanel = new DimensionsPanel(dimensionsPanelEl, {
-  getModel: () =>
-    model
-      ? { json: model.json, targetId: model.targetId, parameters: model.parameters }
-      : null,
-  renderSvg: (args) =>
-    render_drawing_svg(
-      args.json,
-      args.targetId,
-      args.paramsJson,
-      args.view,
-      args.dimensionsJson,
-      args.viewportJson,
-    ),
-  scene,
-  setStatus: (msg, isError) => (isError ? err(msg) : ok(msg)),
-});
-
 function ok(msg: string) {
   status.classList.remove("error");
   status.textContent = msg;
@@ -306,10 +509,33 @@ function rebuild(fit: boolean = false) {
       vertex_count: number;
       edge_count: number;
       face_count_topo: number;
+      vertex_positions: number[];
+      edge_endpoints: number[];
+      vertex_to_edges_offsets: number[];
+      vertex_to_edges_indices: number[];
+      vertex_to_faces_offsets: number[];
+      vertex_to_faces_indices: number[];
+      edge_to_faces_offsets: number[];
+      edge_to_faces_indices: number[];
     };
     const tris = new Float32Array(result.triangles);
     const faceIds = new Uint32Array(result.face_ids);
     const dt = performance.now() - t0;
+    currentVertexPositions = new Float32Array(result.vertex_positions ?? []);
+    currentEdgeEndpoints = new Uint32Array(result.edge_endpoints ?? []);
+    if (result.vertex_to_edges_offsets) {
+      currentVertexToFaces = {
+        offsets: new Uint32Array(result.vertex_to_faces_offsets),
+        indices: new Uint32Array(result.vertex_to_faces_indices),
+      };
+      currentEdgeToFaces = {
+        offsets: new Uint32Array(result.edge_to_faces_offsets),
+        indices: new Uint32Array(result.edge_to_faces_indices),
+      };
+    } else {
+      currentVertexToFaces = null;
+      currentEdgeToFaces = null;
+    }
     setMesh(tris, faceIds, result.face_count, fit);
     ok(
       `target='${model.targetId}'  V/E/F/S=${result.vertex_count}/${result.edge_count}/${result.face_count_topo}/${result.shell_count}` +
@@ -478,7 +704,6 @@ function loadJson(json: string) {
     actionsEl.hidden = false;
     actions2El.hidden = false;
     viewsEl.hidden = false;
-    dimensionsPanelEl.hidden = false;
     rebuild(true);
   } catch (e) {
     err(String(e));

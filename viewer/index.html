@@ -73,6 +73,8 @@
     border-radius: 4px; padding: 6px 10px; font: inherit; cursor: pointer; flex: 1;
     transition: border-color .15s, color .15s; }
   button:hover { border-color: var(--accent); color: var(--accent); }
+  button.active { border-color: var(--accent); color: var(--accent);
+    background: rgba(88,166,255,0.08); }
   canvas { display: block; }
   #stage { position: relative; }
   .examples { margin-top: 12px; font-size: 12px; color: var(--muted); }
@@ -176,9 +178,16 @@
         <input type="checkbox" id="wireframe-toggle" />
         wireframe overlay
       </label>
+      <label style="display:block; color: var(--muted); margin-top:10px; margin-bottom:4px; font-size:12px;">Pick mode</label>
+      <div class="view-row" id="pick-mode">
+        <button data-pick="face" class="active">face</button>
+        <button data-pick="edge">edge</button>
+        <button data-pick="vertex">vertex</button>
+      </div>
       <div class="hotkeys">
         <code>1</code>iso <code>2</code>front <code>3</code>top <code>4</code>side<br>
-        <code>W</code>wireframe <code>R</code>reset <code>D</code>drawing <code>S</code>save
+        <code>W</code>wireframe <code>R</code>reset <code>D</code>drawing <code>S</code>save<br>
+        <code>F</code>pick face <code>E</code>pick edge <code>V</code>pick vertex
       </div>
     </div>
     <div id="status">no model loaded</div>
