@@ -51,113 +51,40 @@ kernel + authoring + viewer + production output).
 | Picking / selection (face → owner Feature)| 5%        | 70%      | 3.5    |
 | Feature tree UI                           | 5%        | 60%      | 3.0    |
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
-| Drawings (3-view + dimensions)            | 4%        | 100%     | 4.0    |
+| Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
 | Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
-| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, PaperClipShape, AngleArc, DistanceRod) | 6% | 72% | 4.32 |
-| Manufacturing features (170+ — see catalog) | 12% | 96% | 11.52 |
+| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
+| Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
-| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob + Caltrops compose for simple cases) | 8% | 47% | 3.76 |
+| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
-| Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
+| Assembly (multi-body + mates)             | 8%        | 30%      | 2.4    |
 | **Solidworks-tier total**                 | **100%**  |          | **~67.4%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08, part 3)
+## Latest session (2026-05-08)
 
-Drawings to 100% + polish batch shipped. ~66.6% → ~67.4% (+0.8 SW pt).
-cargo workspace 738 → 764 tests (+26), 0 failed. Viewer-side untouched
-(no UI changes needed for back-end silhouette / snap helpers; the WASM
-bindings already expose the new entry points to the front-end).
+Assembly + mates data model shipped. ~65.0% → ~67.4% (+2.4 SW pts),
+727 tests → 742 tests, 0 failed.
 
-- **True silhouette extraction** (`kerf_brep::dimension::silhouette_loops`).
-  Replaces the convex-hull silhouette with a half-edge / front-facing-
-  triangle-union walker. Strategy: project every front-facing triangle
-  (normal·view_dir < 0) to 2D and find the boundary of the projected
-  union via odd-incidence parity per 2D edge. Fan-triangulation
-  diagonals shared between adjacent front triangles cancel out;
-  outline edges (front + back, or front + nothing) survive.
-  Stitched into closed loops via greedy CW-most chaining at
-  multi-incident vertices. Falls back to the convex hull on
-  degenerate inputs (zero-area projections, no front triangles).
-  L-bracket from above now renders with 6-vertex concave outline,
-  not the 4-vertex bounding rectangle.
-- **Hidden-line / dashed back-edge rendering**. The renderer
-  classifies any silhouette loop that isn't the largest-area outline
-  as "interior" (cavity walls, inner outlines of disjoint shells,
-  curved-surface front/back seams) and emits them as dashed
-  `<polyline class="kerf-hidden">` paths in the SVG output. Strokes
-  use 0.6px / 4-3 dasharray, 0.7 opacity so they read as "behind the
-  outline" without dominating the visual.
-- **Vertex-snap on curved + line edges**
-  (`kerf_brep::dimension::collect_snap_candidates` +
-  `snap_pick(solid, pick_pt, tol)`). Returns the closest snap
-  candidate within the tolerance, or `None`. Candidate kinds:
-  vertex positions (line endpoints, circle seam endpoints), circle
-  centers (axis of holes / shafts), and line midpoints. Returns the
-  matched `SnapKind` so the UI can highlight the appropriate marker
-  (sphere vs crosshair). `tol_3d <= 0` and NaN are no-ops, not
-  errors. **Drawings category: 90% → 100%.**
-- **Polish batch (6 features, 14 tests)**: `Funnel2`,
-  `CrossPipe`, `AnchorChain`, `GearBlank2`, `PaperClipShape`,
-  `Caltrops`. Each in `feature.rs` + `eval.rs` with input
-  validation, a smoke test (positive volume), a degenerate-input
-  rejection test, and an id/inputs wiring check. `Funnel2` is a
-  cone-to-cone double frustum; `CrossPipe` is a 90° T-junction
-  union of two cylinders; `AnchorChain` is a stadium ring with a
-  centered crossbar (marine-style); `GearBlank2` is a gear blank
-  with one missing tooth + index notch; `PaperClipShape` is a
-  serpentine bent-wire chain via `sweep_cylinder_segment`;
-  `Caltrops` is 4 spheres at tetrahedron vertices joined by 6
-  cylindrical struts. Five buckets gain (Manufacturing,
-  Sweep/loft, Curved-surface, plus Drawings).
+- **Assembly + simple mates**: new `kerf_cad::assembly` module. Top-
+  level `Assembly` is a list of `Instance`s (each holding a `Model` plus
+  a `default_pose`) plus an ordered list of `Mate`s. `Pose` is
+  axis-angle + translation, full `Scalar` so poses can reference the
+  assembly's parameter table. Three mate variants — `Coincident`
+  (point-to-point), `Concentric` (axis alignment via Rodrigues +
+  translation projection), `Distance` (along current approach
+  direction). Solver applies mates in declaration order, freezes
+  instance_b after positioning, and returns a typed `MateError`
+  carrying the conflicting mate index when an over-constrained mate
+  is encountered. `Assembly::evaluate` returns posed `Solid`s by
+  reusing the existing `transform::translate_solid` and
+  `transform::rotate_solid` helpers. Full JSON serde round-trip.
+  No new linalg dep — Rodrigues' formula and axis-angle composition
+  via quaternion multiplication are inline. **Assembly category 0% →
+  30% (+2.4 SW pts).**
 
-## Earlier session (2026-05-08, part 2)
-
-Drawings UI wiring shipped. ~66.0% → ~66.6% (+0.6 SW pt). cargo workspace
-738 tests still passing; viewer-side gains 8 vitest tests covering the
-dimensions-panel state → JSON-model conversion and the
-`render_drawing_svg` call shape.
-
-- **Dimensions panel** (`viewer/src/dimensions.ts` + `#dimensions-panel`
-  in index.html). Wired into `main.ts`'s existing raycaster click flow:
-  when picking mode is on, clicks return `hits[0].point` (world-space)
-  instead of falling through to face-id selection. State machine accumulates
-  picks until the chosen kind has enough (2 for Linear/Radial, 3 for
-  Angular), then commits a `Dimension` to the live list. Each pick drops
-  a sphere marker in the scene (orange while pending, blue once committed).
-  "Download SVG" calls the WASM `render_drawing_svg(model_json, target_id,
-  params_json, view, dimensions_json, viewport_json)` and saves the
-  result as `<target>.<view>.dimensioned.svg`. **Drawings category bumps
-  75% → 90%.** The remaining 10% is the convex-hull silhouette
-  limitation (not a UI gap) and the lack of "click two vertices" snapping
-  — picks land wherever the ray hits the tessellation, which is fine for
-  most edges/corners but not pixel-exact on curved faces.
-
-## Previous session (2026-05-08, part 1)
-
-Drawings back-end shipped. ~65.0% → ~66.0% (+1.0 SW pt), 727 → 738 tests,
-0 failed.
-
-- **Drawing dimensions back-end**: new `kerf_brep::dimension` module with
-  pure math helpers (`distance`, `angle_between_vectors`,
-  `angle_at_vertex`, `project_to_plane`, `to_2d_view` for { Top, Front,
-  Side, Iso }) plus `Dimension { from, to, kind }` with
-  `DimensionKind = Linear | RadialFromCenter { center } | Angular {
-  vertex }`. `render_dimensioned_view(solid, view, dimensions, viewport)`
-  returns a self-contained SVG string with a silhouette polygon (convex
-  hull of the projected tessellation — see limitation below), dimension
-  lines, arrowheads, and `<text>` measurement values. Exposed in the
-  WASM API as `measure_distance`, `project_to_view`, `angle_at_vertex`,
-  `project_point_to_plane`, and `render_drawing_svg(model_json,
-  target_id, params_json, view, dimensions_json, viewport_json)`. UI
-  wiring shipped in part 2 (see above). **Drawings category bumps 50% →
-  75%.** Convex-hull silhouette is the documented fallback; concave
-  parts (L-bracket viewed from above) currently render as their bounding
-  shape. True silhouette (walk the edge graph, emit edges where adjacent
-  face normals have opposite signs in the view direction) is the next
-  improvement.
-
-## Previous session (2026-05-06)
+## Earlier session (2026-05-06)
 
 GAP 1 (Picking → edit) shipped. GAP 2 Plan B (SweepPath) shipped. Bonus
 faceted torus + Donut feature shipped. ~52.7% → ~54.7% (+2 SW pts), 518
@@ -277,8 +204,11 @@ multi-week engineering projects in their own right:
   major kernel addition.
 - **Sweep / loft** (6 SW pts after Revolve). Sweep along a curve, loft
   between profiles. Each is its own primitive with topology bookkeeping.
-- **Assembly + mates** (8 SW pts). Multiple bodies with relative
-  positioning constraints.
+- **Assembly + mates** (8 SW pts → ~5.6 SW pts remaining). Data model
+  + Coincident/Concentric/Distance solver shipped. Still missing:
+  iterative multi-pass solver for cyclic/symmetric mate networks,
+  parallel/perpendicular/tangent mates, and assembly-level booleans
+  (e.g., interference checking).
 - **Picking → edit** loop (~3 SW pts). Currently we pick a face but can't
   fillet *that* face; we'd need entity-id exposure across the JSON model.
 
