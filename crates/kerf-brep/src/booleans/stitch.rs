@@ -20,6 +20,10 @@ use crate::geometry::{CurveSegment, SurfaceKind};
 pub struct KeptFace {
     pub polygon: Vec<Point3>,
     pub surface: SurfaceKind,
+    /// Picking provenance carried over from the source solid's face_owner_tag.
+    /// Threaded into the resulting Solid's face_owner_tag by `stitch`.
+    /// `None` for faces whose source had no owner.
+    pub owner: Option<String>,
 }
 
 /// Build a connected `Solid` from a set of kept faces. Faces that share an edge
@@ -28,6 +32,34 @@ pub struct KeptFace {
 /// Panics if the input is non-manifold (any canonical edge has != 2 incident
 /// half-edges) or if `validate()` rejects the resulting topology.
 pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
+    stitch_with_rescue(kept, &[], tol)
+}
+
+/// Like [`stitch`], but with a "rescue from dropped" pre-pass: when the kept
+/// pile would leave a canonical edge with exactly one half-edge (i.e., one
+/// directed edge in the kept polygons has no twin among the kept set), search
+/// the `dropped` pile for a coplanar face whose polygon contains the reverse
+/// directed edge and promote it back into kept.
+///
+/// This is the GAP C multi-edge fillet repair: a sequential subtract chain
+/// (e.g., Box - wedge1 - wedge2 - wedge3 - wedge4 for a 4-corner Fillets)
+/// occasionally drops a face that shares an edge with a kept face's
+/// boundary, leaving a single half-edge orphan. Promoting the dropped
+/// partner closes the loop without altering volume (the dropped face was
+/// already contributing surface to the boolean — it just got mis-classified
+/// at the boundary).
+///
+/// Falls back to the same panic as [`stitch`] when no rescue partner exists.
+pub fn stitch_with_rescue(
+    kept: &[KeptFace],
+    dropped: &[KeptFace],
+    tol: &Tolerance,
+) -> Solid {
+    let kept_owned = rescue_one_half_edge_orphans(kept, dropped, tol);
+    stitch_inner(&kept_owned, tol)
+}
+
+fn stitch_inner(kept: &[KeptFace], tol: &Tolerance) -> Solid {
     let mut new_solid = Solid::new();
 
     if kept.is_empty() {
@@ -139,6 +171,20 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
     // duplicates from the second-solid pass).
     let kept: Vec<KeptFace> = kept.iter().map(|kf| (*kf).clone()).collect();
     let (kept, face_to_vidx) = drop_orphan_contributors(kept, face_to_vidx);
+
+    // Stage 1d (GAP C): prune "excursion" vertices. A vertex `v` that
+    // appears in EXACTLY ONE polygon AND whose two adjacent edges in that
+    // polygon are both orphans (no other polygon has either edge as a twin)
+    // is part of a detour that the boolean classifier accidentally threaded
+    // through this face. The detour adds no real boundary — its sole effect
+    // is to leave 1-half-edge orphans in stitch. Removing `v` collapses the
+    // detour while preserving the face's true outer boundary.
+    //
+    // This is the multi-edge-fillet-stitch repair: sequential subtracts in
+    // build_fillets push split-vertex artifacts (e.g., y=0.096 chord-points
+    // from wedge2's cylinder samples) into body z-face polygons that have
+    // no corresponding kept partner. Pruning collapses them.
+    let face_to_vidx = prune_excursion_vertices(&face_to_vidx);
     let kept: Vec<&KeptFace> = kept.iter().collect();
 
     // Stage 2: create vertices in the kerf-topo solid.
@@ -169,7 +215,10 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
     let mut self_loops: Vec<kerf_topo::HalfEdgeId> = Vec::new();
 
     for (face_idx, kf) in kept.iter().enumerate() {
-        let n = kf.polygon.len();
+        // After Stage 1d (excursion pruning), face_to_vidx may have fewer
+        // vertices than kf.polygon — use face_to_vidx as the source of
+        // truth for the half-edge count.
+        let n = face_to_vidx[face_idx].len();
         debug_assert!(n >= 3, "face polygon must have at least 3 vertices");
 
         let loop_id = new_solid.topo.build_insert_loop_placeholder();
@@ -179,6 +228,9 @@ pub fn stitch(kept: &[KeptFace], tol: &Tolerance) -> Solid {
             .build_insert_face(loop_id, placeholder_shell);
         new_solid.topo.build_set_loop_face(loop_id, face_id);
         new_solid.face_geom.insert(face_id, kf.surface.clone());
+        if let Some(tag) = &kf.owner {
+            new_solid.face_owner_tag.insert(face_id, tag.clone());
+        }
         face_ids.push(face_id);
 
         // Allocate half-edges for each polygon edge.
@@ -498,6 +550,93 @@ fn drop_orphan_contributors(
     (new_kept, new_face_to_vidx)
 }
 
+/// GAP C: prune detour vertices whose adjacent polygon edges have no
+/// matching twin in any other polygon. A detour vertex contributes
+/// 1-half-edge orphans that the stitcher cannot pair, and removing it
+/// collapses the spurious excursion without altering any face's real
+/// boundary.
+///
+/// Pruning conditions (all must hold for vertex `v` in polygon `P`):
+///   1. `v` appears in exactly one polygon (no other face has a vertex
+///      with the same global index after dedup).
+///   2. Both directed edges incident on `v` in `P` (prev→v and v→next) are
+///      orphans — no other polygon has the reverse edge as a twin.
+///   3. The polygon has at least 4 vertices remaining after removal.
+///
+/// Iterates to fixpoint: removing one excursion vertex can re-classify
+/// neighbors as removable.
+fn prune_excursion_vertices(face_to_vidx: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let mut polys: Vec<Vec<usize>> = face_to_vidx.to_vec();
+    loop {
+        // Build vertex-occurrence count and directed-edge multiset.
+        let mut vertex_in_polys: HashMap<usize, usize> = HashMap::new();
+        let mut directed_edges: HashMap<(usize, usize), usize> = HashMap::new();
+        for vidx in &polys {
+            let n = vidx.len();
+            // Track unique vertices per polygon (a vertex may legitimately
+            // appear once in each face).
+            let mut seen = std::collections::HashSet::new();
+            for &v in vidx {
+                seen.insert(v);
+            }
+            for v in seen {
+                *vertex_in_polys.entry(v).or_insert(0) += 1;
+            }
+            for i in 0..n {
+                let a = vidx[i];
+                let b = vidx[(i + 1) % n];
+                if a == b {
+                    continue;
+                }
+                *directed_edges.entry((a, b)).or_insert(0) += 1;
+            }
+        }
+        // Find a removable vertex.
+        let mut removed = false;
+        'outer: for poly_idx in 0..polys.len() {
+            let n = polys[poly_idx].len();
+            if n <= 4 {
+                continue;
+            }
+            for i in 0..n {
+                let prev = polys[poly_idx][(i + n - 1) % n];
+                let v = polys[poly_idx][i];
+                let next = polys[poly_idx][(i + 1) % n];
+                if prev == v || v == next || prev == next {
+                    continue;
+                }
+                if *vertex_in_polys.get(&v).unwrap_or(&0) != 1 {
+                    continue;
+                }
+                // Both incident directed edges must be orphans (no twin
+                // in any other polygon: the reverse direction has 0
+                // entries).
+                let edge_a_twin = *directed_edges.get(&(v, prev)).unwrap_or(&0);
+                let edge_b_twin = *directed_edges.get(&(next, v)).unwrap_or(&0);
+                if edge_a_twin > 0 || edge_b_twin > 0 {
+                    continue;
+                }
+                // Removing v: replace [prev, v, next] with [prev, next].
+                // The new edge (prev, next) must not already appear with
+                // BOTH directions in other polygons (would create a new
+                // 3+ entries conflict).
+                let new_edge_fwd = *directed_edges.get(&(prev, next)).unwrap_or(&0);
+                let new_edge_rev = *directed_edges.get(&(next, prev)).unwrap_or(&0);
+                if new_edge_fwd > 0 || new_edge_rev > 1 {
+                    continue;
+                }
+                polys[poly_idx].remove(i);
+                removed = true;
+                break 'outer;
+            }
+        }
+        if !removed {
+            break;
+        }
+    }
+    polys
+}
+
 fn find_or_add(positions: &mut Vec<Point3>, p: Point3, tol: &Tolerance) -> usize {
     for (i, q) in positions.iter().enumerate() {
         if (p - *q).norm() < tol.point_eq {
@@ -506,6 +645,178 @@ fn find_or_add(positions: &mut Vec<Point3>, p: Point3, tol: &Tolerance) -> usize
     }
     positions.push(p);
     positions.len() - 1
+}
+
+/// GAP C: rescue 1-half-edge orphans from the dropped pool.
+///
+/// After the boolean classifier drops some faces, a kept polygon's edge can
+/// be left without a partner — typically a sequential subtract that drops a
+/// boundary-coincident face that was actually still needed to close the
+/// outer surface (or a partial shadowing of a body face by a cutter).
+///
+/// For each canonical edge (u, v) appearing exactly once in the kept set,
+/// look in `dropped` for a coplanar face whose polygon contains the reverse
+/// directed edge (v, u). Promote the first such match to kept and recheck.
+/// Iterate until no rescue is possible.
+///
+/// Position-equality is computed at a relaxed tolerance (`point_eq * 1000`),
+/// matching `chord_merge`'s practice (default `point_eq` is 1e-9 which is
+/// tighter than typical CAD precision and would miss legitimate matches).
+///
+/// This pass is conservative: it never drops, never modifies polygons. It
+/// only PROMOTES dropped faces. If no rescue applies, the kept pile is
+/// returned unchanged.
+fn rescue_one_half_edge_orphans(
+    kept: &[KeptFace],
+    dropped: &[KeptFace],
+    tol: &Tolerance,
+) -> Vec<KeptFace> {
+    if dropped.is_empty() {
+        return kept.to_vec();
+    }
+    let pt_tol = tol.point_eq * 1000.0;
+
+    let mut kept = kept.to_vec();
+    let mut available: Vec<bool> = vec![true; dropped.len()];
+    // Cap iterations as a safety net — each iteration must promote a face.
+    for _ in 0..(dropped.len().max(1)) {
+        // Build a vertex dedup table over the current kept polygons.
+        let mut positions: Vec<Point3> = Vec::new();
+        let mut face_vidx: Vec<Vec<usize>> = Vec::with_capacity(kept.len());
+        for kf in &kept {
+            let mut indices = Vec::with_capacity(kf.polygon.len());
+            for p in &kf.polygon {
+                let idx = find_or_add(&mut positions, *p, tol);
+                indices.push(idx);
+            }
+            face_vidx.push(indices);
+        }
+        // Edge → directed entries (forward = matches canonical key order).
+        let mut edge_dir: HashMap<(usize, usize), Vec<bool>> = HashMap::new();
+        for vidx in &face_vidx {
+            let n = vidx.len();
+            for i in 0..n {
+                let a = vidx[i];
+                let b = vidx[(i + 1) % n];
+                if a == b {
+                    continue;
+                }
+                let key = canonical_edge_key(a, b);
+                let forward = (a, b) == key;
+                edge_dir.entry(key).or_default().push(forward);
+            }
+        }
+        // Identify canonical edges with exactly one half-edge entry. The
+        // missing direction is the one we need a dropped face to provide.
+        let mut singles: Vec<((usize, usize), bool)> = Vec::new();
+        for (key, dirs) in &edge_dir {
+            if dirs.len() == 1 {
+                singles.push((*key, dirs[0]));
+            }
+        }
+        if singles.is_empty() {
+            return kept;
+        }
+        // Find a dropped face whose polygon walks the reverse of any single
+        // edge AND whose surface is coplanar with at least one currently-kept
+        // face that touches that edge (avoids promoting unrelated geometry
+        // that happens to share two vertex positions).
+        let mut promoted = false;
+        for ((u, v), present_forward) in singles {
+            // Reverse directed edge in 3D.
+            let p_u = positions[u];
+            let p_v = positions[v];
+            let (ra, rb) = if present_forward { (p_v, p_u) } else { (p_u, p_v) };
+            // Identify a kept face that owns this edge so we know the
+            // coplanarity reference.
+            let mut ref_surface: Option<SurfaceKind> = None;
+            'outer: for (fi, vidx) in face_vidx.iter().enumerate() {
+                let n = vidx.len();
+                for i in 0..n {
+                    let a = vidx[i];
+                    let b = vidx[(i + 1) % n];
+                    if (a, b) == (u, v) || (a, b) == (v, u) {
+                        ref_surface = Some(kept[fi].surface.clone());
+                        break 'outer;
+                    }
+                }
+            }
+            let Some(ref_surface) = ref_surface else {
+                continue;
+            };
+            // First pass: prefer a coplanar partner (chord_merge style).
+            for di in 0..dropped.len() {
+                if !available[di] {
+                    continue;
+                }
+                if !surfaces_coplanar(&dropped[di].surface, &ref_surface, tol) {
+                    continue;
+                }
+                if polygon_has_directed_edge(&dropped[di].polygon, ra, rb, pt_tol) {
+                    kept.push(dropped[di].clone());
+                    available[di] = false;
+                    promoted = true;
+                    break;
+                }
+            }
+            if promoted {
+                break;
+            }
+            // Second pass: directed-edge match WITHOUT coplanarity. This
+            // covers cylinder-facet seam edges where the partner is the
+            // adjacent (non-coplanar) lateral facet that got
+            // misclassified. Specificity is preserved because a directed
+            // edge only matches when both endpoints AND order line up.
+            for di in 0..dropped.len() {
+                if !available[di] {
+                    continue;
+                }
+                if polygon_has_directed_edge(&dropped[di].polygon, ra, rb, pt_tol) {
+                    kept.push(dropped[di].clone());
+                    available[di] = false;
+                    promoted = true;
+                    break;
+                }
+            }
+            if promoted {
+                break;
+            }
+        }
+        if !promoted {
+            return kept;
+        }
+    }
+    kept
+}
+
+/// Coplanar test mirroring `chord_merge::coplanar` so the rescue pass agrees
+/// with chord-merge on which surfaces "are the same plane". Curved surface
+/// kinds are out of scope (rescue only repairs planar 1-half-edge orphans).
+fn surfaces_coplanar(s1: &SurfaceKind, s2: &SurfaceKind, tol: &Tolerance) -> bool {
+    match (s1, s2) {
+        (SurfaceKind::Plane(p1), SurfaceKind::Plane(p2)) => {
+            let n1 = p1.frame.z;
+            let n2 = p2.frame.z;
+            let parallel = (n1.dot(&n2).abs() - 1.0).abs() < 1e-6;
+            if !parallel {
+                return false;
+            }
+            let d = (p2.frame.origin - p1.frame.origin).dot(&n1);
+            d.abs() < tol.point_eq * 1000.0
+        }
+        _ => false,
+    }
+}
+
+/// Does `poly` contain the directed edge (a → b) within point-tolerance?
+fn polygon_has_directed_edge(poly: &[Point3], a: Point3, b: Point3, pt_tol: f64) -> bool {
+    let n = poly.len();
+    for i in 0..n {
+        if (poly[i] - a).norm() <= pt_tol && (poly[(i + 1) % n] - b).norm() <= pt_tol {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -526,12 +837,62 @@ mod tests {
         for face_id in s.topo.face_ids() {
             let polygon = face_polygon(&s, face_id).unwrap();
             let surface = s.face_geom.get(face_id).cloned().unwrap();
-            kept.push(KeptFace { polygon, surface });
+            kept.push(KeptFace { polygon, surface, owner: None });
         }
         let new_s = stitch(&kept, &Tolerance::default());
         assert_eq!(new_s.vertex_count(), 8);
         assert_eq!(new_s.edge_count(), 12);
         assert_eq!(new_s.face_count(), 6);
         validate(&new_s.topo).unwrap();
+    }
+
+    #[test]
+    fn prune_excursion_vertices_removes_orphan_detour() {
+        // A 6-vertex polygon with a detour: square (0..3) plus an excursion
+        // through vertex 4 (only in this polygon, both adjacent edges
+        // orphans). The square's 4 corners are shared with neighbors
+        // (simulated as additional polygons referencing them).
+        let polys = vec![
+            // Polygon under test: square 0,1,2,3 with detour 4,5 inserted
+            // between 1 and 2. Vertex 4 and 5 are unique to this polygon.
+            vec![0, 1, 4, 5, 2, 3],
+            // Neighbors that share edges with the square's perimeter so
+            // those edges have twins (and won't be prunable).
+            vec![1, 0, 6, 7],     // edge (0,1) twin lives here as (1,0)
+            vec![2, 1, 8, 9],     // edge (1,2) twin
+            vec![3, 2, 10, 11],   // edge (2,3) twin
+            vec![0, 3, 12, 13],   // edge (3,0) twin
+        ];
+        let pruned = prune_excursion_vertices(&polys);
+        // Vertices 4 and 5 should be pruned: each appears only in poly 0,
+        // their adjacent directed edges (1→4, 4→5, 5→2) have no reverse
+        // twins anywhere.
+        assert_eq!(pruned[0], vec![0, 1, 2, 3], "detour collapsed");
+        // Other polygons unchanged.
+        assert_eq!(pruned[1], polys[1]);
+        assert_eq!(pruned[2], polys[2]);
+        assert_eq!(pruned[3], polys[3]);
+        assert_eq!(pruned[4], polys[4]);
+    }
+
+    #[test]
+    fn prune_excursion_vertices_preserves_shared_corners() {
+        // A square 0,1,2,3 whose vertex 1 is also used by another
+        // polygon. Even if vertex 1's edges are orphans, it's NOT
+        // prunable because the rule requires vertex_in_polys[v] == 1.
+        let polys = vec![vec![0, 1, 2, 3], vec![5, 1, 6]];
+        let pruned = prune_excursion_vertices(&polys);
+        assert_eq!(pruned[0], vec![0, 1, 2, 3]);
+        assert_eq!(pruned[1], vec![5, 1, 6]);
+    }
+
+    #[test]
+    fn prune_excursion_vertices_preserves_min_polygon() {
+        // A 4-vertex polygon (minimum) should never be pruned even if all
+        // edges are orphans, because removing a vertex would leave a
+        // degenerate triangle below 4-vertex floor.
+        let polys = vec![vec![0, 1, 2, 3]];
+        let pruned = prune_excursion_vertices(&polys);
+        assert_eq!(pruned[0], vec![0, 1, 2, 3]);
     }
 }

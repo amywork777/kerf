@@ -92,11 +92,21 @@ fn flip_surface_normal(s: crate::geometry::SurfaceKind) -> crate::geometry::Surf
 /// Recursive booleans are now possible:
 /// `boolean_solid(boolean_solid(a, b, op), c, op2)`.
 pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> Solid {
-    use crate::booleans::stitch::{KeptFace, stitch};
+    use crate::booleans::stitch::{KeptFace, stitch_with_rescue};
 
     let mut a = a.clone();
     let mut b = b.clone();
-    let intersections = face_intersections(&a, &b, tol);
+    let mut intersections = face_intersections(&a, &b, tol);
+    // Canonicalise intersection processing order. Without this, downstream
+    // mef-driven splits run in slotmap-iteration order, which depends on the
+    // construction path of the input solids (box_ vs extrude_polygon emit
+    // faces in different orders). Sorting by 3D coordinates makes the
+    // pipeline output deterministic in geometry alone.
+    intersections.sort_by(|x, y| {
+        let xs = (x.start.x, x.start.y, x.start.z, x.end.x, x.end.y, x.end.z);
+        let ys = (y.start.x, y.start.y, y.start.z, y.end.x, y.end.y, y.end.z);
+        xs.partial_cmp(&ys).unwrap_or(std::cmp::Ordering::Equal)
+    });
     let outcome = split_solids_at_intersections(&mut a, &mut b, &intersections, tol);
     let interior = resolve_interior_endpoints(&mut a, &mut b, &intersections, &outcome, tol);
     // M39: skip mef on chords whose pre-split host faces are both dropped
@@ -131,7 +141,15 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
         let surface = a.face_geom.get(face_id).cloned().unwrap();
         let ancestor = a.face_ancestor(face_id);
         let anc_key = (0u8, ancestor.data().as_ffi());
-        let face = KeptFace { polygon, surface };
+        // Owner tag: prefer this face's tag, falling back to its ancestor's
+        // (mef-driven splits create new face ids without copying owner — the
+        // ancestor still carries it).
+        let owner = a
+            .face_owner_tag
+            .get(face_id)
+            .or_else(|| a.face_owner_tag.get(ancestor))
+            .cloned();
+        let face = KeptFace { polygon, surface, owner };
         if keep_a_face(cls, op) {
             kept.push(face);
             kept_source.push(0);
@@ -163,7 +181,12 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
             // recover outward direction).
             surface = flip_surface_normal(surface);
         }
-        let face = KeptFace { polygon, surface };
+        let owner = b
+            .face_owner_tag
+            .get(face_id)
+            .or_else(|| b.face_owner_tag.get(ancestor))
+            .cloned();
+        let face = KeptFace { polygon, surface, owner };
         if face_kept {
             kept.push(face);
             kept_source.push(1);
@@ -188,7 +211,12 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
         tol,
     );
 
-    stitch(&kept, tol)
+    // GAP C: stitch_with_rescue passes the dropped pile so the stitcher can
+    // promote a coplanar partner when the kept pile would leave a canonical
+    // edge with exactly one half-edge. Without this, multi-edge fillets
+    // (sequential subtract chains) panic on the second wedge that shares a
+    // body face with the first.
+    stitch_with_rescue(&kept, &dropped, tol)
 }
 
 #[cfg(test)]
