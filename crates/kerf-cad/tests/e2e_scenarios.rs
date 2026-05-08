@@ -761,10 +761,12 @@ fn scenario_08_multi_view_dimensioned_drawing() {
 // works fine on a plain Box. Likely root cause: LBracket's interior
 // corner exposes a face whose boundary is shared with the cutter's
 // cylindrical wall in a way the stitcher's adjacency map can't reconcile.
+//
+// Smart-merge's GAP E (synthesize_planar_caps_inplace from PR #32) handles
+// single-plane patches but NOT the 2-way planar split for L-corner loops
+// that's needed here. PR #38 has the 2-way split — un-ignore once that lands.
 #[test]
-#[ignore = "kernel: counterbore-into-LBracket triggers `non-manifold input \
-            to stitch` panic. Documented in STATUS.md. The stand-in test \
-            scenario_08_multi_view_dimensioned_drawing uses Box+BoltCircle."]
+#[ignore = "kernel: needs PR #38's 2-way planar split for L-corner loops"]
 fn scenario_08_lbracket_with_counterbore_bug() {
     let leg = 40.0;
     let thickness = 8.0;
@@ -806,10 +808,6 @@ fn scenario_08_lbracket_with_counterbore_bug() {
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "kernel: 4-corner z-edge fillets share lateral body faces — \
-            documented in tests/fillets_plural.rs and STATUS.md. This e2e \
-            scenario inherits the same limitation. When GAP C+D fillet \
-            rescue is shipped, remove the ignore."]
 fn scenario_09_picking_drives_fillet_chain() {
     let lx = 60.0;
     let ly = 30.0;

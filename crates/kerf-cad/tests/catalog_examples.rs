@@ -117,6 +117,7 @@ const KNOWN_EXEMPT: &[(&str, &str)] = &[
     ("PaperClipShape", "evaluation >5s — bent-wire chain"),
     ("PulleyGroove", "evaluation >5s — V-groove cutter"),
     ("CapsuleAt", "evaluation >5s — capsule with at-position"),
+    ("PaperLantern", "evaluation >5s — cylinder + 2 hemisphere caps"),
     // Stitch trip on default sweep-with-twist parameters.
     ("SweepWithTwist", "stitch: non-manifold on segment-1 union of twisted-profile sweep"),
 ];
