@@ -269,6 +269,47 @@ pub enum Mate {
         instance_b: String,
         surface_b: SurfaceRef,
     },
+    /// Place instance B as the mirror image of instance A across a
+    /// plane (defined in WORLD space by `plane_origin` and
+    /// `plane_normal`). B's translation is reflected across the plane;
+    /// B's rotation axis is reflected through the plane (component
+    /// along the plane normal flipped) and the angle is negated, so
+    /// B's orientation is the proper rotation that mirrors A's.
+    Symmetry {
+        instance_a: String,
+        plane_origin: [Scalar; 3],
+        plane_normal: [Scalar; 3],
+        instance_b: String,
+    },
+    /// Set the perpendicular distance from B's centroid (its world
+    /// origin under the current pose) to A's axis line to `distance`.
+    /// The axis lives in A's local frame and is mapped to world through
+    /// A's pose. Translates B along the perpendicular component (B is
+    /// pushed outward or pulled inward toward A's axis until the
+    /// requested distance holds).
+    Width {
+        instance_a: String,
+        axis_a: AxisRef,
+        instance_b: String,
+        distance: Scalar,
+    },
+    /// Place instance at the world-space point obtained by linearly
+    /// interpolating along `path` (a polyline of world-space waypoints)
+    /// at parameter `t ∈ [0, 1]`. `t = 0` lands on the first waypoint;
+    /// `t = 1` lands on the last. The instance's rotation is left
+    /// alone — only its translation is set.
+    PathMate {
+        instance: String,
+        path: Vec<[Scalar; 3]>,
+        parameter: Scalar,
+    },
+    /// Fully constrain B to A: B's pose is forced equal to A's. This
+    /// is the "no relative motion" mate — useful when two parts are
+    /// rigidly bonded (welded, glued, threaded into a single block).
+    Lock {
+        instance_a: String,
+        instance_b: String,
+    },
 }
 
 /// Top-level container.
@@ -909,6 +950,56 @@ impl Assembly {
                 poses,
                 frozen.as_deref_mut(),
             ),
+            Mate::Symmetry {
+                instance_a,
+                plane_origin,
+                plane_normal,
+                instance_b,
+            } => self.apply_symmetry_mate(
+                mi,
+                instance_a,
+                plane_origin,
+                plane_normal,
+                instance_b,
+                poses,
+                frozen.as_deref_mut(),
+            ),
+            Mate::Width {
+                instance_a,
+                axis_a,
+                instance_b,
+                distance,
+            } => self.apply_width_mate(
+                mi,
+                instance_a,
+                axis_a,
+                instance_b,
+                distance,
+                poses,
+                frozen.as_deref_mut(),
+            ),
+            Mate::PathMate {
+                instance,
+                path,
+                parameter,
+            } => self.apply_path_mate(
+                mi,
+                instance,
+                path,
+                parameter,
+                poses,
+                frozen.as_deref_mut(),
+            ),
+            Mate::Lock {
+                instance_a,
+                instance_b,
+            } => self.apply_lock_mate(
+                mi,
+                instance_a,
+                instance_b,
+                poses,
+                frozen.as_deref_mut(),
+            ),
         }
     }
 
@@ -1052,6 +1143,293 @@ impl Assembly {
                 MateError::NotImplemented(mi, "tangent: sphere-cylinder".into()),
             ),
         }
+    }
+
+    /// Symmetry mate. B's pose is set so it is the mirror image of A
+    /// across the plane (origin, normal) given in WORLD space.
+    fn apply_symmetry_mate(
+        &self,
+        mi: usize,
+        instance_a: &str,
+        plane_origin: &[Scalar; 3],
+        plane_normal: &[Scalar; 3],
+        instance_b: &str,
+        poses: &mut HashMap<String, ResolvedPose>,
+        mut frozen: Option<&mut std::collections::HashSet<String>>,
+    ) -> Result<(), MateError> {
+        let po_arr = resolve_arr3(plane_origin, &self.parameters)
+            .map_err(|e| MateError::Parameter(mi, format!("plane_origin: {e}")))?;
+        let pn_arr = resolve_arr3(plane_normal, &self.parameters)
+            .map_err(|e| MateError::Parameter(mi, format!("plane_normal: {e}")))?;
+        let plane_o = Vec3::new(po_arr[0], po_arr[1], po_arr[2]);
+        let pn_raw = Vec3::new(pn_arr[0], pn_arr[1], pn_arr[2]);
+        if pn_raw.norm() < MATE_TOL {
+            return Err(MateError::ZeroAxisDirection(mi));
+        }
+        let plane_n = pn_raw.normalize();
+        let pose_a = *poses.get(instance_a).expect("checked");
+
+        // Compute target translation: reflect A's translation across the
+        // mirror plane. reflect(p) = p - 2 * ((p - o) · n) * n.
+        let ta = pose_a.translation;
+        let target_translation = ta - plane_n * (2.0 * (ta - plane_o).dot(&plane_n));
+
+        // Compute target rotation axis: reflect A's rotation axis
+        // through the plane (component along plane_n flipped). The
+        // angle is negated so the resulting rotation mirrors A's.
+        // For an axis vector v: reflected = v - 2 * (v · n) * n.
+        let axis_a_world = pose_a.rotation_axis;
+        let target_axis = axis_a_world - plane_n * (2.0 * axis_a_world.dot(&plane_n));
+        let target_angle = -pose_a.rotation_angle;
+
+        // Verify already-satisfied for frozen check.
+        if let Some(f) = frozen.as_deref() {
+            if f.contains(instance_b) {
+                let pose_b = poses.get(instance_b).expect("checked");
+                let trans_err = (pose_b.translation - target_translation).norm();
+                if trans_err > MATE_TOL {
+                    return Err(MateError::OverConstrained(
+                        mi,
+                        format!(
+                            "Symmetry: '{instance_b}' is already positioned and its translation \
+                             differs from the mirror by {trans_err}"
+                        ),
+                    ));
+                }
+                return Ok(());
+            }
+        }
+
+        let pose_b = poses.get_mut(instance_b).expect("checked");
+        pose_b.translation = target_translation;
+        pose_b.rotation_axis = target_axis;
+        pose_b.rotation_angle = target_angle;
+        if let Some(f) = frozen.as_deref_mut() {
+            f.insert(instance_b.to_string());
+        }
+        Ok(())
+    }
+
+    /// Width mate. Push B perpendicular to A's axis line until B's
+    /// world origin sits at `distance` from the line.
+    fn apply_width_mate(
+        &self,
+        mi: usize,
+        instance_a: &str,
+        axis_a: &AxisRef,
+        instance_b: &str,
+        distance: &Scalar,
+        poses: &mut HashMap<String, ResolvedPose>,
+        mut frozen: Option<&mut std::collections::HashSet<String>>,
+    ) -> Result<(), MateError> {
+        let val = distance
+            .resolve(&self.parameters)
+            .map_err(|e| MateError::Parameter(mi, format!("width distance: {e}")))?;
+        if val < 0.0 {
+            return Err(MateError::Invalid(
+                mi,
+                format!("Width: distance must be non-negative, got {val}"),
+            ));
+        }
+        let (oa, da) = self.resolve_axis_in_world(mi, instance_a, axis_a, poses)?;
+
+        // B's centroid in world = its translation (we treat instance
+        // origin as the centroid).
+        let cb = poses.get(instance_b).expect("checked").translation;
+        // Vector from a point on A's axis to B's centroid.
+        let v = cb - oa;
+        // Component of v along A's axis (preserved).
+        let along = da * da.dot(&v);
+        // Component perpendicular to A's axis (this is the radial
+        // vector — its length is the current distance).
+        let perp = v - along;
+        let cur_dist = perp.norm();
+
+        // Direction of "outward" from the axis. If the centroid is
+        // exactly on the axis, pick a perpendicular fallback so the
+        // mate still resolves.
+        let radial_dir = if cur_dist > MATE_TOL {
+            perp / cur_dist
+        } else {
+            pick_perpendicular(da)
+        };
+
+        // Target centroid: foot of perpendicular on the axis + radial_dir * val.
+        let foot = oa + along;
+        let target_cb = foot + radial_dir * val;
+        let delta = target_cb - cb;
+
+        if let Some(f) = frozen.as_deref() {
+            if f.contains(instance_b) {
+                if delta.norm() > MATE_TOL {
+                    return Err(MateError::OverConstrained(
+                        mi,
+                        format!(
+                            "Width: '{instance_b}' is already positioned at distance \
+                             {cur_dist} from A's axis, want {val}"
+                        ),
+                    ));
+                }
+                return Ok(());
+            }
+        }
+
+        let pose_b = poses.get_mut(instance_b).expect("checked");
+        pose_b.translation += delta;
+        if let Some(f) = frozen.as_deref_mut() {
+            f.insert(instance_b.to_string());
+        }
+        Ok(())
+    }
+
+    /// Path mate. Translate `instance` so its world-origin sits at the
+    /// polyline-interpolated point at parameter t.
+    fn apply_path_mate(
+        &self,
+        mi: usize,
+        instance: &str,
+        path: &[[Scalar; 3]],
+        parameter: &Scalar,
+        poses: &mut HashMap<String, ResolvedPose>,
+        mut frozen: Option<&mut std::collections::HashSet<String>>,
+    ) -> Result<(), MateError> {
+        if path.len() < 2 {
+            return Err(MateError::Invalid(
+                mi,
+                format!(
+                    "PathMate: path must have at least 2 waypoints, got {}",
+                    path.len()
+                ),
+            ));
+        }
+        let t = parameter
+            .resolve(&self.parameters)
+            .map_err(|e| MateError::Parameter(mi, format!("path parameter: {e}")))?;
+        if !(-1e-12..=1.0 + 1e-12).contains(&t) {
+            return Err(MateError::Invalid(
+                mi,
+                format!("PathMate: parameter {t} is outside [0, 1]"),
+            ));
+        }
+        let t = t.clamp(0.0, 1.0);
+
+        // Resolve every waypoint.
+        let mut pts: Vec<Vec3> = Vec::with_capacity(path.len());
+        for (i, p) in path.iter().enumerate() {
+            let arr = resolve_arr3(p, &self.parameters)
+                .map_err(|e| MateError::Parameter(mi, format!("path[{i}]: {e}")))?;
+            pts.push(Vec3::new(arr[0], arr[1], arr[2]));
+        }
+
+        // Compute cumulative arc lengths.
+        let mut seg_lens = Vec::with_capacity(pts.len() - 1);
+        let mut total = 0.0;
+        for i in 0..pts.len() - 1 {
+            let l = (pts[i + 1] - pts[i]).norm();
+            total += l;
+            seg_lens.push(l);
+        }
+        if total < 1e-15 {
+            return Err(MateError::Invalid(
+                mi,
+                "PathMate: degenerate path (zero total length)".into(),
+            ));
+        }
+
+        // Find which segment t lands in by walking arc-length.
+        let target_len = t * total;
+        let mut acc = 0.0;
+        let mut target = pts[pts.len() - 1];
+        for i in 0..seg_lens.len() {
+            let next_acc = acc + seg_lens[i];
+            if target_len <= next_acc + 1e-15 {
+                let local_t = if seg_lens[i] > 0.0 {
+                    (target_len - acc) / seg_lens[i]
+                } else {
+                    0.0
+                };
+                target = pts[i] + (pts[i + 1] - pts[i]) * local_t;
+                break;
+            }
+            acc = next_acc;
+        }
+
+        // Snap exactly onto endpoints when t is at the bounds.
+        if t <= 1e-12 {
+            target = pts[0];
+        } else if t >= 1.0 - 1e-12 {
+            target = pts[pts.len() - 1];
+        }
+
+        let cur = poses.get(instance).expect("checked").translation;
+        let delta = target - cur;
+
+        if let Some(f) = frozen.as_deref() {
+            if f.contains(instance) {
+                if delta.norm() > MATE_TOL {
+                    return Err(MateError::OverConstrained(
+                        mi,
+                        format!(
+                            "PathMate: '{instance}' is already positioned at {:?}, \
+                             want {:?} (delta {})",
+                            cur,
+                            target,
+                            delta.norm()
+                        ),
+                    ));
+                }
+                return Ok(());
+            }
+        }
+
+        let pose = poses.get_mut(instance).expect("checked");
+        pose.translation = target;
+        if let Some(f) = frozen.as_deref_mut() {
+            f.insert(instance.to_string());
+        }
+        Ok(())
+    }
+
+    /// Lock mate. B's pose is forced equal to A's pose.
+    fn apply_lock_mate(
+        &self,
+        mi: usize,
+        instance_a: &str,
+        instance_b: &str,
+        poses: &mut HashMap<String, ResolvedPose>,
+        mut frozen: Option<&mut std::collections::HashSet<String>>,
+    ) -> Result<(), MateError> {
+        let pose_a = *poses.get(instance_a).expect("checked");
+
+        if let Some(f) = frozen.as_deref() {
+            if f.contains(instance_b) {
+                let pose_b = poses.get(instance_b).expect("checked");
+                let trans_err = (pose_b.translation - pose_a.translation).norm();
+                let axis_diff = (pose_b.rotation_axis.normalize()
+                    - pose_a.rotation_axis.normalize())
+                .norm();
+                let angle_err = (pose_b.rotation_angle - pose_a.rotation_angle).abs();
+                if trans_err > MATE_TOL || (axis_diff > MATE_TOL && angle_err > MATE_TOL) {
+                    return Err(MateError::OverConstrained(
+                        mi,
+                        format!(
+                            "Lock: '{instance_b}' is already positioned and its pose \
+                             differs from A's (trans_err={trans_err}, angle_err={angle_err})"
+                        ),
+                    ));
+                }
+                return Ok(());
+            }
+        }
+
+        let pose_b = poses.get_mut(instance_b).expect("checked");
+        pose_b.translation = pose_a.translation;
+        pose_b.rotation_axis = pose_a.rotation_axis;
+        pose_b.rotation_angle = pose_a.rotation_angle;
+        if let Some(f) = frozen.as_deref_mut() {
+            f.insert(instance_b.to_string());
+        }
+        Ok(())
     }
 
     /// Cylinder-on-plane tangent. Plane lives on instance A, cylinder on
@@ -1308,6 +1686,123 @@ impl Assembly {
             } => self.tangent_squared_residual(
                 mi, instance_a, surface_a, instance_b, surface_b, poses,
             ),
+            Mate::Symmetry {
+                instance_a,
+                plane_origin,
+                plane_normal,
+                instance_b,
+            } => {
+                let po_arr = resolve_arr3(plane_origin, &self.parameters).map_err(|e| {
+                    AssemblyError::Mate(MateError::Parameter(mi, format!("plane_origin: {e}")))
+                })?;
+                let pn_arr = resolve_arr3(plane_normal, &self.parameters).map_err(|e| {
+                    AssemblyError::Mate(MateError::Parameter(mi, format!("plane_normal: {e}")))
+                })?;
+                let plane_o = Vec3::new(po_arr[0], po_arr[1], po_arr[2]);
+                let pn_raw = Vec3::new(pn_arr[0], pn_arr[1], pn_arr[2]);
+                if pn_raw.norm() < MATE_TOL {
+                    return Ok(0.0);
+                }
+                let plane_n = pn_raw.normalize();
+                let pose_a = poses.get(instance_a).ok_or_else(|| {
+                    AssemblyError::Mate(MateError::UnknownInstance(instance_a.clone(), mi))
+                })?;
+                let pose_b = poses.get(instance_b).ok_or_else(|| {
+                    AssemblyError::Mate(MateError::UnknownInstance(instance_b.clone(), mi))
+                })?;
+                let target_t = pose_a.translation
+                    - plane_n * (2.0 * (pose_a.translation - plane_o).dot(&plane_n));
+                Ok((pose_b.translation - target_t).norm_squared())
+            }
+            Mate::Width {
+                instance_a,
+                axis_a,
+                instance_b,
+                distance,
+            } => {
+                let val = distance.resolve(&self.parameters).map_err(|e| {
+                    AssemblyError::Mate(MateError::Parameter(mi, format!("width: {e}")))
+                })?;
+                let (oa, da) = self.resolve_axis_in_world(mi, instance_a, axis_a, poses)?;
+                let cb = poses
+                    .get(instance_b)
+                    .ok_or_else(|| {
+                        AssemblyError::Mate(MateError::UnknownInstance(instance_b.clone(), mi))
+                    })?
+                    .translation;
+                let v = cb - oa;
+                let perp = v - da * da.dot(&v);
+                let cur = perp.norm();
+                Ok((cur - val).powi(2))
+            }
+            Mate::PathMate {
+                instance,
+                path,
+                parameter,
+            } => {
+                if path.len() < 2 {
+                    return Ok(0.0);
+                }
+                let t = match parameter.resolve(&self.parameters) {
+                    Ok(v) => v.clamp(0.0, 1.0),
+                    Err(_) => return Ok(0.0),
+                };
+                let mut pts: Vec<Vec3> = Vec::with_capacity(path.len());
+                for p in path {
+                    let arr = match resolve_arr3(p, &self.parameters) {
+                        Ok(a) => a,
+                        Err(_) => return Ok(0.0),
+                    };
+                    pts.push(Vec3::new(arr[0], arr[1], arr[2]));
+                }
+                let mut total = 0.0;
+                let mut seg_lens = Vec::with_capacity(pts.len() - 1);
+                for i in 0..pts.len() - 1 {
+                    let l = (pts[i + 1] - pts[i]).norm();
+                    total += l;
+                    seg_lens.push(l);
+                }
+                if total < 1e-15 {
+                    return Ok(0.0);
+                }
+                let target_len = t * total;
+                let mut acc = 0.0;
+                let mut target = pts[pts.len() - 1];
+                for i in 0..seg_lens.len() {
+                    let next_acc = acc + seg_lens[i];
+                    if target_len <= next_acc + 1e-15 {
+                        let local = if seg_lens[i] > 0.0 {
+                            (target_len - acc) / seg_lens[i]
+                        } else {
+                            0.0
+                        };
+                        target = pts[i] + (pts[i + 1] - pts[i]) * local;
+                        break;
+                    }
+                    acc = next_acc;
+                }
+                let cur = poses
+                    .get(instance)
+                    .ok_or_else(|| {
+                        AssemblyError::Mate(MateError::UnknownInstance(instance.clone(), mi))
+                    })?
+                    .translation;
+                Ok((cur - target).norm_squared())
+            }
+            Mate::Lock {
+                instance_a,
+                instance_b,
+            } => {
+                let pa = poses.get(instance_a).ok_or_else(|| {
+                    AssemblyError::Mate(MateError::UnknownInstance(instance_a.clone(), mi))
+                })?;
+                let pb = poses.get(instance_b).ok_or_else(|| {
+                    AssemblyError::Mate(MateError::UnknownInstance(instance_b.clone(), mi))
+                })?;
+                let trans_err = (pa.translation - pb.translation).norm_squared();
+                let angle_err = (pa.rotation_angle - pb.rotation_angle).powi(2);
+                Ok(trans_err + angle_err)
+            }
         }
     }
 
@@ -1448,31 +1943,122 @@ impl Assembly {
 
     /// Evaluate every instance — produce its `Solid` and apply the resolved
     /// pose. Returns instances in declaration order.
+    ///
+    /// Sub-assembly references (`AssemblyRef::Path`) are not resolved here;
+    /// use [`Assembly::evaluate_with_loader`] for that.
     pub fn evaluate(&self) -> Result<Vec<(String, Solid)>, AssemblyError> {
+        // Closure that always errors on Path — preserves the historical
+        // behaviour of `evaluate` for callers that don't want sub-assembly
+        // composition.
+        self.evaluate_with_loader(|_path: &str| -> Result<Assembly, AssemblyError> {
+            Err(AssemblyError::UnresolvedRef(String::new()))
+        })
+    }
+
+    /// Evaluate every instance, using `loader` to resolve any
+    /// `AssemblyRef::Path` reference. The loader takes the path string
+    /// (whatever was stored in the JSON) and returns a parsed `Assembly`.
+    /// The sub-assembly is then evaluated recursively (its instances'
+    /// solids are unioned into a single composite solid for the
+    /// containing instance), and the containing instance's pose is
+    /// applied on top.
+    ///
+    /// Tests typically pass a closure backed by a `HashMap<String, String>`
+    /// of "filename" → JSON contents, so the assembly fixture stays purely
+    /// in-memory.
+    pub fn evaluate_with_loader<F>(&self, loader: F) -> Result<Vec<(String, Solid)>, AssemblyError>
+    where
+        F: Fn(&str) -> Result<Assembly, AssemblyError> + Copy,
+    {
         let poses = self.solve_poses()?;
         let mut out = Vec::with_capacity(self.instances.len());
         for inst in &self.instances {
-            let model = match &inst.model {
-                AssemblyRef::Inline(m) => m.as_ref(),
-                AssemblyRef::Path(_) => return Err(AssemblyError::UnresolvedRef(inst.id.clone())),
-            };
-            // Pick the target feature: explicit `target`, else the last
-            // feature in declaration order.
-            let target_id = match &inst.target {
-                Some(t) => t.clone(),
-                None => model
-                    .ids()
-                    .last()
-                    .ok_or_else(|| AssemblyError::EmptyModel(inst.id.clone()))?
-                    .to_string(),
-            };
-            let solid = model
-                .evaluate(&target_id)
-                .map_err(|e| AssemblyError::Eval(inst.id.clone(), e))?;
             let pose = poses.get(&inst.id).expect("solver populated all instances");
+            let solid = match &inst.model {
+                AssemblyRef::Inline(m) => {
+                    let model = m.as_ref();
+                    let target_id = match &inst.target {
+                        Some(t) => t.clone(),
+                        None => model
+                            .ids()
+                            .last()
+                            .ok_or_else(|| AssemblyError::EmptyModel(inst.id.clone()))?
+                            .to_string(),
+                    };
+                    model
+                        .evaluate(&target_id)
+                        .map_err(|e| AssemblyError::Eval(inst.id.clone(), e))?
+                }
+                AssemblyRef::Path(p) => {
+                    // Loader returns a sub-assembly. Evaluate it
+                    // recursively (with the same loader) and union the
+                    // resulting solids into a composite.
+                    let sub = loader(p).map_err(|e| match e {
+                        AssemblyError::UnresolvedRef(_) => {
+                            AssemblyError::UnresolvedRef(inst.id.clone())
+                        }
+                        other => other,
+                    })?;
+                    let parts = sub.evaluate_with_loader(loader)?;
+                    if parts.is_empty() {
+                        return Err(AssemblyError::EmptyModel(inst.id.clone()));
+                    }
+                    let mut acc = parts[0].1.clone();
+                    for (_, s) in parts.iter().skip(1) {
+                        acc = acc.union(s);
+                    }
+                    acc
+                }
+            };
             let posed = apply_pose_to_solid(&solid, *pose);
             out.push((inst.id.clone(), posed));
         }
+        Ok(out)
+    }
+
+    /// Detect pairs of instances whose axis-aligned bounding boxes
+    /// overlap, returning `(instance_a_id, instance_b_id, overlap_volume)`.
+    /// `params` is currently unused (the assembly's own parameter table
+    /// drives sub-evaluation) but is kept on the signature so callers
+    /// can pass a frame-of-reference parameter set later.
+    ///
+    /// Pairs are returned in alphabetical order of `(a, b)` with `a < b`,
+    /// so output is deterministic.
+    ///
+    /// Sub-assemblies (`AssemblyRef::Path`) are not currently expanded
+    /// — each `Path` instance is treated as having no detectable
+    /// geometry and is skipped.
+    pub fn detect_interference(
+        &self,
+        _params: &HashMap<String, f64>,
+    ) -> Result<Vec<(String, String, f64)>, AssemblyError> {
+        let posed = self.evaluate()?;
+
+        // AABB per instance, computed on the posed solid.
+        let mut aabbs: Vec<(String, [f64; 3], [f64; 3])> = Vec::with_capacity(posed.len());
+        for (id, solid) in &posed {
+            if let Some((min, max)) = solid_aabb(solid) {
+                aabbs.push((id.clone(), min, max));
+            }
+        }
+
+        let mut out: Vec<(String, String, f64)> = Vec::new();
+        for i in 0..aabbs.len() {
+            for j in (i + 1)..aabbs.len() {
+                let (id_a, min_a, max_a) = &aabbs[i];
+                let (id_b, min_b, max_b) = &aabbs[j];
+                let overlap = aabb_overlap_volume(min_a, max_a, min_b, max_b);
+                if overlap > 0.0 {
+                    let (a, b) = if id_a <= id_b {
+                        (id_a.clone(), id_b.clone())
+                    } else {
+                        (id_b.clone(), id_a.clone())
+                    };
+                    out.push((a, b, overlap));
+                }
+            }
+        }
+        out.sort_by(|x, y| x.0.cmp(&y.0).then_with(|| x.1.cmp(&y.1)));
         Ok(out)
     }
 
@@ -1598,9 +2184,16 @@ fn mate_endpoints(mate: &Mate) -> (&str, &str) {
         | Mate::Distance { instance_a, instance_b, .. }
         | Mate::ParallelPlane { instance_a, instance_b, .. }
         | Mate::AngleMate { instance_a, instance_b, .. }
-        | Mate::TangentMate { instance_a, instance_b, .. } => {
+        | Mate::TangentMate { instance_a, instance_b, .. }
+        | Mate::Symmetry { instance_a, instance_b, .. }
+        | Mate::Width { instance_a, instance_b, .. }
+        | Mate::Lock { instance_a, instance_b, .. } => {
             (instance_a.as_str(), instance_b.as_str())
         }
+        // PathMate has only ONE instance — degenerate "self loop". The
+        // cycle detector skips self-loops; downstream solvers handle it
+        // as a single-instance constraint.
+        Mate::PathMate { instance, .. } => (instance.as_str(), instance.as_str()),
     }
 }
 
@@ -1616,6 +2209,53 @@ fn resolve_arr3(
         out[i] = s.resolve(params)?;
     }
     Ok(out)
+}
+
+/// Compute the axis-aligned bounding box of a `Solid` from its vertex
+/// geometry. Returns `None` if the solid has no vertices.
+fn solid_aabb(s: &Solid) -> Option<([f64; 3], [f64; 3])> {
+    if s.vertex_count() == 0 {
+        return None;
+    }
+    let mut min = [f64::INFINITY; 3];
+    let mut max = [f64::NEG_INFINITY; 3];
+    let mut any = false;
+    for vid in s.topo.vertex_ids() {
+        if let Some(p) = s.vertex_geom.get(vid) {
+            any = true;
+            min[0] = min[0].min(p.x);
+            min[1] = min[1].min(p.y);
+            min[2] = min[2].min(p.z);
+            max[0] = max[0].max(p.x);
+            max[1] = max[1].max(p.y);
+            max[2] = max[2].max(p.z);
+        }
+    }
+    if !any {
+        None
+    } else {
+        Some((min, max))
+    }
+}
+
+/// Volume of the intersection of two AABBs. Zero if they don't overlap.
+fn aabb_overlap_volume(
+    min_a: &[f64; 3],
+    max_a: &[f64; 3],
+    min_b: &[f64; 3],
+    max_b: &[f64; 3],
+) -> f64 {
+    let mut vol = 1.0;
+    for i in 0..3 {
+        let lo = min_a[i].max(min_b[i]);
+        let hi = max_a[i].min(max_b[i]);
+        let extent = hi - lo;
+        if extent <= 0.0 {
+            return 0.0;
+        }
+        vol *= extent;
+    }
+    vol
 }
 
 fn pick_perpendicular(v: Vec3) -> Vec3 {
