@@ -1,5 +1,6 @@
 //! Boolean operations on B-rep solids.
 
+pub mod analytic_curves;
 pub mod chord_merge;
 pub mod classify;
 pub mod clip;
@@ -14,6 +15,7 @@ pub mod split;
 pub mod stitch;
 pub mod triangulate;
 
+pub use analytic_curves::{CylinderPlaneIntersection, cylinder_plane_intersection};
 pub use classify::{FaceClassification, classify_face, face_centroid};
 pub use clip::{ClipResult, clip_line_to_convex_polygon};
 pub use edge_lookup::{PointLocation, locate_point_on_face};

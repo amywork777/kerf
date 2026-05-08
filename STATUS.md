@@ -56,7 +56,7 @@ kernel + authoring + viewer + production output).
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
 | Manufacturing features (170+ — see catalog, multi-edge Fillets handles 4-corner; chained Fillet handles cross-axis cases via score-based stitch rescue) | 12% | 97% | 11.64 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
-| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
+| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases; closed-form Cylinder×Plane intersection lifts to brep-layer EllipseSegment) | 8% | 50% | 4.0 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
 | **Solidworks-tier total**                 | **100%**  |          | **~65.2%** |
@@ -100,6 +100,23 @@ stitch step now pass. ~65.1% → ~65.2% (+0.1 SW pt: Manufacturing 96 → 97).
   seam edges). pipeline.rs's `boolean_solid` passes the dropped pool
   through. The 4-corner z-edge Fillets ignored test
   (`fillets_all_four_z_corners_succeeds`) un-ignored at this stage.
+
+## Previous session (analytic-curve-cylinder-plane, merged in)
+
+Curved-surface category 45% → 50% (+0.4 SW pts).
+
+- **Brep-layer `EllipseSegment`**: new arc-bounded ellipse type in
+  `crates/kerf-brep/src/geometry.rs` with explicit start/end angles, `Sense`
+  (forward/reverse), `directed_span`, `start_point`/`end_point`, `is_full`,
+  and lossless conversion to the existing `CurveSegment`. Added
+  `CurveSegment::circle` and `CurveSegment::ellipse` arc constructors mirroring
+  `CurveSegment::line`.
+- **Brep-layer `cylinder_plane_intersection`**: new
+  `crates/kerf-brep/src/booleans/analytic_curves.rs` lifts `kerf-geom`'s
+  closed-form `intersect_plane_cylinder` to the brep layer, returning
+  `CylinderPlaneIntersection { Empty | Tangent(Line) | TwoLines(Line, Line)
+  | Circle(EllipseSegment) | Ellipse(EllipseSegment) }`.
+- 11 new math sanity tests for the analytic intersection regimes.
 
 ## Earlier session (2026-05-06)
 
