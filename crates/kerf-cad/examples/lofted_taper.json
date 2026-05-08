@@ -1,0 +1,12 @@
+{
+  "parameters": {
+    "h": 10.0,
+    "scale": 0.4
+  },
+  "features": [
+    {"kind": "TaperedExtrude", "id": "out",
+      "profile": {"points": [[-3, -3], [3, -3], [3, 3], [-3, 3]]},
+      "height": "$h",
+      "top_scale": "$scale"}
+  ]
+}

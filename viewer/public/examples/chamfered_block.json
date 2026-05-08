@@ -1,0 +1,17 @@
+{
+  "parameters": {
+    "x": 30.0,
+    "y": 30.0,
+    "z": 10.0,
+    "setback": 3.0
+  },
+  "features": [
+    {"kind": "Box", "id": "body", "extents": ["$x", "$y", "$z"]},
+    {"kind": "Chamfer", "id": "out", "input": "body",
+      "axis": "z",
+      "edge_min": [0.0, 0.0, 0.0],
+      "edge_length": "$z",
+      "setback": "$setback",
+      "quadrant": "pp"}
+  ]
+}
