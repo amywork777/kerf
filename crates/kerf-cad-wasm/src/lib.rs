@@ -8,11 +8,13 @@
 use wasm_bindgen::prelude::*;
 
 use kerf_brep::{
+    axis_aligned_line_edge, edge_info, face_boundary_edges, quadrant_hint_for_axis_edge,
     measure::solid_volume,
     tessellate::{tessellate, tessellate_with_face_index},
     Solid,
 };
 use kerf_cad::Model;
+use std::collections::HashMap;
 
 // Default panic hook is fine; viewer can install console_error_panic_hook
 // if it wants nicer traces in DevTools. Keeping the wasm crate dep-light.
@@ -124,6 +126,60 @@ pub fn evaluate_with_face_ids(
                 .unwrap_or_default()
         })
         .collect();
+
+    // Edge enumeration. Walk solid.topo.edge_ids() in iteration order; build
+    // a stable (EdgeId -> index) map so face_to_edges can refer to edges by
+    // their integer index. The edge index is sequential 0..edge_count and
+    // matches the order edges appear in the `edges` vector below.
+    let mut edge_index_map: HashMap<kerf_topo::EdgeId, u32> = HashMap::new();
+    let mut edges_out: Vec<EdgeOut> = Vec::new();
+    for (idx, eid) in solid.topo.edge_ids().enumerate() {
+        edge_index_map.insert(eid, idx as u32);
+        let info = edge_info(&solid, eid);
+        let (axis_hint, edge_min_hint, edge_length_hint, quadrant_hint) =
+            match axis_aligned_line_edge(&solid, eid) {
+                Some((axis, edge_min, len)) => {
+                    let q = quadrant_hint_for_axis_edge(&solid, eid, axis).unwrap_or_default();
+                    (axis.to_string(), edge_min, len, q)
+                }
+                None => (String::new(), [0.0; 3], 0.0, String::new()),
+            };
+        // Edge owner tag: pick the owner tag of one of the two adjacent
+        // faces (preferring a non-empty owner). Useful diagnostic for the
+        // viewer.
+        let owner_tag = adjacent_face_owner(&solid, eid).unwrap_or_default();
+        let (p_start, p_end, length, curve_kind) = match info {
+            Some(i) => (i.p_start, i.p_end, i.length, i.curve_kind.to_string()),
+            None => ([0.0; 3], [0.0; 3], 0.0, "unknown".to_string()),
+        };
+        edges_out.push(EdgeOut {
+            id: idx as u32,
+            owner_tag,
+            p_start,
+            p_end,
+            length,
+            curve_kind,
+            axis_hint,
+            edge_min_hint,
+            edge_length_hint,
+            quadrant_hint,
+        });
+    }
+
+    // face_to_edges: indexed by face render index (0..face_count). Walk the
+    // same face_ids() iterator the tessellator uses to keep indices in
+    // lockstep.
+    let face_to_edges: Vec<Vec<u32>> = solid
+        .topo
+        .face_ids()
+        .map(|fid| {
+            face_boundary_edges(&solid, fid)
+                .into_iter()
+                .filter_map(|eid| edge_index_map.get(&eid).copied())
+                .collect()
+        })
+        .collect();
+
     let vol = solid_volume(&solid);
     #[derive(serde::Serialize)]
     struct OutFull {
@@ -131,6 +187,8 @@ pub fn evaluate_with_face_ids(
         face_ids: Vec<u32>,
         face_count: u32,
         face_owner_tags: Vec<String>,
+        face_to_edges: Vec<Vec<u32>>,
+        edges: Vec<EdgeOut>,
         volume: f64,
         shell_count: usize,
         vertex_count: usize,
@@ -142,6 +200,8 @@ pub fn evaluate_with_face_ids(
         face_ids,
         face_count,
         face_owner_tags: owner_tags,
+        face_to_edges,
+        edges: edges_out,
         volume: vol,
         shell_count: solid.shell_count(),
         vertex_count: solid.vertex_count(),
@@ -149,6 +209,54 @@ pub fn evaluate_with_face_ids(
         face_count_topo: solid.face_count(),
     })
     .map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[derive(serde::Serialize)]
+struct EdgeOut {
+    id: u32,
+    owner_tag: String,
+    p_start: [f64; 3],
+    p_end: [f64; 3],
+    length: f64,
+    curve_kind: String,
+    /// "x" | "y" | "z" if the edge is an axis-aligned line, else "".
+    axis_hint: String,
+    /// For axis-aligned line edges: the lower-coord endpoint (Fillet
+    /// `edge_min`). All zeros if not axis-aligned.
+    edge_min_hint: [f64; 3],
+    /// Length along the axis. 0.0 if not axis-aligned.
+    edge_length_hint: f64,
+    /// "pp"|"pn"|"np"|"nn" describing the body's quadrant relative to the
+    /// edge in canonical perpendicular order. Empty if not axis-aligned.
+    quadrant_hint: String,
+}
+
+/// Pick an "owner tag" to attach to an edge by inspecting the two adjacent
+/// faces (the half-edges' loops' faces). Prefers a non-empty owner, falling
+/// back to the first face's owner if both are empty.
+fn adjacent_face_owner(solid: &Solid, edge_id: kerf_topo::EdgeId) -> Option<String> {
+    let edge = solid.topo.edge(edge_id)?;
+    let [he_a, he_b] = edge.half_edges();
+    let face_of = |heid: kerf_topo::HalfEdgeId| -> Option<kerf_topo::FaceId> {
+        let he = solid.topo.half_edge(heid)?;
+        let lp = solid.topo.loop_(he.loop_())?;
+        Some(lp.face())
+    };
+    let fa = face_of(he_a);
+    let fb = face_of(he_b);
+    let tag_of = |fid: Option<kerf_topo::FaceId>| -> String {
+        fid.and_then(|f| solid.face_owner_tag.get(f).cloned())
+            .unwrap_or_default()
+    };
+    let ta = tag_of(fa);
+    let tb = tag_of(fb);
+    if !ta.is_empty() {
+        Some(ta)
+    } else if !tb.is_empty() {
+        Some(tb)
+    } else {
+        Some(String::new())
+    }
 }
 
 fn solid_to_triangles(solid: &Solid, segments: usize) -> Vec<f32> {

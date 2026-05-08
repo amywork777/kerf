@@ -9,6 +9,12 @@ import init, {
   target_ids_of,
 } from "./wasm/kerf_cad_wasm.js";
 import { exportThreeViewPng } from "./drawings.js";
+import {
+  applyFilletToModelJson,
+  buildFilletFeature as buildFilletFeatureImpl,
+  isEdgeFilletable,
+  type EdgeOut as EdgeOutShared,
+} from "./picking-fillet.js";
 
 await init();
 
@@ -35,6 +41,7 @@ const selectedFeatureTitleEl = document.getElementById("selected-feature-title")
 selectedFeatureEl.querySelector(".sf-close")?.addEventListener("click", () => {
   selectedFeatureId = null;
   highlightedFace = -1;
+  pickedFace = -1;
   refreshFaceColors();
   renderSelectedFeaturePanel();
 });
@@ -85,6 +92,16 @@ let highlightedFace = -1;
 let hoveredFace = -1;
 let selectedFeatureId: string | null = null;
 
+type EdgeOut = EdgeOutShared;
+
+/** face index → list of edge indices (into `currentEdges`) for that face's
+ *  outer boundary loop. */
+let currentFaceToEdges: number[][] = [];
+let currentEdges: EdgeOut[] = [];
+/** When a face is highlighted via picking, the index of the chosen face
+ *  whose edge list we show. */
+let pickedFace = -1;
+
 function fitToView(box: THREE.Box3) {
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3()).length() || 50;
@@ -102,8 +119,12 @@ function setMesh(
   faceIds: Uint32Array,
   faceOwnerTags: string[],
   faceCount: number,
+  faceToEdges: number[][],
+  edges: EdgeOut[],
   fit: boolean,
 ) {
+  currentFaceToEdges = faceToEdges;
+  currentEdges = edges;
   if (currentMesh) {
     scene.remove(currentMesh);
     currentMesh.geometry.dispose();
@@ -212,6 +233,7 @@ function pickFaceAt(clientX: number, clientY: number): number {
 renderer.domElement.addEventListener("click", (e) => {
   const fid = pickFaceAt(e.clientX, e.clientY);
   highlightedFace = fid;
+  pickedFace = fid;
   refreshFaceColors();
   if (fid >= 0) {
     const owner = currentFaceOwnerTags?.[fid] ?? "";
@@ -220,10 +242,16 @@ renderer.domElement.addEventListener("click", (e) => {
       renderSelectedFeaturePanel();
       ok(`selected face #${fid} → owner '${owner}'`);
     } else {
+      // Even faces with no owner tag should show the edge list, so the
+      // picking → fillet flow works on raw primitives that haven't been
+      // through a Difference (which is what attaches owner tags).
+      selectedFeatureId = null;
+      renderSelectedFeaturePanel();
       ok(`selected face #${fid} (no owner tag)`);
     }
   } else {
     selectedFeatureId = null;
+    pickedFace = -1;
     renderSelectedFeaturePanel();
   }
 });
@@ -279,6 +307,8 @@ function rebuild(fit: boolean = false) {
       face_ids: number[];
       face_owner_tags: string[];
       face_count: number;
+      face_to_edges: number[][];
+      edges: EdgeOut[];
       volume: number;
       shell_count: number;
       vertex_count: number;
@@ -288,8 +318,10 @@ function rebuild(fit: boolean = false) {
     const tris = new Float32Array(result.triangles);
     const faceIds = new Uint32Array(result.face_ids);
     const ownerTags = result.face_owner_tags ?? [];
+    const faceToEdges = result.face_to_edges ?? [];
+    const edges = result.edges ?? [];
     const dt = performance.now() - t0;
-    setMesh(tris, faceIds, ownerTags, result.face_count, fit);
+    setMesh(tris, faceIds, ownerTags, result.face_count, faceToEdges, edges, fit);
     ok(
       `target='${model.targetId}'  V/E/F/S=${result.vertex_count}/${result.edge_count}/${result.face_count_topo}/${result.shell_count}` +
         `  vol=${result.volume.toFixed(3)}  tris=${tris.length / 9}  eval=${dt.toFixed(1)}ms`,
@@ -429,38 +461,55 @@ function deleteFeature(id: string) {
 }
 
 function renderSelectedFeaturePanel() {
-  if (!model || !selectedFeatureId) {
+  if (!model) {
     selectedFeatureEl.hidden = true;
     return;
   }
-  const parsed = JSON.parse(model.json);
-  const features = (parsed.features ?? []) as Array<Record<string, unknown>>;
-  const feat = features.find((f) => f?.id === selectedFeatureId);
-  if (!feat) {
+  const hasOwnerFeature = !!selectedFeatureId;
+  const hasPickedFace = pickedFace >= 0;
+  if (!hasOwnerFeature && !hasPickedFace) {
     selectedFeatureEl.hidden = true;
     return;
   }
   selectedFeatureEl.hidden = false;
-  selectedFeatureTitleEl.textContent = `${feat.kind} • ${feat.id}`;
   selectedFeatureBodyEl.innerHTML = "";
 
-  const SKIP = new Set(["kind", "id", "input", "inputs"]);
-  for (const [k, v] of Object.entries(feat)) {
-    if (SKIP.has(k)) continue;
-    if (typeof v === "number") {
-      addNumericRow(k, v, [k]);
-    } else if (Array.isArray(v) && v.every((x) => typeof x === "number" || typeof x === "string")) {
-      for (let i = 0; i < v.length; i++) {
-        const elem = v[i];
-        if (typeof elem === "number") {
-          addNumericRow(`${k}[${i}]`, elem, [k, i]);
-        } else {
-          addExpressionRow(`${k}[${i}]`, String(elem), [k, i]);
+  // Edit-fields section: only when we have an owner feature.
+  if (hasOwnerFeature) {
+    const parsed = JSON.parse(model.json);
+    const features = (parsed.features ?? []) as Array<Record<string, unknown>>;
+    const feat = features.find((f) => f?.id === selectedFeatureId);
+    if (feat) {
+      selectedFeatureTitleEl.textContent = `${feat.kind} • ${feat.id}`;
+      const SKIP = new Set(["kind", "id", "input", "inputs"]);
+      for (const [k, v] of Object.entries(feat)) {
+        if (SKIP.has(k)) continue;
+        if (typeof v === "number") {
+          addNumericRow(k, v, [k]);
+        } else if (Array.isArray(v) && v.every((x) => typeof x === "number" || typeof x === "string")) {
+          for (let i = 0; i < v.length; i++) {
+            const elem = v[i];
+            if (typeof elem === "number") {
+              addNumericRow(`${k}[${i}]`, elem, [k, i]);
+            } else {
+              addExpressionRow(`${k}[${i}]`, String(elem), [k, i]);
+            }
+          }
+        } else if (typeof v === "string") {
+          addExpressionRow(k, v, [k]);
         }
       }
-    } else if (typeof v === "string") {
-      addExpressionRow(k, v, [k]);
+    } else {
+      selectedFeatureTitleEl.textContent = "no matching feature";
     }
+  } else {
+    selectedFeatureTitleEl.textContent = `face #${pickedFace}`;
+  }
+
+  // Edge-list section: when a face is picked, list its boundary edges so
+  // the user can fillet one.
+  if (hasPickedFace) {
+    renderEdgeListSection();
   }
 
   if (selectedFeatureBodyEl.children.length === 0) {
@@ -470,6 +519,70 @@ function renderSelectedFeaturePanel() {
     selectedFeatureBodyEl.appendChild(empty);
   }
 }
+
+function renderEdgeListSection() {
+  if (pickedFace < 0) return;
+  const edgeIndices = currentFaceToEdges[pickedFace] ?? [];
+  if (edgeIndices.length === 0) return;
+  const header = document.createElement("div");
+  header.className = "sf-edge-header";
+  header.textContent = `edges of face #${pickedFace} (click to fillet)`;
+  selectedFeatureBodyEl.appendChild(header);
+  for (const idx of edgeIndices) {
+    const e = currentEdges[idx];
+    if (!e) continue;
+    const btn = document.createElement("button");
+    btn.className = "sf-edge-btn";
+    const lenStr = e.length.toFixed(2);
+    const filletable = e.curve_kind === "line" && !!e.axis_hint && !!e.quadrant_hint;
+    const tag = filletable ? "" : " (n/a)";
+    btn.textContent = `edge ${e.id} (${e.curve_kind}, len ${lenStr})${tag}`;
+    btn.disabled = !filletable;
+    btn.title = filletable
+      ? `Add Fillet on edge ${e.id} (axis ${e.axis_hint}, quadrant ${e.quadrant_hint})`
+      : `Cannot fillet: ${e.curve_kind} edge or non-axis-aligned`;
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      addFilletForEdge(idx);
+    });
+    selectedFeatureBodyEl.appendChild(btn);
+  }
+}
+
+/// Build a Fillet feature JSON entry for the given edge index and append
+/// it to the model. The new feature uses the previous target as its
+/// `input` so the chain stays connected. Sets the new feature as the
+/// active target and re-evaluates.
+function addFilletForEdge(edgeIdx: number) {
+  if (!model) return;
+  const e = currentEdges[edgeIdx];
+  if (!e) return;
+  if (!isEdgeFilletable(e)) {
+    err(`cannot fillet edge ${e.id}: ${e.curve_kind}, axis=${e.axis_hint}, q=${e.quadrant_hint}`);
+    return;
+  }
+  const radius = Math.max(0.05, e.edge_length_hint * 0.1);
+  const result = applyFilletToModelJson(model.json, model.targetId, e, radius);
+  if (!result) {
+    err(`cannot fillet edge ${e.id}`);
+    return;
+  }
+  model = {
+    ...model,
+    json: result.json,
+    targetId: result.newId,
+  };
+  renderTargets(result.ids);
+  renderFeatureTree();
+  pickedFace = -1;
+  highlightedFace = -1;
+  selectedFeatureId = null;
+  rebuild();
+  ok(`added fillet '${result.newId}' on edge ${e.id}`);
+}
+
+// Re-export under its original name for any external callers / tests.
+export { buildFilletFeatureImpl as buildFilletFeature };
 
 function addNumericRow(label: string, value: number, path: (string | number)[]) {
   const row = document.createElement("div");
@@ -641,6 +754,7 @@ window.addEventListener("keydown", (e) => {
       break;
     case "Escape":
       highlightedFace = -1;
+      pickedFace = -1;
       selectedFeatureId = null;
       refreshFaceColors();
       renderSelectedFeaturePanel();

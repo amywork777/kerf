@@ -48,7 +48,7 @@ kernel + authoring + viewer + production output).
 | Planar booleans + primitives + validation | 15%       | 99%      | 14.85  |
 | Authoring layer (params + expressions)    | 6%        | 98%      | 5.88   |
 | 3D viewer (mesh, camera, lighting)        | 7%        | 90%      | 6.3    |
-| Picking / selection (face → owner Feature)| 5%        | 70%      | 3.5    |
+| Picking / selection (face → owner Feature)| 5%        | 90%      | 4.5    |
 | Feature tree UI                           | 5%        | 60%      | 3.0    |
 | Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
 | Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
@@ -59,10 +59,52 @@ kernel + authoring + viewer + production output).
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.0%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~66.0%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-06)
+## Latest session (2026-05-08)
+
+Picking → fillet flow shipped. The viewer can now click a face, see its
+boundary edges as a list of buttons, click an edge → a Fillet feature is
+appended to the model JSON, the chain is re-evaluated, and the rounded
+result renders. Picking category bumps 70% → 90%, +1 SW pt. 727 tests →
+731 tests, 0 failed; 10 new vitest tests in viewer/src/picking-fillet.test.ts;
+end-to-end CDP test in /tmp/claude/cdp/drive-pick-fillet.mjs.
+
+- **Kernel**: new `face_boundary_edges`, `edge_info`,
+  `axis_aligned_line_edge`, `quadrant_hint_for_axis_edge` helpers in
+  `kerf-brep::measure`. The quadrant hint walks the two adjacent face
+  centroids and figures out which way the body extends from the edge —
+  enough to populate the kerf-cad `Fillet` feature's `quadrant` field.
+- **WASM**: `evaluate_with_face_ids` now returns `face_to_edges:
+  Vec<Vec<u32>>` (one entry per render face index, listing the edge indices
+  on its outer boundary loop) and `edges: Vec<EdgeOut>` where each EdgeOut
+  carries id, owner_tag (inherited from one of the two adjacent faces),
+  endpoints, length, curve_kind, and the four hint fields needed to build
+  a Fillet feature: axis_hint, edge_min_hint, edge_length_hint,
+  quadrant_hint.
+- **Viewer**: extended the #selected-feature panel with an "edges of face
+  #N" section. Each axis-aligned line edge becomes an enabled button
+  ("edge 8 (line, len 10.00)"); circle / non-axis-aligned edges show as
+  disabled. Clicking an enabled edge appends a Fillet feature to the
+  current model JSON (with `input` pointing at the previous target so the
+  chain stays connected), switches the active target to the new fillet,
+  and re-evaluates. Pure helpers extracted to `picking-fillet.ts` for
+  vitest (10 tests cover isEdgeFilletable, buildFilletFeature, and
+  applyFilletToModelJson — including chained fillet → fillet input
+  threading).
+
+Worth flagging: when the picked face belongs to a `Difference` body (e.g.
+the top face of bracket.json that has 4 holes punched through it), the
+kernel's known limitation (Fillet wedge meets a curved hole face → boolean
+panic) is back in play. The picking layer happily finds short body-edge
+remnants left behind by the Difference, but actually filleting them trips
+"RuntimeError: unreachable" in the WASM. The CDP test deliberately uses a
+plain Box where the kernel doesn't trip; bracket.json picks-and-clicks
+fine but the resulting Fillet doesn't evaluate. That's a kernel issue
+pre-existing this session — not regression.
+
+## Earlier session (2026-05-06)
 
 GAP 1 (Picking → edit) shipped. GAP 2 Plan B (SweepPath) shipped. Bonus
 faceted torus + Donut feature shipped. ~52.7% → ~54.7% (+2 SW pts), 518
@@ -249,7 +291,9 @@ proprietary product): years.
 
 - **Next quick win** (~half a day): face-id-to-edit-id mapping in the
   WASM, so picking a face → scheduling a fillet of its edges becomes
-  possible. ~+3 SW pts.
+  possible. ~+3 SW pts. **(SHIPPED 2026-05-08 — picking → fillet flow
+  works end-to-end on plain solids; Difference-body edges still trip the
+  kernel as documented.)**
 - **Next medium win** (~2 weeks): sketch-on-plane + line/circle drawing
   primitives in the viewer, written to JSON as DSL extension. ~+10 SW
   pts.
