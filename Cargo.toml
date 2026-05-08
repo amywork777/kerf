@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/kerf-geom", "crates/kerf-topo", "crates/kerf-brep"]
+members = ["crates/kerf-geom", "crates/kerf-topo", "crates/kerf-brep", "crates/kerf-cad", "crates/kerf-cad-wasm"]
 
 [workspace.package]
 version = "0.1.0"
@@ -17,3 +17,15 @@ proptest  = "1"
 serde     = { version = "1", features = ["derive"] }
 serde_json = "1"
 criterion = { version = "0.5", default-features = false }
+
+# WASM size optimization. Applied workspace-wide so the wasm crate and all
+# its deps build with these flags in --release. CPU-side `cargo test` and
+# `cargo build` also use this profile, but the impact there is just slightly
+# longer release builds — the tests still run with the dev profile.
+[profile.release]
+opt-level     = "z"   # optimize for size (was the default "3" for speed)
+lto           = "fat" # link-time optimize across crates → strips dead deps
+codegen-units = 1     # one codegen unit lets LTO see everything
+panic         = "abort" # no unwind tables → ~50-150KB savings on wasm
+strip         = true   # strip symbols from the .wasm
+debug         = false  # no DWARF in release builds
