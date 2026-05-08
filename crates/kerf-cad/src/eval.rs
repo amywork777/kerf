@@ -35,8 +35,88 @@ pub enum EvalError {
     Invalid { id: String, reason: String },
     #[error("in feature '{id}': {message}")]
     Parameter { id: String, message: String },
-    #[error("geometric constraint error: {0}")]
-    Constraint(#[from] ConstraintError),
+    /// Direct evaluation of a suppressed feature.
+    #[error("feature is suppressed: {0}")]
+    Suppressed(String),
+    /// Direct evaluation of a feature that lies past the model's
+    /// rollback marker.
+    #[error("feature is past the rollback point: {0}")]
+    RolledBack(String),
+    /// An active feature references an input that is unavailable —
+    /// either suppressed (when a non-boolean references it) or
+    /// past the rollback marker.
+    #[error("feature '{downstream}' references unavailable input '{missing}'")]
+    MissingInput {
+        downstream: String,
+        missing: String,
+    },
+}
+
+/// Returns true if `feature` is a boolean op (Union/Intersection/Difference)
+/// — those are the only kinds that gracefully skip suppressed inputs.
+fn is_boolean(feature: &Feature) -> bool {
+    matches!(
+        feature,
+        Feature::Union { .. } | Feature::Intersection { .. } | Feature::Difference { .. }
+    )
+}
+
+/// True iff `id` exists in the model but is *known to be inactive* —
+/// either suppressed or past the rollback marker. Unknown ids are NOT
+/// classified as inactive: those are reported by the caller via
+/// `UnknownId` once the dep is dereferenced.
+fn is_known_inactive(model: &Model, id: &str) -> bool {
+    model.feature_index_of(id).is_some()
+        && (model.is_suppressed(id) || model.is_rolled_back(id))
+}
+
+/// Resolve a feature's effective input list given the model's suppression
+/// and rollback state.
+///
+/// - For booleans: returns the subset of `feature.inputs()` that are
+///   *not* known-inactive (suppressed / rolled-back inputs are dropped).
+///   Unknown ids stay in the list so the existing `UnknownId` error path
+///   keeps surfacing them as before. If *all* inputs are known-inactive,
+///   returns `Err(Invalid)` because a boolean with zero active inputs
+///   has no result.
+/// - For everything else: any known-inactive input is fatal — returns
+///   `Err(MissingInput)` naming the downstream feature and the missing id.
+///   Unknown ids fall through and surface as `UnknownId` later.
+fn effective_inputs<'a>(
+    model: &'a Model,
+    feature: &'a Feature,
+) -> Result<Vec<&'a str>, EvalError> {
+    let raw: Vec<&str> = feature.inputs();
+    if is_boolean(feature) {
+        let active: Vec<&str> = raw
+            .iter()
+            .copied()
+            .filter(|dep| !is_known_inactive(model, dep))
+            .collect();
+        // Only treat as "all suppressed" if every input is known-inactive
+        // (i.e. some input existed and was masked). An empty raw list
+        // would have already failed validation in fold_boolean.
+        if active.is_empty() && !raw.is_empty() {
+            return Err(EvalError::Invalid {
+                id: feature.id().to_string(),
+                reason: format!(
+                    "all {} inputs are suppressed or rolled back",
+                    raw.len()
+                ),
+            });
+        }
+        Ok(active)
+    } else {
+        for dep in &raw {
+            if is_known_inactive(model, dep) {
+                return Err(EvalError::MissingInput {
+                    downstream: feature.id().to_string(),
+                    missing: (*dep).to_string(),
+                });
+            }
+        }
+        Ok(raw)
+    }
 }
 
 impl Model {
@@ -60,7 +140,12 @@ impl Model {
         if self.feature(target_id).is_none() {
             return Err(EvalError::UnknownId(target_id.to_string()));
         }
-        let params = self.solved_params()?;
+        if self.is_suppressed(target_id) {
+            return Err(EvalError::Suppressed(target_id.to_string()));
+        }
+        if self.is_rolled_back(target_id) {
+            return Err(EvalError::RolledBack(target_id.to_string()));
+        }
         let mut cache: HashMap<String, Solid> = HashMap::new();
         let mut stack: Vec<String> = Vec::new();
         self.eval_into_p(target_id, &mut cache, &mut stack, &params)?;
@@ -98,7 +183,12 @@ impl Model {
         if self.feature(target_id).is_none() {
             return Err(EvalError::UnknownId(target_id.to_string()));
         }
-        let params = self.solved_params()?;
+        if self.is_suppressed(target_id) {
+            return Err(EvalError::Suppressed(target_id.to_string()));
+        }
+        if self.is_rolled_back(target_id) {
+            return Err(EvalError::RolledBack(target_id.to_string()));
+        }
         // Fingerprints computed during this walk, by feature id. Local to
         // one evaluate_cached call so the same DAG produces consistent
         // upstream fingerprints regardless of caller's previous state.
@@ -133,18 +223,20 @@ impl Model {
             .feature(id)
             .ok_or_else(|| EvalError::UnknownId(id.to_string()))?;
 
+        // Walk only the effective deps — booleans skip suppressed/rolled-back
+        // inputs, others surface a MissingInput error.
+        let active_deps = effective_inputs(self, feature)?;
+
         stack.push(id.to_string());
-        for dep in feature.inputs() {
-            self.eval_into_cached_p(dep, local, fps, cache, stack, params)?;
+        for dep in &active_deps {
+            self.eval_into_cached(dep, local, fps, cache, stack)?;
         }
         stack.pop();
 
-        // Compute this feature's fingerprint from its inputs'. We feed
-        // the "effective" parameter map (base + active configuration's
-        // overlay) so a config switch invalidates downstream cache
-        // entries that reference the changed params.
-        let input_fps: Vec<Fingerprint> = feature
-            .inputs()
+        // Compute this feature's fingerprint from its inputs'. Suppression
+        // changes the active-deps set for booleans, which changes the
+        // fingerprint and avoids cache collisions across suppression states.
+        let input_fps: Vec<Fingerprint> = active_deps
             .iter()
             .map(|dep| *fps.get(*dep).expect("dep evaluated"))
             .collect();
@@ -158,7 +250,7 @@ impl Model {
             return Ok(());
         }
 
-        let mut result = build(feature, params, local, self)?;
+        let mut result = build_with_active(feature, &self.parameters, local, self, &active_deps)?;
         // Picking provenance: tag any face in this feature's result that
         // doesn't already carry an owner tag with this feature's id.
         let owner = id.to_string();
@@ -237,13 +329,16 @@ impl Model {
             .feature(id)
             .ok_or_else(|| EvalError::UnknownId(id.to_string()))?;
 
+        let active_deps = effective_inputs(self, feature)?;
+
         stack.push(id.to_string());
-        for dep in feature.inputs() {
-            self.eval_into_p(dep, cache, stack, params)?;
+        for dep in &active_deps {
+            self.eval_into(dep, cache, stack)?;
         }
         stack.pop();
 
-        let mut result = build(feature, params, cache, self)?;
+        let mut result =
+            build_with_active(feature, &self.parameters, cache, self, &active_deps)?;
         // Picking provenance: tag any face in this feature's result that
         // doesn't already carry an owner tag with this feature's id. Boolean
         // operations propagate inputs' owner tags through stitch, so they
@@ -269,6 +364,27 @@ impl Model {
         stack: &mut Vec<String>,
     ) -> Result<(), EvalError> {
         self.eval_into_p(id, cache, stack, &self.parameters)
+    }
+}
+
+/// Wrapper around [`build`] that overrides the input list for boolean ops
+/// with the *active* (non-suppressed, non-rolled-back) ones. For all other
+/// features the active list equals the raw list, so this is a passthrough.
+fn build_with_active(
+    feature: &Feature,
+    params: &HashMap<String, f64>,
+    cache: &HashMap<String, Solid>,
+    model: &Model,
+    active_deps: &[&str],
+) -> Result<Solid, EvalError> {
+    let id = feature.id();
+    match feature {
+        Feature::Union { .. } => fold_boolean_ids(id, active_deps, cache, BoolKind::Union),
+        Feature::Intersection { .. } => {
+            fold_boolean_ids(id, active_deps, cache, BoolKind::Intersection)
+        }
+        Feature::Difference { .. } => fold_boolean_ids(id, active_deps, cache, BoolKind::Difference),
+        _ => build(feature, params, cache, model),
     }
 }
 
@@ -10951,6 +11067,38 @@ fn fold_boolean(
         });
     }
     let mut acc = cache_get(cache, &inputs[0])?.clone();
+    for next_id in &inputs[1..] {
+        let next = cache_get(cache, next_id)?;
+        acc = op.apply(&acc, next).map_err(|e| EvalError::Boolean {
+            id: id.into(),
+            op: op.name(),
+            message: e.message,
+        })?;
+    }
+    Ok(acc)
+}
+
+/// Same fold as [`fold_boolean`], but takes the effective input ids as a
+/// `&[&str]`. Used when suppression has filtered a boolean's inputs at
+/// evaluate time. With a single remaining input it returns that input
+/// directly (suppress one operand of a 2-input difference → see the
+/// remaining shape unchanged).
+fn fold_boolean_ids(
+    id: &str,
+    inputs: &[&str],
+    cache: &HashMap<String, Solid>,
+    op: BoolKind,
+) -> Result<Solid, EvalError> {
+    if inputs.is_empty() {
+        return Err(EvalError::Invalid {
+            id: id.into(),
+            reason: format!("boolean '{}' has no active inputs", op.name()),
+        });
+    }
+    if inputs.len() == 1 {
+        return Ok(cache_get(cache, inputs[0])?.clone());
+    }
+    let mut acc = cache_get(cache, inputs[0])?.clone();
     for next_id in &inputs[1..] {
         let next = cache_get(cache, next_id)?;
         acc = op.apply(&acc, next).map_err(|e| EvalError::Boolean {

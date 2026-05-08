@@ -1,11 +1,11 @@
 //! Model: a DAG of features keyed by id.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 use crate::feature::Feature;
@@ -57,9 +57,43 @@ pub struct Model {
     /// Features keyed by id, kept in insertion order so the JSON/file form
     /// matches what the user wrote.
     pub(crate) features: Vec<Feature>,
+    /// Suppressed feature ids. A suppressed feature is treated as if it
+    /// didn't exist during evaluation:
+    /// - evaluating a suppressed feature directly errors,
+    /// - boolean ops (Union/Intersection/Difference) silently skip
+    ///   suppressed inputs (so suppressing one operand of a Difference
+    ///   removes that subtraction without erroring),
+    /// - any other feature that references a suppressed id errors with
+    ///   `MissingInput`.
+    /// Serialized as a sorted JSON array; omitted when empty for
+    /// backward compatibility with existing model files.
+    #[serde(
+        default,
+        skip_serializing_if = "HashSet::is_empty",
+        serialize_with = "ser_sorted_set",
+        deserialize_with = "de_set"
+    )]
+    pub suppressed: HashSet<String>,
+    /// Optional rollback marker: the id of the last *active* feature in
+    /// insertion order. When `Some`, every feature inserted after this id
+    /// is treated as if it didn't exist (rolled back). Compose with
+    /// `suppressed`: rollback truncates the tail first, then suppression
+    /// masks survivors. `None` = no rollback (all features active).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollback_to: Option<String>,
     /// Cached id -> index lookup. Recomputed after deserialize.
     #[serde(skip)]
     index: HashMap<String, usize>,
+}
+
+fn ser_sorted_set<S: Serializer>(set: &HashSet<String>, s: S) -> Result<S::Ok, S::Error> {
+    let sorted: BTreeSet<&String> = set.iter().collect();
+    sorted.serialize(s)
+}
+
+fn de_set<'de, D: Deserializer<'de>>(d: D) -> Result<HashSet<String>, D::Error> {
+    let v: Vec<String> = Vec::deserialize(d)?;
+    Ok(v.into_iter().collect())
 }
 
 impl Model {
@@ -116,6 +150,75 @@ impl Model {
 
     pub fn is_empty(&self) -> bool {
         self.features.is_empty()
+    }
+
+    /// The insertion-order index of `id`, or None if the id is unknown.
+    /// Useful for rollback comparisons.
+    pub fn feature_index_of(&self, id: &str) -> Option<usize> {
+        self.index.get(id).copied()
+    }
+
+    /// True iff `id` is in the suppressed set.
+    pub fn is_suppressed(&self, id: &str) -> bool {
+        self.suppressed.contains(id)
+    }
+
+    /// True iff `id` is past the rollback point. With no rollback set
+    /// this is always false. An unknown id is reported as not rolled back
+    /// (the caller will surface its own UnknownId error).
+    pub fn is_rolled_back(&self, id: &str) -> bool {
+        let Some(marker) = self.rollback_to.as_deref() else {
+            return false;
+        };
+        let (Some(marker_idx), Some(this_idx)) =
+            (self.feature_index_of(marker), self.feature_index_of(id))
+        else {
+            return false;
+        };
+        this_idx > marker_idx
+    }
+
+    /// True iff `id` is currently active — i.e. neither suppressed nor
+    /// past the rollback point. Unknown ids are reported as not active.
+    pub fn is_active(&self, id: &str) -> bool {
+        if self.feature_index_of(id).is_none() {
+            return false;
+        }
+        !self.is_suppressed(id) && !self.is_rolled_back(id)
+    }
+
+    /// Mark `id` as suppressed. Returns self for fluent chaining.
+    pub fn with_suppressed(mut self, id: impl Into<String>) -> Self {
+        self.suppressed.insert(id.into());
+        self
+    }
+
+    /// Set the rollback marker to `id`. The id must exist in the model;
+    /// pass `None` to clear the marker.
+    pub fn set_rollback_to(&mut self, id: Option<String>) -> Result<(), ModelError> {
+        if let Some(ref s) = id {
+            if !self.index.contains_key(s) {
+                return Err(ModelError::UnknownId(s.clone()));
+            }
+        }
+        self.rollback_to = id;
+        Ok(())
+    }
+
+    /// Replace the suppressed set wholesale. Each id must exist in the
+    /// model; otherwise returns the first unknown id as a `ModelError`.
+    pub fn set_suppressed(
+        &mut self,
+        ids: impl IntoIterator<Item = String>,
+    ) -> Result<(), ModelError> {
+        let new_set: HashSet<String> = ids.into_iter().collect();
+        for id in &new_set {
+            if !self.index.contains_key(id) {
+                return Err(ModelError::UnknownId(id.clone()));
+            }
+        }
+        self.suppressed = new_set;
+        Ok(())
     }
 
     /// Rebuild the id -> index map. Called after deserialize and any time the
@@ -493,5 +596,206 @@ mod equation_tests {
             .with_equation("r", "$d / 2"); // equation overrides base
         let p = m.resolve_params().unwrap();
         assert!((p["r"] - 5.0).abs() < 1e-12, "equation should win over base param");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eval::EvalError;
+    use crate::feature::Feature;
+    use crate::scalar::{lits, Scalar};
+
+    fn three_box_diff() -> Model {
+        // body - hole_a - hole_b. hole_a and hole_b are translated copies
+        // of small boxes that pierce body, so the difference removes
+        // 2 * (2*2*10) = 80 from the 1000 body volume → 920.
+        Model::new()
+            .add(Feature::Box {
+                id: "body".into(),
+                extents: lits([10.0, 10.0, 10.0]),
+            })
+            .add(Feature::BoxAt {
+                id: "hole_a".into(),
+                extents: lits([2.0, 2.0, 12.0]),
+                origin: lits([1.0, 1.0, -1.0]),
+            })
+            .add(Feature::BoxAt {
+                id: "hole_b".into(),
+                extents: lits([2.0, 2.0, 12.0]),
+                origin: lits([6.0, 6.0, -1.0]),
+            })
+            .add(Feature::Difference {
+                id: "out".into(),
+                inputs: vec!["body".into(), "hole_a".into(), "hole_b".into()],
+            })
+    }
+
+    #[test]
+    fn suppressing_a_leaf_makes_direct_evaluation_error() {
+        let m = three_box_diff().with_suppressed("hole_a");
+        let err = m.evaluate("hole_a").unwrap_err();
+        match err {
+            EvalError::Suppressed(id) => assert_eq!(id, "hole_a"),
+            other => panic!("expected Suppressed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn suppressing_one_difference_input_evaluates_remaining() {
+        let m_full = three_box_diff();
+        let v_full = kerf_brep::measure::solid_volume(&m_full.evaluate("out").unwrap());
+        // Without suppression: 1000 - 2*(2*2*10) = 1000 - 80 = 920.
+        assert!((v_full - 920.0).abs() < 1e-6);
+
+        // Suppress hole_a → "out" becomes body - hole_b → 1000 - 40 = 960.
+        let m_sup = three_box_diff().with_suppressed("hole_a");
+        let v_sup = kerf_brep::measure::solid_volume(&m_sup.evaluate("out").unwrap());
+        assert!(
+            (v_sup - 960.0).abs() < 1e-6,
+            "got volume {v_sup}, expected 960"
+        );
+    }
+
+    #[test]
+    fn suppressing_all_boolean_inputs_errors() {
+        let m = three_box_diff()
+            .with_suppressed("body")
+            .with_suppressed("hole_a")
+            .with_suppressed("hole_b");
+        let err = m.evaluate("out").unwrap_err();
+        match err {
+            EvalError::Invalid { id, .. } => assert_eq!(id, "out"),
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn suppressing_a_transform_input_errors_with_missing_input() {
+        let m = Model::new()
+            .add(Feature::Box {
+                id: "src".into(),
+                extents: lits([1.0, 1.0, 1.0]),
+            })
+            .add(Feature::Translate {
+                id: "moved".into(),
+                input: "src".into(),
+                offset: lits([10.0, 0.0, 0.0]),
+            })
+            .with_suppressed("src");
+        let err = m.evaluate("moved").unwrap_err();
+        match err {
+            EvalError::MissingInput { downstream, missing } => {
+                assert_eq!(downstream, "moved");
+                assert_eq!(missing, "src");
+            }
+            other => panic!("expected MissingInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn suppressed_set_round_trips_through_json() {
+        let m = three_box_diff()
+            .with_suppressed("hole_a")
+            .with_suppressed("hole_b");
+        let s = m.to_json_string().unwrap();
+        // The serialized form is a sorted JSON array under "suppressed".
+        assert!(s.contains("\"suppressed\""));
+        let m2 = Model::from_json_str(&s).unwrap();
+        assert_eq!(m2.suppressed.len(), 2);
+        assert!(m2.is_suppressed("hole_a"));
+        assert!(m2.is_suppressed("hole_b"));
+    }
+
+    #[test]
+    fn empty_suppressed_set_is_omitted_from_json() {
+        let m = three_box_diff();
+        let s = m.to_json_string().unwrap();
+        assert!(
+            !s.contains("\"suppressed\""),
+            "empty suppressed set should be skipped, got: {s}"
+        );
+    }
+
+    #[test]
+    fn rollback_to_makes_later_features_unreachable() {
+        let m = Model::new()
+            .add(Feature::Box {
+                id: "a".into(),
+                extents: lits([5.0, 5.0, 5.0]),
+            })
+            .add(Feature::Box {
+                id: "b".into(),
+                extents: lits([3.0, 3.0, 3.0]),
+            })
+            .add(Feature::Translate {
+                id: "b_pos".into(),
+                input: "b".into(),
+                offset: lits([1.0, 1.0, 1.0]),
+            });
+        let mut rolled = m.clone();
+        rolled.set_rollback_to(Some("a".into())).unwrap();
+        // Evaluating "a" still works.
+        assert!(rolled.evaluate("a").is_ok());
+        // Evaluating "b" (past the marker) errors RolledBack.
+        match rolled.evaluate("b").unwrap_err() {
+            EvalError::RolledBack(id) => assert_eq!(id, "b"),
+            other => panic!("expected RolledBack, got {other:?}"),
+        }
+        // Evaluating "b_pos" (also past the marker) errors RolledBack on b_pos itself.
+        match rolled.evaluate("b_pos").unwrap_err() {
+            EvalError::RolledBack(id) => assert_eq!(id, "b_pos"),
+            other => panic!("expected RolledBack, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn suppression_and_rollback_compose() {
+        // Body, two holes, difference. Suppress hole_a (active range);
+        // also rollback to "out". Evaluating "out" should still respect
+        // the suppression of hole_a.
+        let mut m = three_box_diff().with_suppressed("hole_a");
+        m.set_rollback_to(Some("out".into())).unwrap();
+        let v = kerf_brep::measure::solid_volume(&m.evaluate("out").unwrap());
+        assert!((v - 960.0).abs() < 1e-6, "got {v}, expected 960");
+    }
+
+    #[test]
+    fn set_rollback_to_unknown_id_errors() {
+        let mut m = three_box_diff();
+        let err = m.set_rollback_to(Some("nope".into())).unwrap_err();
+        match err {
+            ModelError::UnknownId(id) => assert_eq!(id, "nope"),
+            other => panic!("expected UnknownId, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rollback_to_round_trips_through_json() {
+        let mut m = three_box_diff();
+        m.set_rollback_to(Some("hole_a".into())).unwrap();
+        let s = m.to_json_string().unwrap();
+        assert!(s.contains("\"rollback_to\""));
+        let m2 = Model::from_json_str(&s).unwrap();
+        assert_eq!(m2.rollback_to.as_deref(), Some("hole_a"));
+    }
+
+    #[test]
+    fn legacy_json_without_new_fields_still_loads() {
+        // Backward compat: a JSON with neither suppressed nor rollback_to
+        // should deserialize cleanly with empty / None defaults.
+        // Scalar serializes untagged as a number for Lit.
+        let json = r#"{
+            "features": [
+                {"kind": "Box", "id": "x", "extents": [1.0, 1.0, 1.0]}
+            ]
+        }"#;
+        let m = Model::from_json_str(json).unwrap();
+        assert!(m.suppressed.is_empty());
+        assert!(m.rollback_to.is_none());
+        // And evaluation still works.
+        assert!(m.evaluate("x").is_ok());
+        // Silence unused-import for Scalar in this module.
+        let _ = Scalar::lit(0.0);
     }
 }
