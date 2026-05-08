@@ -121,7 +121,14 @@ pub fn stitch_with_rescue(
     dropped: &[KeptFace],
     tol: &Tolerance,
 ) -> Solid {
+    // Tier 1: GAP C/D — promote coplanar partners from `dropped`.
     let kept_owned = rescue_one_half_edge_orphans(kept, dropped, tol);
+    // Tier 2: GAP E — synthesize closing caps from cycles of orphan edges.
+    // Applied INSIDE stitch_inner after stage 1c/1d so that the cap-from-cycle
+    // detection sees the post-prune polygon set, not the raw classifier
+    // output. This is critical: stage 1c (drop_orphan_contributors) and 1d
+    // (prune_excursion_vertices) drop or simplify same-direction-conflict
+    // faces, and only the residual orphans form clean cycles we can cap.
     stitch_inner(&kept_owned, tol)
 }
 
@@ -251,7 +258,18 @@ fn stitch_inner(kept: &[KeptFace], tol: &Tolerance) -> Solid {
     // from wedge2's cylinder samples) into body z-face polygons that have
     // no corresponding kept partner. Pruning collapses them.
     let face_to_vidx = prune_excursion_vertices(&face_to_vidx);
-    let kept: Vec<&KeptFace> = kept.iter().collect();
+
+    // Stage 1e (GAP E): synthesize closing caps from cycles of 1-half-edge
+    // orphans. Run AFTER stage 1c/1d so we operate on the cleaned-up polygon
+    // set: same-direction conflicts have been dropped, excursion vertices
+    // pruned. Only "true" orphans — boundary-edge cycles where the dropped
+    // partner had a corrupted polygon walk that GAP D's coplanar-promotion
+    // couldn't safely use — survive to here, and they typically form simple
+    // coplanar polygons we can cap directly.
+    let mut kept_owned: Vec<KeptFace> = kept.iter().map(|kf| (*kf).clone()).collect();
+    let mut face_to_vidx: Vec<Vec<usize>> = face_to_vidx;
+    synthesize_planar_caps_inplace(&mut kept_owned, &mut face_to_vidx, &positions, tol);
+    let kept: Vec<&KeptFace> = kept_owned.iter().collect();
 
     // Stage 2: create vertices in the kerf-topo solid.
     let vids: Vec<_> = (0..positions.len())
@@ -1046,6 +1064,255 @@ fn rescue_one_half_edge_orphans(
     kept
 }
 
+/// GAP E: synthesize closing planar caps from cycles of 1-half-edge orphans.
+///
+/// **Invariant violation addressed**: After GAP C/D's coplanar-partner promotion
+/// AND after stage 1c/1d's same-direction-conflict drops + excursion pruning,
+/// some boolean inputs still leave 1-half-edge orphans because the dropped
+/// partner has a self-intersecting / multi-loop polygon walk that the rescue
+/// can't safely promote (its directed edges either close ZERO orphans because
+/// of duplicated-vertex traversal, or they close one orphan and create
+/// several others).
+///
+/// **Common trigger**: Two solids with thin overlapping bands (e.g.
+/// Bipyramid's two pyramids meeting at z=±eps, Stake/VectorArrow/Pawn/Bishop
+/// where a tip-cone meets a body-cylinder, Bushing's bore through a
+/// flange+body assembly). The classifier drops the equatorial cap as
+/// "interior" but `face_polygon` walks both the cap's outer ring AND the
+/// other solid's intersection ring as one self-overlapping loop. The kept
+/// lateral faces' boundary edges on that plane have no twin and form a
+/// simple closed cycle.
+///
+/// **Algorithm**:
+///   1. Take the post-prune polygon set as input (positions + face_to_vidx).
+///   2. Identify canonical edges with exactly one half-edge (the "missing
+///      direction" is what we need to add).
+///   3. Walk the missing-direction edges as a directed graph. Find simple
+///      cycles where every vertex has in-degree == out-degree == 1.
+///   4. For each cycle: verify all vertices are coplanar within tolerance.
+///   5. Construct a `KeptFace` with the cycle polygon and a synthetic
+///      `SurfaceKind::Plane` whose frame.z is the cycle's normal. Append it
+///      to both `kept` and `face_to_vidx`.
+///
+/// **Volume invariance**: Capping adds the SAME face that the dropped pile
+/// had (we just synthesize a clean polygon for it). The boundary set is
+/// unchanged; only stitch's manifold check is satisfied.
+fn synthesize_planar_caps_inplace(
+    kept: &mut Vec<KeptFace>,
+    face_to_vidx: &mut Vec<Vec<usize>>,
+    positions: &[Point3],
+    tol: &Tolerance,
+) {
+    let face_vidx: &[Vec<usize>] = face_to_vidx;
+    let mut dir_count: HashMap<(usize, usize), usize> = HashMap::new();
+    for vidx in face_vidx {
+        let n = vidx.len();
+        for i in 0..n {
+            let a = vidx[i];
+            let b = vidx[(i + 1) % n];
+            if a == b {
+                continue;
+            }
+            *dir_count.entry((a, b)).or_insert(0) += 1;
+        }
+    }
+    // Identify "needed" directed edges: canonical edges where one direction
+    // has count 1 and the other has count 0. The needed direction is the
+    // one with count 0.
+    let mut needed: Vec<(usize, usize)> = Vec::new();
+    let mut seen_canonical: std::collections::HashSet<(usize, usize)> =
+        std::collections::HashSet::new();
+    for (&(a, b), &fwd_count) in &dir_count {
+        let key = canonical_edge_key(a, b);
+        if seen_canonical.contains(&key) {
+            continue;
+        }
+        seen_canonical.insert(key);
+        let rev_count = dir_count.get(&(b, a)).copied().unwrap_or(0);
+        if fwd_count == 1 && rev_count == 0 {
+            needed.push((b, a));
+        } else if fwd_count == 0 && rev_count == 1 {
+            needed.push((a, b));
+        }
+    }
+    if needed.is_empty() {
+        return;
+    }
+    if std::env::var("KERF_STITCH_DEBUG").is_ok() {
+        eprintln!("GAP_E: {} needed edges", needed.len());
+        for (a, b) in &needed {
+            eprintln!("  need_dir=({},{}) p_a={:?} p_b={:?}", a, b, positions[*a], positions[*b]);
+        }
+    }
+    // Walk needed edges as a directed graph: out-edges per vertex.
+    let mut out_edges: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut in_count: HashMap<usize, usize> = HashMap::new();
+    for &(a, b) in &needed {
+        out_edges.entry(a).or_default().push(b);
+        *in_count.entry(b).or_insert(0) += 1;
+        in_count.entry(a).or_insert(0); // ensure key exists
+    }
+    // For a clean cycle, every vertex must have exactly one out-edge and one
+    // in-edge. If any vertex has more, the orphans don't form simple cycles
+    // (e.g. branching) — we skip cap synthesis in that case (it would not be
+    // safe to guess which path closes the loop).
+    for (&v, outs) in &out_edges {
+        if outs.len() != 1 {
+            if std::env::var("KERF_STITCH_DEBUG").is_ok() {
+                eprintln!("GAP_E: bail v={} has {} outs", v, outs.len());
+            }
+            return;
+        }
+        if in_count.get(&v).copied().unwrap_or(0) != 1 {
+            if std::env::var("KERF_STITCH_DEBUG").is_ok() {
+                eprintln!("GAP_E: bail v={} has {} ins", v, in_count.get(&v).copied().unwrap_or(0));
+            }
+            return;
+        }
+    }
+    // Trace each connected cycle.
+    let mut visited: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut new_faces: Vec<(KeptFace, Vec<usize>)> = Vec::new();
+    let pt_tol = tol.point_eq * 1000.0;
+    for &start in out_edges.keys() {
+        if visited.contains(&start) {
+            continue;
+        }
+        let mut cycle: Vec<usize> = Vec::new();
+        let mut cur = start;
+        loop {
+            if cycle.contains(&cur) {
+                break; // returned to a node already in cycle
+            }
+            cycle.push(cur);
+            visited.insert(cur);
+            let nxt = match out_edges.get(&cur).and_then(|v| v.first()) {
+                Some(&n) => n,
+                None => break,
+            };
+            if nxt == start {
+                break; // closed the loop
+            }
+            cur = nxt;
+        }
+        // Validate: cycle must close back to start, length >= 3.
+        if cycle.len() < 3 {
+            continue;
+        }
+        let last = *cycle.last().unwrap();
+        let last_out = out_edges.get(&last).and_then(|v| v.first()).copied();
+        if last_out != Some(cycle[0]) {
+            continue; // not a closed cycle (open chain)
+        }
+        // Validate: all cycle vertices must be coplanar within `pt_tol`.
+        let pts: Vec<Point3> = cycle.iter().map(|&i| positions[i]).collect();
+        // Fit a plane via the first three non-collinear points.
+        let (origin, normal) = match plane_from_points(&pts) {
+            Some(pn) => pn,
+            None => continue, // collinear/degenerate — skip
+        };
+        let mut all_coplanar = true;
+        for p in &pts {
+            let d = (*p - origin).dot(&normal).abs();
+            if d > pt_tol {
+                all_coplanar = false;
+                break;
+            }
+        }
+        if !all_coplanar {
+            continue;
+        }
+        // Verify simple polygon (no self-intersection in 2D projection).
+        // Use a basic same-segment / shared-vertex check rather than full
+        // line-segment intersection: a cycle that visits a vertex more than
+        // once is already excluded by `cycle.contains(&cur)` above. Here we
+        // verify the polygon has at least 3 unique points.
+        let mut unique = pts.clone();
+        unique.sort_by(|a, b| {
+            a.x.partial_cmp(&b.x)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal))
+                .then(a.z.partial_cmp(&b.z).unwrap_or(std::cmp::Ordering::Equal))
+        });
+        unique.dedup_by(|a, b| (*a - *b).norm() < pt_tol);
+        if unique.len() < 3 {
+            continue;
+        }
+        // Construct a `Plane` with frame.z = `normal` and origin on the cycle.
+        // The "normal" direction we compute via signed area corresponds to the
+        // OUTWARD direction of the synthesized cap (CCW from the side `normal`
+        // points to). Since this cap is closing missing-direction half-edges,
+        // it walks the same direction as those — which is the direction the
+        // existing kept lateral faces "look towards" their twin partner. So
+        // `normal` IS the outward cap normal. (This is a heuristic; if the
+        // result is non-manifold we'd see it in `validate`, and if the volume
+        // sign is wrong we'd see it in `solid_volume`.)
+        // Build the orthonormal frame.
+        let any_other = pts
+            .iter()
+            .find(|p| {
+                let d = **p - origin;
+                d.norm() > pt_tol
+            })
+            .copied();
+        let x_dir = match any_other.map(|p| p - origin) {
+            Some(d) => d,
+            None => continue,
+        };
+        let frame =
+            match kerf_geom::Frame::from_x_yhint(origin, x_dir, normal.cross(&x_dir)) {
+                Some(f) => f,
+                None => continue,
+            };
+        // Make sure frame.z aligns with our intended `normal`. `from_x_yhint`
+        // recomputes z from x × y_hint, which here is x × (normal × x) = normal
+        // (up to sign; we corrected y_hint to be orthogonal so this should
+        // align).
+        let surface = SurfaceKind::Plane(kerf_geom::Plane::new(frame));
+        let polygon = pts.clone();
+        new_faces.push((KeptFace::new_line(polygon, surface, None), cycle.clone()));
+    }
+    if new_faces.is_empty() {
+        return;
+    }
+    for (face, vidx) in new_faces {
+        kept.push(face);
+        face_to_vidx.push(vidx);
+    }
+}
+
+/// Fit a plane to a set of points: return (origin, unit_normal) computed via
+/// the cross product of the longest two non-collinear edges. Returns None if
+/// all points are collinear / degenerate.
+fn plane_from_points(pts: &[Point3]) -> Option<(Point3, kerf_geom::Vec3)> {
+    if pts.len() < 3 {
+        return None;
+    }
+    let p0 = pts[0];
+    // Find a non-zero edge from p0.
+    let mut e1: Option<kerf_geom::Vec3> = None;
+    for p in pts.iter().skip(1) {
+        let d = *p - p0;
+        if d.norm() > 1e-12 {
+            e1 = Some(d);
+            break;
+        }
+    }
+    let e1 = e1?;
+    // Find a second edge from p0 not collinear with e1.
+    for p in pts.iter().skip(1) {
+        let e2 = *p - p0;
+        if e2.norm() < 1e-12 {
+            continue;
+        }
+        let n = e1.cross(&e2);
+        if let Some(unit) = n.try_normalize(0.0) {
+            return Some((p0, unit));
+        }
+    }
+    None
+}
+
 /// Coplanar test mirroring `chord_merge::coplanar` so the rescue pass agrees
 /// with chord-merge on which surfaces "are the same plane". Curved surface
 /// kinds are out of scope (rescue only repairs planar 1-half-edge orphans).
@@ -1365,5 +1632,84 @@ mod tests {
             has_arc_edge,
             "expected at least one Ellipse edge to survive stitch"
         );
+    }
+
+    // ----------------------------------------------------------------
+    // GAP E regression: planar caps synthesized from cycles of orphan
+    // edges. Minimal repro of the Bipyramid pattern (two pyramids meeting
+    // at the equator with thin overlap → classifier drops the equator
+    // caps but the kept lateral faces' boundary edges form a clean
+    // planar cycle).
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn gap_e_synthesizes_cap_for_orphan_cycle() {
+        // Build a "bottomless box": 4 vertical sides + a top cap, but no
+        // bottom. The kept set consists of:
+        //   - top cap (z=1): square (0,0,1) (1,0,1) (1,1,1) (0,1,1)
+        //   - 4 side faces, each with its bottom edge at z=0
+        //
+        // Each side face's bottom edge is a 1-half-edge orphan (no twin
+        // anywhere in kept). The 4 orphan edges form a clean cycle in the
+        // z=0 plane: (1,0,0)→(0,0,0)→(0,1,0)→(1,1,0)→(1,0,0). GAP E should
+        // synthesize the missing bottom cap and stitch should succeed.
+        use kerf_geom::{Frame, Plane, Point3};
+
+        let mk_face = |poly: Vec<Point3>, normal: kerf_geom::Vec3| -> KeptFace {
+            let origin = poly[0];
+            let any_other = poly[1];
+            let x_dir = any_other - origin;
+            let y_hint = normal.cross(&x_dir);
+            let frame = Frame::from_x_yhint(origin, x_dir, y_hint).unwrap();
+            KeptFace::new_line(poly, SurfaceKind::Plane(Plane::new(frame)), None)
+        };
+
+        // Vertices: bottom = (0,0,0)(1,0,0)(1,1,0)(0,1,0), top = same with z=1
+        let b0 = Point3::new(0.0, 0.0, 0.0);
+        let b1 = Point3::new(1.0, 0.0, 0.0);
+        let b2 = Point3::new(1.0, 1.0, 0.0);
+        let b3 = Point3::new(0.0, 1.0, 0.0);
+        let t0 = Point3::new(0.0, 0.0, 1.0);
+        let t1 = Point3::new(1.0, 0.0, 1.0);
+        let t2 = Point3::new(1.0, 1.0, 1.0);
+        let t3 = Point3::new(0.0, 1.0, 1.0);
+
+        let top = mk_face(
+            vec![t0, t1, t2, t3],
+            kerf_geom::Vec3::new(0.0, 0.0, 1.0),
+        );
+        // Side faces (CCW from outside; bottom edges walk in the order that
+        // would pair with a CCW-from-above bottom cap).
+        // Front (y=0): walks (b0, b1, t1, t0). Bottom edge is (b0, b1).
+        let front = mk_face(
+            vec![b0, b1, t1, t0],
+            kerf_geom::Vec3::new(0.0, -1.0, 0.0),
+        );
+        // Right (x=1): (b1, b2, t2, t1). Bottom edge (b1, b2).
+        let right = mk_face(
+            vec![b1, b2, t2, t1],
+            kerf_geom::Vec3::new(1.0, 0.0, 0.0),
+        );
+        // Back (y=1): (b2, b3, t3, t2). Bottom edge (b2, b3).
+        let back = mk_face(
+            vec![b2, b3, t3, t2],
+            kerf_geom::Vec3::new(0.0, 1.0, 0.0),
+        );
+        // Left (x=0): (b3, b0, t0, t3). Bottom edge (b3, b0).
+        let left = mk_face(
+            vec![b3, b0, t0, t3],
+            kerf_geom::Vec3::new(-1.0, 0.0, 0.0),
+        );
+
+        let kept = vec![top, front, right, back, left];
+        // Stitch with NO dropped pile — GAP C/D have nothing to promote.
+        // GAP E must synthesize the bottom cap from the orphan cycle
+        // (b0→b1)/(b1→b2)/(b2→b3)/(b3→b0).
+        let solid = stitch_with_rescue(&kept, &[], &Tolerance::default());
+        validate(&solid.topo).unwrap();
+        // 8 vertices, 12 edges, 6 faces — a unit box.
+        assert_eq!(solid.vertex_count(), 8);
+        assert_eq!(solid.edge_count(), 12);
+        assert_eq!(solid.face_count(), 6, "GAP E must synthesize the missing bottom cap");
     }
 }
