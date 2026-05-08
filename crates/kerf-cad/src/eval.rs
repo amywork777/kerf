@@ -16,6 +16,7 @@ use thiserror::Error;
 use crate::feature::{Feature, FilletEdge, Profile2D};
 use crate::model::Model;
 use crate::scalar::{resolve_arr, Scalar};
+use crate::sketch::Sketch;
 use crate::transform::{mirror_solid, rotate_solid, scale_solid, scale_xyz_solid, translate_solid};
 
 #[derive(Debug, Error)]
@@ -262,6 +263,12 @@ fn build(
         }
 
         Feature::Revolve { profile, .. } => build_revolve(id, profile, params),
+
+        Feature::SketchExtrude {
+            sketch, direction, ..
+        } => build_sketch_extrude(id, sketch, direction, params),
+
+        Feature::SketchRevolve { sketch, .. } => build_sketch_revolve(id, sketch, params),
 
         Feature::Tube {
             outer_radius,
@@ -6523,6 +6530,49 @@ fn build_extrude(
         pts.push(Point3::new(xy[0], xy[1], 0.0));
     }
     Ok(extrude_polygon(&pts, dir))
+}
+
+fn build_sketch_extrude(
+    id: &str,
+    sketch: &Sketch,
+    direction: &[Scalar; 3],
+    params: &HashMap<String, f64>,
+) -> Result<Solid, EvalError> {
+    let profiles = sketch.to_profile_2d(params).map_err(|e| EvalError::Invalid {
+        id: id.into(),
+        reason: format!("sketch trace: {e}"),
+    })?;
+    if profiles.len() != 1 {
+        return Err(EvalError::Invalid {
+            id: id.into(),
+            reason: format!(
+                "SketchExtrude expects exactly one closed loop in the sketch, got {}",
+                profiles.len()
+            ),
+        });
+    }
+    build_extrude(id, &profiles[0], direction, params)
+}
+
+fn build_sketch_revolve(
+    id: &str,
+    sketch: &Sketch,
+    params: &HashMap<String, f64>,
+) -> Result<Solid, EvalError> {
+    let profiles = sketch.to_profile_2d(params).map_err(|e| EvalError::Invalid {
+        id: id.into(),
+        reason: format!("sketch trace: {e}"),
+    })?;
+    if profiles.len() != 1 {
+        return Err(EvalError::Invalid {
+            id: id.into(),
+            reason: format!(
+                "SketchRevolve expects exactly one closed loop in the sketch, got {}",
+                profiles.len()
+            ),
+        });
+    }
+    build_revolve(id, &profiles[0], params)
 }
 
 #[derive(Clone, Copy)]
