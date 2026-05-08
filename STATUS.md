@@ -56,13 +56,96 @@ kernel + authoring + viewer + production output).
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
 | Manufacturing features (170+ — see catalog, multi-edge Fillets handles 4-corner; chained Fillet handles cross-axis cases via score-based stitch rescue) | 12% | 97% | 11.64 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
-| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases; closed-form Cylinder×Plane, Sphere×Plane, and Cylinder×Cylinder analytic intersections lift to brep-layer EllipseSegment / sampled polylines; face_intersections emits Arc-kind chords for both Cylinder×Plane and Sphere×Plane face pairs; stitch canonical edge key + face_polygon walker remain arc-aware end-to-end, with arc chords gated behind a feature-flag-style filter awaiting the curve-aware splice/split work) | 8% | 65% | 5.2 |
+| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases; closed-form Cylinder×Plane, Sphere×Plane, Cylinder×Cylinder, **Cone×Plane** (full conic-section taxonomy: Circle/Ellipse/Parabola/Hyperbola/TwoLines/Apex), **Torus×Plane** (concentric circles / tangent circle / two tube circles / spiric polylines), and **Sphere×Sphere** analytic intersections lift to brep-layer EllipseSegment / sampled polylines; face_intersections emits Arc-kind chords for Cylinder×Plane, Sphere×Plane, **Cone×Plane**, and **Torus×Plane** face pairs; stitch canonical edge key + face_polygon walker remain arc-aware end-to-end, with arc chords gated behind a feature-flag-style filter awaiting the curve-aware splice/split work) | 8% | 80% | 6.4 |
 | 2D sketcher UI                            | 8%        | 0%       | 0      |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.8%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~67.0%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-08, curved-tier-3-plus — Tier A)
+## Latest session (2026-05-08, curved-tier-b — Tier C)
+
+Tier C of the curved-tier-3-plus session shipped on top of Tier A. Three
+more closed-form analytic surface×surface intersections lifted into the
+brep layer (Cone×Plane, Torus×Plane, Sphere×Sphere), plus brep-level
+face_intersections wiring for both Plane pairs. Curved-surface jumps
+65 → 80% (+1.2 SW pt), 764 → 782 tests (18 new), 0 failed, 8 ignored
+(no new ignored). GAP C/D fillet tests all still pass. Tier B (routing arc chords
+through splice/split) remained deferred — same blockers as Tier A; see
+the Tier A writeup below for the multi-week scope. The Tier C wiring
+populates the same Arc-kind data channel Cylinder/Sphere×Plane already
+expose, so when Tier B does land, all four Plane×curved analytic regimes
+flow through it together.
+
+- **Cone×Plane analytic intersection** (`cone_plane_intersection`,
+  `ConePlaneIntersection { Empty | Apex(Point3) | TwoLines(Line, Line)
+  | Circle(EllipseSegment) | Ellipse(EllipseSegment) | Parabola(Vec<Point3>)
+  | Hyperbola(Vec<Point3>) }`). Full conic-section taxonomy: classifies
+  the cut by the angle β between plane and cone-axis vs the cone's
+  half-angle α. β > α → ellipse (closed loop); β = α → parabola (sampled
+  polyline); β < α → hyperbola (sampled polyline, two branches);
+  perpendicular plane → circle. Through-apex degenerates handled
+  separately: TwoLines (when plane cuts both sides of the cone),
+  apex-only (otherwise). The Parabola/Hyperbola samplers solve the cone
+  ring equation `R cos(u − φ) = -(d0 + v·an) / (|v|·tan α · R)` for u
+  at each `v ∈ [-4, 4]`. Each accepted sample lies on both surfaces to
+  better than 1e-6.
+- **Torus×Plane analytic intersection** (`torus_plane_intersection`,
+  `TorusPlaneIntersection { Empty | Circle | TwoCircles | TwoTubeCircles
+  | Spiric(Vec<Point3>) }`). Three closed-form regimes (perpendicular
+  plane: TwoCircles for `|d| < r`, Circle (radius R) for `|d| = r`,
+  Empty for `|d| > r`; plane through axis: TwoTubeCircles of radius `r`
+  centered at `±R`); general oblique planes return a sampled polyline
+  of the 4th-degree spiric section, traced by zero-crossing detection
+  along each fixed-`u` ring of a 96×48 (u, v) grid.
+- **face_intersections wiring for Cone×Plane and Torus×Plane**. New
+  `intersect_cone_plane_pair` and `intersect_torus_plane_pair` emit
+  `FaceIntersectionKind::Arc(EllipseSegment)` chords for the closed-
+  conic regimes (Cone Circle/Ellipse, Torus TwoCircles outer ring /
+  TwoTubeCircles outer / Circle), gated by the existing pipeline's
+  arc filter exactly the same way Cylinder×Plane is. No regression on
+  planar paths.
+- **Sphere×Sphere analytic intersection** (`sphere_sphere_intersection`,
+  `SphereSphereIntersection { Empty | Coincident | Tangent(Point3) |
+  Circle(EllipseSegment) }`). Wraps `kerf_geom::intersect::intersect_sphere_sphere`;
+  the radical-circle case is lifted to a degenerate full ellipse so
+  it shares one curve type with Cylinder×Plane / Sphere×Plane / Cone×Plane
+  / Torus×Plane downstream.
+- **Tests added (18)**:
+  `cone_plane_perp_axis_returns_circle`,
+  `cone_plane_through_apex_perp_returns_apex`,
+  `cone_plane_through_apex_steep_returns_two_lines`,
+  `cone_plane_parallel_generator_returns_parabola`,
+  `cone_plane_oblique_steep_returns_ellipse`,
+  `cone_plane_oblique_shallow_returns_hyperbola`,
+  `torus_plane_perp_at_center_returns_two_concentric_circles`,
+  `torus_plane_perp_offset_returns_two_concentric_circles`,
+  `torus_plane_perp_above_torus_returns_empty`,
+  `torus_plane_perp_at_top_tangent_returns_circle`,
+  `torus_plane_through_axis_returns_two_tube_circles`,
+  `torus_plane_oblique_returns_spiric_polyline`,
+  `face_intersection_returns_arc_for_cone_plane`,
+  `face_intersection_returns_arc_for_torus_plane`,
+  `sphere_sphere_overlap_returns_circle`,
+  `sphere_sphere_disjoint_returns_empty`,
+  `sphere_sphere_external_tangent_returns_point`,
+  `sphere_sphere_identical_returns_coincident`.
+  Each verifies regime classification AND that sample points lie on
+  both surfaces.
+- **Why Tier B (still) didn't ship**: same blockers documented under
+  Tier A. Routing arc chords through splice/split needs `mef_arc`,
+  `resolve_interior_endpoints` extended to walk `(u, v)` along the
+  conic parameter, and `classify_chord_interiorness` taught to treat
+  arc chords as not-single-line crossings of a face. The brief
+  proposed a sample-arc-to-polyline approach, but the closed-conic
+  arcs from Cylinder/Sphere/Cone/Torus×Plane have `start == end`
+  (full loops), and the polyline-segment approach also breaks because
+  the arc samples don't lie on the face's outer-loop polygon as
+  walked by `face_polygon` (cylinder lateral face, for instance, is a
+  4-half-edge loop on a closed conic — its polygon vertices are the
+  bot/top circle anchor points, not the arc samples). Honestly
+  deferred as out-of-session-budget work.
+
+## Earlier session (2026-05-08, curved-tier-3-plus — Tier A)
 
 Tier A of the curved-tier-3-plus session shipped on top of curved-stitch
 arc edges (PR #13). Two more closed-form analytic surface×surface

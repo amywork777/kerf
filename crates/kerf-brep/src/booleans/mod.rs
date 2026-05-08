@@ -15,7 +15,12 @@ pub mod split;
 pub mod stitch;
 pub mod triangulate;
 
-pub use analytic_curves::{CylinderPlaneIntersection, cylinder_plane_intersection};
+pub use analytic_curves::{
+    ConePlaneIntersection, CylinderCylinderIntersection, CylinderPlaneIntersection,
+    SpherePlaneIntersection, SphereSphereIntersection, TorusPlaneIntersection,
+    cone_plane_intersection, cylinder_cylinder_intersection, cylinder_plane_intersection,
+    sphere_plane_intersection, sphere_sphere_intersection, torus_plane_intersection,
+};
 pub use classify::{FaceClassification, classify_face, face_centroid};
 pub use clip::{ClipResult, clip_line_to_convex_polygon};
 pub use edge_lookup::{PointLocation, locate_point_on_face};
