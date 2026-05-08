@@ -57,12 +57,37 @@ kernel + authoring + viewer + production output).
 | Manufacturing features (170+ — see catalog) | 12% | 95% | 11.4 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
 | Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 45% | 3.6 |
-| 2D sketcher UI                            | 8%        | 0%       | 0      |
+| 2D sketcher UI                            | 8%        | 30%      | 2.4    |
 | Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
-| **Solidworks-tier total**                 | **100%**  |          | **~65.0%** |
+| **Solidworks-tier total**                 | **100%**  |          | **~67.4%** |
 | **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
 
-## Latest session (2026-05-06)
+## Latest session (2026-05-08)
+
+**2D sketcher data model + JSON DSL shipped.** Sketcher scorecard line
+0% → 30% (+2.4 SW pts). 727 tests → 739 tests (12 new — 10 integration
++ 2 unit), 0 failed, 9 ignored.
+
+- **`Sketch` type** in new `crates/kerf-cad/src/sketch.rs`: `SketchPlane`
+  (Xy/Xz/Yz/NamedRefPlane), `SketchPrim` (Point, Line, Circle, Arc),
+  `SketchConstraint` (Coincident, Distance, Horizontal, Vertical,
+  Parallel, Perpendicular, FixedPoint). Full serde derive for JSON DSL.
+- **Loop tracer** `Sketch::to_profile_2d(params)` walks Lines+Arcs as a
+  graph and emits a `Profile2D` per closed loop. Standalone Circles
+  emit their own profile each. Requires every endpoint that participates
+  in a line/arc to have valence == 2 — branching, dangling endpoints,
+  and unknown-point references are rejected with structured
+  `SketchError`s. Auto-flips clockwise sketches to CCW so
+  `extrude_polygon` produces positive-volume solids.
+- **`Feature::SketchExtrude` / `Feature::SketchRevolve`** route a sketch
+  through `to_profile_2d` and into the existing `extrude_polygon` /
+  `revolve_polyline` kernel paths.
+- **Constraints are stored, not solved.** Round-trip through JSON
+  preserves all 7 variants. The future solver picks them up unchanged.
+  This is the structural foundation for the constraint-solver line
+  (currently 30%, separate from this delta).
+
+## Earlier session (2026-05-06)
 
 GAP 1 (Picking → edit) shipped. GAP 2 Plan B (SweepPath) shipped. Bonus
 faceted torus + Donut feature shipped. ~52.7% → ~54.7% (+2 SW pts), 518
