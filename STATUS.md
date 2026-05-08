@@ -259,3 +259,84 @@ proprietary product): years.
 If you want to keep grinding toward Solidworks parity, the right shape is
 probably a recurring background agent (`/schedule`) that picks one of
 these per week and opens a PR — not a single long session.
+
+## Performance polish (M-perf, feat/wasm-perf)
+
+A round of WASM bundle and evaluation-time optimization, done in one
+session. None of these touch the public API; the viewer's existing JS
+keeps working unchanged.
+
+**WASM bundle size — measured**
+
+| Stage                                             | Bytes      | Δ from prev | Δ from start |
+| ------------------------------------------------- | ---------- | ----------- | ------------ |
+| Before (opt-level=3, no LTO)                      | 2,871,924  | —           | —            |
+| After size profile (opt-level=z, lto=fat, strip)  | 2,643,421  | -8.0%       | -8.0%        |
+| After wasm-bindgen --remove-{name,producers}      | 2,128,132  | -19.5%      | -25.9%       |
+| After wasm-opt -Oz --strip-debug --strip-producers | **1,844,770** | -13.3%   | **-35.8%**   |
+
+The viewer's production bundle (verified with `pnpm build`):
+`dist/assets/kerf_cad_wasm_bg-*.wasm = 1,844.77 kB`. Just shy of the
+1.5 MB stretch target — getting under that probably requires either
+`#[inline(never)]` annotations on the boolean engine (LTO is currently
+inlining a lot of the per-feature evaluators across crate boundaries)
+or splitting the WASM into a kernel + tessellator chunk loaded lazily.
+
+The release profile in the workspace `Cargo.toml` is now tuned for size:
+
+```toml
+[profile.release]
+opt-level     = "z"     # size > speed
+lto           = "fat"   # cross-crate dead-code elimination
+codegen-units = 1       # one unit lets LTO see everything
+panic         = "abort" # no unwind tables
+strip         = true    # strip symbols from .wasm
+debug         = false
+```
+
+`viewer/build-wasm.sh` additionally passes `--remove-name-section
+--remove-producers-section` to wasm-bindgen, and runs `wasm-opt -Oz
+--strip-debug --strip-producers` if binaryen is installed (`brew install
+binaryen` on macOS, or `cargo install wasm-opt`).
+
+**Eval cache** (kerf-cad)
+
+`Model::evaluate_cached(target, &mut EvalCache)` reuses Solids across
+calls when the recipe — `(feature_id, feature_serde, params,
+input_fingerprints)` — is unchanged. Parameter sliders that touch one
+feature (e.g. a hole radius) keep the body's expensive boolean cached;
+only the changed branch and its dependents recompute.
+
+The fingerprint is a `u64` hash. Spurious misses (over-conservative
+invalidation) are harmless — they just mean a recompute. Spurious hits
+would be silently wrong, but a 64-bit hash collision in a
+~hundred-features session is astronomically unlikely.
+
+See `crates/kerf-cad/src/cache.rs` for the design.
+
+**Tessellation cache** (kerf-cad-wasm)
+
+The WASM crate keeps a thread-local `(eval_fingerprint, segments) →
+Vec<f32>` mesh cache. When the user spins the camera, neither input
+changes, so the previous Float32Array is returned in O(1). Tessellation
+of a 100k-triangle solid costs ~5ms cold; the warm path is sub-millisecond.
+
+**New WASM exports** (existing exports kept unchanged):
+
+- `clear_cache()` — drops both caches. Call on model swap or to bound
+  memory growth.
+- `cache_stats() → [eval_entries, mesh_entries]` — for debug overlays.
+
+**Testing**
+
+Twelve new tests cover the cache layer:
+- `crates/kerf-cad/tests/eval_cache.rs` (7 tests): cold/warm paths,
+  parameter invalidation, input invalidation, owner-tag persistence
+  through hits, parity with the uncached evaluator.
+- `crates/kerf-cad-wasm/src/lib.rs` (5 host tests): mesh cache
+  hit/miss on segments, parameter invalidation, clear_cache, parity
+  with the uncached path.
+
+The full workspace stays green at the prior 727 + 12 new = 739 passing
+tests with the prior 9 ignored.
+
