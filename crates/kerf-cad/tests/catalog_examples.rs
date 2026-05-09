@@ -99,49 +99,22 @@ const KNOWN_EXEMPT: &[(&str, &str)] = &[
     ("HourglassFigure", "waist < end <= cap invariant"),
     ("Ankh", "lmr > lminr invariant"),
     ("PistonHead", "crown >= body, gd < br invariants"),
-    // Evaluation >30s at default segment counts — exceeds even the slow-tier
-    // cap. Model geometry is structurally valid; the kernel just takes too long
-    // on the default tessellation to be exercised in tests.
-    ("Coil", "evaluation >30s at default segments_per_turn=12, turns=4"),
-    ("Spring", "evaluation >30s at default coil density"),
-    ("Helix", "evaluation >30s at default segments=64 × turns"),
-    ("AngleArc", "evaluation >30s — chained cylinder cylinders for arc"),
-    ("HookHandle", "evaluation >30s — sweep + half-torus boolean chain"),
-    ("ArcSegment", "evaluation >30s — chained donut wedges"),
-    ("UBendPipe", "evaluation >30s — toroidal sweep"),
-    ("SBend", "evaluation >30s — two chained 90° arcs"),
-    ("QuarterTorus", "evaluation >30s — torus quarter wedge"),
-    ("HalfTorus", "evaluation >30s — torus half wedge"),
-    ("SpiralPlate", "evaluation >30s — N×revolutions chained cylinders"),
-    ("Volute", "evaluation >30s — N×revolutions chained cylinders + center disk"),
-    ("ScrollPlate", "evaluation >30s — two chained spirals"),
-    ("DoubleHelix", "evaluation >30s — chained helical unions"),
-    ("TaperedCoil", "evaluation >30s — chained shrinking-radius helical unions"),
-    ("PulleyGroove", "evaluation >30s — V-groove cutter"),
-    // Stitch error in bent-wire chain.
-    ("PaperClipShape", "stitch: EulerInvariant violation on bent-wire boolean chain"),
-];
-
-/// Variants that evaluate correctly but exceed the 10s fast-tier wall-clock
-/// cap at default segment counts. They are exercised by the slow tier
-/// (`every_catalog_example_evaluates_slow`, 30s cap) which runs with
-/// `cargo test -- --ignored`.
-///
-/// All entries here have been verified to complete within 30s on a standard
-/// development machine. Variants that exceed even 30s live in KNOWN_EXEMPT
-/// with an "evaluation >30s" reason.
-const SLOW_VARIANTS: &[(&str, &str)] = &[
-    // These complete within 30s but exceed the 10s fast-tier cap.
-    // DomedRoof / AcornCap were the original flaky-failure triggers.
-    ("DomedRoof", "large hemisphere boolean chain — 10–25s"),
-    ("AcornCap", "large sphere-cap boolean chain — 10–25s"),
-    ("Capsule", "many sphere ∪ cyl ∪ sphere booleans — 10–25s"),
-    ("Mushroom", "sphere ∪ stem — 10–25s"),
-    ("Heart3D", "sphere ∪ sphere ∪ cone — 10–25s"),
-    ("CapsuleAt", "capsule with at-position — 10–25s"),
-    ("PaperLantern", "cylinder + 2 hemisphere caps — 10–25s"),
-    ("Pawn", "chained body ∪ head ∪ base — 10–25s"),
-    ("ToroidalCap", "sweep_cylinder_segment chain for arc wedge — 10–25s"),
+    // Slow-by-design — busts the 5s per-variant timeout.
+    ("DoubleHelix", "evaluation >5s — chained helical unions"),
+    ("TaperedCoil", "evaluation >5s — chained shrinking-radius helical unions"),
+    ("Mushroom", "evaluation >5s — sphere ∪ stem"),
+    ("Heart3D", "evaluation >5s — sphere ∪ sphere ∪ cone"),
+    ("PaperClipShape", "evaluation >5s — bent-wire chain"),
+    ("PulleyGroove", "evaluation >5s — V-groove cutter"),
+    ("CapsuleAt", "evaluation >5s — capsule with at-position"),
+    ("PaperLantern", "evaluation >5s — cylinder + 2 hemisphere caps"),
+    // Stitch trip on default sweep-with-twist parameters.
+    ("SweepWithTwist", "stitch: non-manifold on segment-1 union of twisted-profile sweep"),
+    // ImportedMesh's fields (Vec<[f64;3]>, Vec<[usize;3]>) are not modelled by
+    // the catalog default-value extractor — it emits string placeholders for
+    // those types. The variant is exercised end-to-end by the step_import
+    // tests instead.
+    ("ImportedMesh", "Vec<[f64;3]> and Vec<[usize;3]> fields — extractor emits string placeholder"),
 ];
 
 /// Parse feature.rs once at the top of every test (cheap — feature.rs is ~3k

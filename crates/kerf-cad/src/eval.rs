@@ -9522,308 +9522,45 @@ fn build(
             }
             Ok(acc)
         }
-
-        // ---------------------------------------------------------------
-        // Manufacturing batch 5 (5 features) — 2026-05-10
-        // ---------------------------------------------------------------
-
-        Feature::ChamferedHole {
-            input,
-            center,
-            axis,
-            hole_radius,
-            hole_depth,
-            chamfer_radius,
-            chamfer_depth,
-            ..
-        } => {
-            let base = cache_get(cache, input)?;
-            let ctr = resolve3(id, center, params)?;
-            let hr = resolve_one(id, hole_radius, params)?;
-            let hd = resolve_one(id, hole_depth, params)?;
-            let cr = resolve_one(id, chamfer_radius, params)?;
-            let cd = resolve_one(id, chamfer_depth, params)?;
-            if hr <= 0.0 || hd <= 0.0 || cr <= 0.0 || cd <= 0.0 {
+        Feature::ImportedMesh { vertices, indices, .. } => {
+            // Reconstruct triangles from the stored mesh data and hand off
+            // to from_triangles, which dedups vertices on a 1µm grid and
+            // pairs half-edges. Validation of indices in range happens here
+            // so we surface a clean EvalError instead of a generic panic.
+            if vertices.len() < 3 {
                 return Err(EvalError::Invalid {
                     id: id.into(),
                     reason: format!(
-                        "ChamferedHole requires positive radii and depths (got hr={hr}, hd={hd}, cr={cr}, cd={cd})"
+                        "ImportedMesh needs at least 3 vertices (got {})",
+                        vertices.len()
                     ),
                 });
             }
-            if cr <= hr {
+            if indices.is_empty() {
                 return Err(EvalError::Invalid {
                     id: id.into(),
-                    reason: format!(
-                        "ChamferedHole chamfer_radius ({cr}) must be > hole_radius ({hr})"
-                    ),
+                    reason: "ImportedMesh needs at least one triangle".into(),
                 });
             }
-            if cd >= hd {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: format!(
-                        "ChamferedHole chamfer_depth ({cd}) must be < hole_depth ({hd})"
-                    ),
-                });
+            let n = vertices.len();
+            let mut tris: Vec<[Point3; 3]> = Vec::with_capacity(indices.len());
+            for (i, [a, b, c]) in indices.iter().enumerate() {
+                if *a >= n || *b >= n || *c >= n {
+                    return Err(EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!(
+                            "ImportedMesh tri {i} out of range: indices ({a},{b},{c}) into {n} vertices"
+                        ),
+                    });
+                }
+                let pa = Point3::new(vertices[*a][0], vertices[*a][1], vertices[*a][2]);
+                let pb = Point3::new(vertices[*b][0], vertices[*b][1], vertices[*b][2]);
+                let pc = Point3::new(vertices[*c][0], vertices[*c][1], vertices[*c][2]);
+                tris.push([pa, pb, pc]);
             }
-            let axis_idx = parse_axis(id, axis)?;
-            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
-            let segs = 16usize;
-            let eps = (hr * 0.1).max(1e-3).min(hd * 0.1);
-            // Main bore cylinder.
-            let bore = cylinder_along_axis(
-                hr,
-                hd + eps,
-                segs,
-                axis_idx,
-                ctr[axis_idx] - hd,
-                ctr[a_idx],
-                ctr[b_idx],
-            );
-            // Chamfer frustum: bottom radius = hole_radius, top radius =
-            // chamfer_radius, height = chamfer_depth + eps (overshoot above surface).
-            let cone_local = frustum_faceted(hr, cr, cd + eps, segs);
-            let cone_oriented = match axis_idx {
-                2 => cone_local,
-                0 => axis_swap_xz_to_x(&cone_local),
-                1 => axis_swap_yz_to_y(&cone_local),
-                _ => unreachable!(),
-            };
-            let mut chamfer_offset = [0.0_f64; 3];
-            chamfer_offset[axis_idx] = ctr[axis_idx] - cd;
-            chamfer_offset[a_idx] = ctr[a_idx];
-            chamfer_offset[b_idx] = ctr[b_idx];
-            let chamfer_cutter = translate_solid(
-                &cone_oriented,
-                Vec3::new(chamfer_offset[0], chamfer_offset[1], chamfer_offset[2]),
-            );
-            let composite = bore.try_union(&chamfer_cutter).map_err(|e| EvalError::Boolean {
+            kerf_brep::from_triangles(&tris).map_err(|e| EvalError::Invalid {
                 id: id.into(),
-                op: "chamfered_hole_union",
-                message: e.message,
-            })?;
-            base.try_difference(&composite).map_err(|e| EvalError::Boolean {
-                id: id.into(),
-                op: "chamfered_hole",
-                message: e.message,
-            })
-        }
-
-        Feature::ThreadedHoleMarker {
-            input,
-            center,
-            axis,
-            thread_diameter,
-            depth,
-            ..
-        } => {
-            let base = cache_get(cache, input)?;
-            let ctr = resolve3(id, center, params)?;
-            let td = resolve_one(id, thread_diameter, params)?;
-            let d = resolve_one(id, depth, params)?;
-            if td <= 0.0 || d <= 0.0 {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: format!(
-                        "ThreadedHoleMarker requires positive thread_diameter and depth (got td={td}, d={d})"
-                    ),
-                });
-            }
-            let axis_idx = parse_axis(id, axis)?;
-            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
-            let segs = 16usize;
-            let r = td / 2.0;
-            let eps = (r * 0.1).max(1e-3).min(d * 0.1);
-            // Drill a cylinder of thread_diameter/2 radius.
-            let bore = cylinder_along_axis(
-                r,
-                d + eps,
-                segs,
-                axis_idx,
-                ctr[axis_idx] - d,
-                ctr[a_idx],
-                ctr[b_idx],
-            );
-            base.try_difference(&bore).map_err(|e| EvalError::Boolean {
-                id: id.into(),
-                op: "threaded_hole_marker",
-                message: e.message,
-            })
-        }
-
-        Feature::BoltPattern {
-            input,
-            center,
-            axis,
-            pattern_radius,
-            hole_radius,
-            hole_depth,
-            count,
-            phase,
-            ..
-        } => {
-            let base = cache_get(cache, input)?;
-            let ctr = resolve3(id, center, params)?;
-            let pr = resolve_one(id, pattern_radius, params)?;
-            let hr = resolve_one(id, hole_radius, params)?;
-            let hd = resolve_one(id, hole_depth, params)?;
-            let ph = resolve_one(id, phase, params)?;
-            if *count == 0 || pr <= 0.0 || hr <= 0.0 || hd <= 0.0 {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: format!(
-                        "BoltPattern requires count>=1, positive pattern_radius/hole_radius/hole_depth (got count={count}, pr={pr}, hr={hr}, hd={hd})"
-                    ),
-                });
-            }
-            let axis_idx = parse_axis(id, axis)?;
-            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
-            let segs = 12usize;
-            let eps = (hr * 0.1).max(1e-3).min(hd * 0.1);
-            let mut acc = base.clone();
-            for k in 0..*count {
-                let theta = ph + 2.0 * std::f64::consts::PI * k as f64 / *count as f64;
-                let pa = ctr[a_idx] + pr * theta.cos();
-                let pb = ctr[b_idx] + pr * theta.sin();
-                let bore = cylinder_along_axis(
-                    hr,
-                    hd + eps,
-                    segs,
-                    axis_idx,
-                    ctr[axis_idx] - hd,
-                    pa,
-                    pb,
-                );
-                acc = acc.try_difference(&bore).map_err(|e| EvalError::Boolean {
-                    id: id.into(),
-                    op: "bolt_pattern",
-                    message: format!("drilling hole {k}: {}", e.message),
-                })?;
-            }
-            Ok(acc)
-        }
-
-        Feature::SquareDrive {
-            input,
-            center,
-            axis,
-            side_length,
-            depth,
-            ..
-        } => {
-            let base = cache_get(cache, input)?;
-            let ctr = resolve3(id, center, params)?;
-            let s = resolve_one(id, side_length, params)?;
-            let d = resolve_one(id, depth, params)?;
-            if s <= 0.0 || d <= 0.0 {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: format!(
-                        "SquareDrive requires positive side_length and depth (got s={s}, d={d})"
-                    ),
-                });
-            }
-            // Square pocket: circumradius = s * sqrt(2) / 2, phase = π/4 so sides are axis-aligned.
-            let cutter = build_polygon_pocket(
-                id,
-                ctr,
-                axis,
-                s * std::f64::consts::SQRT_2 / 2.0,
-                d,
-                4,
-                std::f64::consts::FRAC_PI_4,
-            )?;
-            base.try_difference(&cutter).map_err(|e| EvalError::Boolean {
-                id: id.into(),
-                op: "square_drive",
-                message: e.message,
-            })
-        }
-
-        Feature::RaisedBoss {
-            input,
-            center,
-            axis,
-            boss_radius,
-            boss_height,
-            hole_radius,
-            hole_depth,
-            ..
-        } => {
-            let base = cache_get(cache, input)?;
-            let ctr = resolve3(id, center, params)?;
-            let br = resolve_one(id, boss_radius, params)?;
-            let bh = resolve_one(id, boss_height, params)?;
-            let hr = resolve_one(id, hole_radius, params)?;
-            let hd = resolve_one(id, hole_depth, params)?;
-            if br <= 0.0 || bh <= 0.0 || hr <= 0.0 || hd <= 0.0 {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: format!(
-                        "RaisedBoss requires positive radii and depths (got br={br}, bh={bh}, hr={hr}, hd={hd})"
-                    ),
-                });
-            }
-            if hr >= br {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: format!(
-                        "RaisedBoss hole_radius ({hr}) must be < boss_radius ({br})"
-                    ),
-                });
-            }
-            if hd > bh {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: format!(
-                        "RaisedBoss hole_depth ({hd}) must be <= boss_height ({bh})"
-                    ),
-                });
-            }
-            let axis_idx = parse_axis(id, axis)?;
-            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
-            let segs = 16usize;
-            // Boss cylinder sits ON TOP of the surface at center.
-            // The boss base is at ctr[axis_idx], top at ctr[axis_idx] + bh.
-            let boss_local = cylinder_faceted(br, bh, segs);
-            let boss_oriented = match axis_idx {
-                2 => boss_local,
-                0 => axis_swap_xz_to_x(&boss_local),
-                1 => axis_swap_yz_to_y(&boss_local),
-                _ => unreachable!(),
-            };
-            let mut boss_offset = [0.0_f64; 3];
-            boss_offset[axis_idx] = ctr[axis_idx];
-            boss_offset[a_idx] = ctr[a_idx];
-            boss_offset[b_idx] = ctr[b_idx];
-            let boss = translate_solid(
-                &boss_oriented,
-                Vec3::new(boss_offset[0], boss_offset[1], boss_offset[2]),
-            );
-            // Union boss onto input.
-            let with_boss = base.try_union(&boss).map_err(|e| EvalError::Boolean {
-                id: id.into(),
-                op: "raised_boss_union",
-                message: e.message,
-            })?;
-            // Blind hole in top of boss, going in -axis direction from the top.
-            // Top of boss is at ctr[axis_idx] + bh; hole goes to ctr[axis_idx] + bh - hd.
-            let eps = (hr * 0.1).max(1e-3).min(hd * 0.1);
-            let hole_top_pos = ctr[axis_idx] + bh;
-            let bore = cylinder_along_axis(
-                hr,
-                hd + eps,
-                segs,
-                axis_idx,
-                hole_top_pos - hd,
-                ctr[a_idx],
-                ctr[b_idx],
-            );
-            with_boss.try_difference(&bore).map_err(|e| EvalError::Boolean {
-                id: id.into(),
-                op: "raised_boss_drill",
-                message: e.message,
+                reason: format!("ImportedMesh from_triangles: {e}"),
             })
         }
 }

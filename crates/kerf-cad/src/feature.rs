@@ -4007,29 +4007,26 @@ pub enum Feature {
         thickness: Scalar,
     },
 
-    /// Helix: a helical curve or tubular wire sweep. `axis_radius` is the
-    /// distance from the central axis to the curve. `pitch` is the rise per
-    /// full turn. `turns` is the number of full turns (must be > 0).
-    /// `axis` selects the central axis: "x", "y", or "z" (default "z").
+    /// Triangle-soup imported from an external file (e.g. STEP, STL). The
+    /// evaluator hands `vertices` and `indices` to
+    /// `kerf_brep::from_triangles`, which builds a half-edge solid by
+    /// pairing directed edges with their twins.
     ///
-    /// When `wire_radius` > 0 the helix is materialized as a tubular wire
-    /// (like Coil/Spring) built by chaining short cylinder segments along the
-    /// helical path. `segments` controls the number of straight-line segments
-    /// per turn (minimum 6). When `wire_radius` == 0 the evaluator returns an
-    /// error — path-only use is reserved for a future SweepPathHelix feature.
+    /// `vertices` is a flat list of distinct 3D positions; `indices` is one
+    /// `[a, b, c]` per triangle, indexing into `vertices`. Why this and not
+    /// a stored `Solid`? Models are JSON-serializable Features; carrying
+    /// raw triangle data round-trips through serde cleanly, and the
+    /// evaluator reconstructs the B-rep on the fly. Vertex dedup happens
+    /// inside `from_triangles`, so callers don't need to dedup themselves.
     ///
-    /// Unlike Coil, the wire-overlap constraint (`wire_radius < axis_radius`)
-    /// is enforced; the axis field enables non-z orientations without a
-    /// separate Rotate step.
-    Helix {
+    /// Used by `kerf_cad::step_import::import_step` to wrap the imported
+    /// solid into a Model.
+    ImportedMesh {
         id: String,
-        axis_radius: Scalar,
-        pitch: Scalar,
-        turns: Scalar,
-        wire_radius: Scalar,
-        axis: String,
-        segments: usize,
-    },}
+        vertices: Vec<[f64; 3]>,
+        indices: Vec<[usize; 3]>,
+    },
+}
 
 impl Feature {
     pub fn id(&self) -> &str {
@@ -4355,6 +4352,7 @@ impl Feature {
             | Feature::Star3D { id, .. }
             | Feature::Cross3D { id, .. }
             | Feature::Chair { id, .. }
+            | Feature::ImportedMesh { id, .. }
 => id,
 
             Feature::ChamferedHole { id, .. }
@@ -4694,6 +4692,7 @@ impl Feature {
             | Feature::Star3D { .. }
             | Feature::Cross3D { .. }
             | Feature::Chair { .. }
+            | Feature::ImportedMesh { .. }
 => Vec::new(),
 
             Feature::ChamferedHole { input, .. }
