@@ -58,11 +58,9 @@ export function mountSectionView(
   const label = document.createElement("label");
   label.htmlFor = "section-toggle";
   label.textContent = "Section view";
-  label.style.cssText =
-    "display:block;color:var(--muted);margin-bottom:4px;font-size:12px;";
 
   const row = document.createElement("div");
-  row.style.cssText = "display:flex;gap:4px;margin-bottom:6px;";
+  row.className = "sv-row";
 
   const toggleBtn = document.createElement("button");
   toggleBtn.id = "section-toggle";
@@ -73,7 +71,6 @@ export function mountSectionView(
   flipBtn.textContent = "▲▼";
   flipBtn.title = "Flip clip direction";
   flipBtn.hidden = true;
-  flipBtn.style.cssText = "flex:0 0 auto;padding:6px 8px;";
 
   row.appendChild(toggleBtn);
   row.appendChild(flipBtn);
@@ -82,7 +79,6 @@ export function mountSectionView(
   slider.id = "section-slider";
   slider.type = "range";
   slider.hidden = true;
-  slider.style.cssText = "width:100%;margin-bottom:4px;";
 
   container.appendChild(label);
   container.appendChild(row);
