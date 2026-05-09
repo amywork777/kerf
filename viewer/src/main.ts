@@ -85,9 +85,10 @@ let currentFaceCount = 0;
 let highlightedFace = -1;
 let hoveredFace = -1;
 
-// Initialized in the section-view mount block below; safe to call only
-// after a model has been loaded (i.e., from rebuild() / setMesh()).
-let sectionView: SectionViewHandle;
+// Assigned by the section-view mount block below. setMesh() guards with
+// `?.` because it can run during the first-rebuild path before the mount
+// statement has executed.
+let sectionView: SectionViewHandle | undefined;
 
 // Topology data for vertex / edge picking. Set on every rebuild from
 // the WASM `evaluate_with_face_ids` response.
@@ -310,7 +311,7 @@ function setMesh(
   refreshEdgeHighlight();
 
   if (triangles.length === 0) {
-    sectionView.refresh(null);
+    sectionView?.refresh(null);
     return;
   }
 
@@ -332,7 +333,7 @@ function setMesh(
   if (fit && geom.boundingBox) fitToView(geom.boundingBox);
 
   // Update section-view slider range when a new mesh is loaded.
-  if (geom.boundingBox) {
+  if (geom.boundingBox && sectionView) {
     const bb = geom.boundingBox;
     sectionView.refresh({
       min: [bb.min.x, bb.min.y, bb.min.z],
