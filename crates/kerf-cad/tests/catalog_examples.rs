@@ -120,6 +120,11 @@ const KNOWN_EXEMPT: &[(&str, &str)] = &[
     ("PulleyGroove", "evaluation >30s — V-groove cutter"),
     // Stitch error in bent-wire chain.
     ("PaperClipShape", "stitch: EulerInvariant violation on bent-wire boolean chain"),
+    // ImportedMesh's fields (Vec<[f64;3]>, Vec<[usize;3]>) are not modelled by
+    // the catalog default-value extractor — it emits string placeholders for
+    // those types. The variant is exercised end-to-end by the step_import
+    // tests instead.
+    ("ImportedMesh", "Vec<[f64;3]> and Vec<[usize;3]> fields — extractor emits string placeholder"),
 ];
 
 /// Variants that evaluate correctly but exceed the 10s fast-tier wall-clock
