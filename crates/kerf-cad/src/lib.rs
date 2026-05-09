@@ -28,7 +28,7 @@ pub use cache::{EvalCache, Fingerprint};
 pub use mass::{mass_properties, MassProperties};
 pub use eval::EvalError;
 pub use feature::{Feature, FilletEdge, Profile2D};
-pub use geometric::{ConstraintError, FaceRef, GeoAxisRef, GeometricConstraint};
+pub use geometric::{ConstraintError, EdgeRef, FaceRef, GeoAxisRef, GeometricConstraint};
 pub use model::{Model, ModelError};
 pub use scalar::{lits, Scalar};
 pub use sketch::{Sketch, SketchConstraint, SketchError, SketchPlane, SketchPrim};
