@@ -19,6 +19,8 @@ import type { DetailViewParams } from "./detail-view.js";
 
 export type { SectionViewParams } from "./section-view.js";
 export type { DetailViewParams } from "./detail-view.js";
+import { renderGdtOverlay } from "./gdt.js";
+import type { GdtAnnotations } from "./gdt.js";
 
 const VIEW_W = 480;
 const VIEW_H = 360;
@@ -87,6 +89,11 @@ function meshToTriangles(geometry: THREE.BufferGeometry): Triangle[] {
 }
 
 export function exportThreeViewPng(mesh: THREE.Mesh, fileName: string, opts?: ExportOptions) {
+export function exportThreeViewPng(
+  mesh: THREE.Mesh,
+  fileName: string,
+  gdt?: GdtAnnotations,
+) {
   const sceneClone = new THREE.Scene();
   sceneClone.background = new THREE.Color(0xffffff);
   sceneClone.add(new THREE.AmbientLight(0xffffff, 0.7));
@@ -167,6 +174,49 @@ export function exportThreeViewPng(mesh: THREE.Mesh, fileName: string, opts?: Ex
     // each of the two screen axes for this projection.
     if (cell.view.hAxis && cell.view.vAxis) {
       drawDimensions(ctx, x, y, VIEW_W, VIEW_H, fovHalfW, fovHalfH, size, cell.view);
+    }
+
+    // GD&T overlay: render datum refs, control frames, and surface finishes
+    // into an SVG layer, then stamp it onto the canvas via a data-URL image.
+    if (gdt) {
+      const pxPerWorldH = VIEW_W / (2 * fovHalfW);
+      const pxPerWorldV = VIEW_H / (2 * fovHalfH);
+      const cx = x + VIEW_W / 2;
+      const cy = y + VIEW_H / 2;
+
+      // Build projection that maps model coords → view pixel coords.
+      // We need to know which two world axes map to screen H and V for this
+      // view — same logic dimensions.ts uses.
+      const forward = cell.view.forward;
+      const up = cell.view.up;
+      // right = up × forward (screen horizontal axis in world space)
+      const right = new THREE.Vector3().crossVectors(up, forward).normalize();
+
+      const viewMatrix = {
+        project(p: [number, number, number]): [number, number] {
+          const world = new THREE.Vector3(p[0], p[1], p[2]).sub(center);
+          const sx = world.dot(right) * pxPerWorldH;
+          const sy = -world.dot(up) * pxPerWorldV; // flip Y for canvas
+          return [cx + sx, cy + sy];
+        },
+      };
+
+      const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg") as unknown as SVGElement;
+      renderGdtOverlay(svgEl, gdt, viewMatrix);
+
+      // Serialize SVG to data-URL and draw onto canvas.
+      const svgStr = new XMLSerializer().serializeToString(svgEl as unknown as Node);
+      const blob = new Blob([svgStr], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      // We draw the GD&T layer synchronously using an <img> trick is not
+      // possible in all browsers within a single tick. Instead we stamp it
+      // asynchronously after the PNG is otherwise complete (best-effort).
+      const img = new Image();
+      img.onload = () => {
+        ctx.drawImage(img, x, y, VIEW_W, VIEW_H);
+        URL.revokeObjectURL(url);
+      };
+      img.src = url;
     }
   }
 

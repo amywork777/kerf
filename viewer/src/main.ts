@@ -35,6 +35,7 @@ import { PickHistory } from "./pick-history.js";
 import { attachFeatureContextMenu } from "./feature-tree-context.js";
 import { mountViewPresetsUI } from "./view-presets.js";
 import { reorderFeatures, filterFeatures } from "./feature-tree-ops.js";
+import type { GdtAnnotations } from "./gdt.js";
 
 await init();
 
@@ -56,6 +57,13 @@ const resetBtn = document.getElementById("reset-btn")!;
 const wireframeToggle = document.getElementById("wireframe-toggle") as HTMLInputElement;
 const drawingBtn = document.getElementById("drawing-btn")!;
 const actions2El = document.getElementById("actions2")!;
+const gdtBtn = document.getElementById("gdt-btn")!;
+const gdtPanel = document.getElementById("gdt-panel")!;
+const gdtJson = document.getElementById("gdt-json") as HTMLTextAreaElement;
+const gdtExportBtn = document.getElementById("gdt-export-btn")!;
+const gdtClearBtn = document.getElementById("gdt-clear-btn")!;
+const gdtError = document.getElementById("gdt-error")!;
+const gdtHelpLink = document.getElementById("gdt-help-link")!;
 const featureTreeEl = document.getElementById("feature-tree")!;
 const featureListEl = document.getElementById("feature-list")!;
 const featureCountEl = document.getElementById("feature-count")!;
@@ -65,6 +73,15 @@ const pickModeGroupEl = document.getElementById("pick-mode-group")!;
 const pickFilterEl = document.getElementById("pick-filter") as HTMLSelectElement;
 const featureSearchEl = document.getElementById("feature-search") as HTMLInputElement;
 const featureSearchClearEl = document.getElementById("feature-search-clear")!;
+const selectedFeatureEl = document.getElementById("selected-feature")!;
+const selectedFeatureBodyEl = document.getElementById("selected-feature-body")!;
+const selectedFeatureTitleEl = document.getElementById("selected-feature-title")!;
+selectedFeatureEl.querySelector(".sf-close")?.addEventListener("click", () => {
+  selectedFeatureId = null;
+  highlightedFace = -1;
+  refreshFaceColors();
+  renderSelectedFeaturePanel();
+});
 
 // --- three.js scene ---
 const scene = new THREE.Scene();
@@ -106,10 +123,14 @@ const meshMaterial = new THREE.MeshStandardMaterial({
 let currentMesh: THREE.Mesh | null = null;
 let currentWireframe: THREE.LineSegments | null = null;
 let currentFaceIds: Uint32Array | null = null;
+let currentFaceOwnerTags: string[] | null = null;
 let currentFaceCount = 0;
 
 // Picking state — owns selectedFaces (Set), hoveredFace, highlightedVertex/Edge.
 let picking: PickingState = createPickingState();
+let highlightedFace = -1;
+let hoveredFace = -1;
+let selectedFeatureId: string | null = null;
 
 // Topology data for vertex / edge picking. Set on every rebuild from
 // the WASM `evaluate_with_face_ids` response.
@@ -350,6 +371,7 @@ function refreshEdgeHighlight() {
 function setMesh(
   triangles: Float32Array,
   faceIds: Uint32Array,
+  faceOwnerTags: string[],
   faceCount: number,
   fit: boolean,
 ) {
@@ -364,6 +386,7 @@ function setMesh(
     currentWireframe = null;
   }
   currentFaceIds = faceIds;
+  currentFaceOwnerTags = faceOwnerTags;
   currentFaceCount = faceCount;
   picking = clearAll(picking);
   highlightedFace = -1;
@@ -789,6 +812,7 @@ function rebuild(fit: boolean = false) {
     ) as {
       triangles: number[];
       face_ids: number[];
+      face_owner_tags: string[];
       face_count: number;
       volume: number;
       shell_count: number;
@@ -808,6 +832,7 @@ function rebuild(fit: boolean = false) {
     };
     const tris = new Float32Array(result.triangles);
     const faceIds = new Uint32Array(result.face_ids);
+    const ownerTags = result.face_owner_tags ?? [];
     const dt = performance.now() - t0;
     currentVertexPositions = new Float32Array(result.vertex_positions ?? []);
     currentEdgeEndpoints = new Uint32Array(result.edge_endpoints ?? []);
@@ -1108,6 +1133,100 @@ function deleteFeature(id: string) {
   rebuild();
 }
 
+function renderSelectedFeaturePanel() {
+  if (!model || !selectedFeatureId) {
+    selectedFeatureEl.hidden = true;
+    return;
+  }
+  const parsed = JSON.parse(model.json);
+  const features = (parsed.features ?? []) as Array<Record<string, unknown>>;
+  const feat = features.find((f) => f?.id === selectedFeatureId);
+  if (!feat) {
+    selectedFeatureEl.hidden = true;
+    return;
+  }
+  selectedFeatureEl.hidden = false;
+  selectedFeatureTitleEl.textContent = `${feat.kind} • ${feat.id}`;
+  selectedFeatureBodyEl.innerHTML = "";
+
+  const SKIP = new Set(["kind", "id", "input", "inputs"]);
+  for (const [k, v] of Object.entries(feat)) {
+    if (SKIP.has(k)) continue;
+    if (typeof v === "number") {
+      addNumericRow(k, v, [k]);
+    } else if (Array.isArray(v) && v.every((x) => typeof x === "number" || typeof x === "string")) {
+      for (let i = 0; i < v.length; i++) {
+        const elem = v[i];
+        if (typeof elem === "number") {
+          addNumericRow(`${k}[${i}]`, elem, [k, i]);
+        } else {
+          addExpressionRow(`${k}[${i}]`, String(elem), [k, i]);
+        }
+      }
+    } else if (typeof v === "string") {
+      addExpressionRow(k, v, [k]);
+    }
+  }
+
+  if (selectedFeatureBodyEl.children.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "sf-empty";
+    empty.textContent = "no editable fields";
+    selectedFeatureBodyEl.appendChild(empty);
+  }
+}
+
+function addNumericRow(label: string, value: number, path: (string | number)[]) {
+  const row = document.createElement("div");
+  row.className = "sf-row";
+  const span = Math.max(Math.abs(value) * 2, 10);
+  const min = value === 0 ? -span : Math.min(value - span, value * -0.2);
+  const max = value === 0 ? span : Math.max(value + span, value * 2);
+  const step = Math.max((max - min) / 200, 0.001);
+  row.innerHTML = `
+    <label><span>${label}</span><span class="sf-val">${value.toFixed(3)}</span></label>
+    <input type="range" min="${min}" max="${max}" step="${step}" value="${value}" />`;
+  selectedFeatureBodyEl.appendChild(row);
+  const input = row.querySelector("input")!;
+  const valSpan = row.querySelector(".sf-val") as HTMLElement;
+  input.addEventListener("input", () => {
+    const n = Number(input.value);
+    valSpan.textContent = n.toFixed(3);
+    setFeatureFieldAtPath(path, n);
+  });
+}
+
+function addExpressionRow(label: string, value: string, path: (string | number)[]) {
+  const row = document.createElement("div");
+  row.className = "sf-row";
+  row.innerHTML = `
+    <label><span>${label}</span><span class="sf-muted">expr</span></label>
+    <input type="text" value="${value.replace(/"/g, "&quot;")}" />`;
+  selectedFeatureBodyEl.appendChild(row);
+  const input = row.querySelector("input")!;
+  input.addEventListener("change", () => {
+    const raw = input.value;
+    const asNum = Number(raw);
+    setFeatureFieldAtPath(path, Number.isFinite(asNum) && raw.trim() !== "" && !raw.startsWith("$") && !/[a-zA-Z]/.test(raw) ? asNum : raw);
+  });
+}
+
+function setFeatureFieldAtPath(path: (string | number)[], value: number | string) {
+  if (!model || !selectedFeatureId) return;
+  const parsed = JSON.parse(model.json);
+  const features = (parsed.features ?? []) as Array<Record<string, unknown>>;
+  const feat = features.find((f) => f?.id === selectedFeatureId);
+  if (!feat) return;
+  let cursor: unknown = feat;
+  for (let i = 0; i < path.length - 1; i++) {
+    cursor = (cursor as Record<string | number, unknown>)[path[i]!];
+  }
+  const last = path[path.length - 1]!;
+  (cursor as Record<string | number, unknown>)[last] = value;
+  model.json = JSON.stringify(parsed, null, 2);
+  rebuild();
+}
+
 function refreshFeatureTreeSelection() {
   if (!model) return;
   for (const li of featureListEl.children as HTMLCollectionOf<HTMLLIElement>) {
@@ -1135,9 +1254,11 @@ function loadJson(json: string) {
       parameters: { ...params },
       defaults: { ...params },
     };
+    selectedFeatureId = null;
     renderTargets(ids);
     renderParams();
     renderFeatureTree();
+    renderSelectedFeaturePanel();
     actionsEl.hidden = false;
     actions2El.hidden = false;
     viewsEl.hidden = false;
@@ -1229,6 +1350,71 @@ drawingBtn.addEventListener("click", () => {
   exportThreeViewPng(currentMesh, model.targetId);
 });
 
+// --- GD&T panel ---
+const GDT_EXAMPLE: GdtAnnotations = {
+  datums: [
+    { letter: "A", anchor: [0, 0, 10] },
+    { letter: "B", anchor: [10, 0, 10] },
+  ],
+  frames: [
+    {
+      characteristic: "perpendicularity",
+      tolerance: 0.05,
+      diametric: false,
+      datum_refs: [{ letter: "A" }],
+      anchor: [0, 0, 5],
+    },
+    {
+      characteristic: "position",
+      tolerance: 0.1,
+      diametric: true,
+      datum_refs: [{ letter: "A" }, { letter: "B" }],
+      anchor: [10, 0, 5],
+    },
+  ],
+  finishes: [
+    { ra: 1.6, process: "machined", anchor: [5, 0, 10] },
+  ],
+};
+
+gdtBtn.addEventListener("click", () => {
+  const isHidden = gdtPanel.hidden;
+  gdtPanel.hidden = !isHidden;
+  gdtBtn.textContent = isHidden ? "Hide GD&T" : "GD&T";
+});
+
+gdtHelpLink.addEventListener("click", (e) => {
+  e.preventDefault();
+  gdtJson.value = JSON.stringify(GDT_EXAMPLE, null, 2);
+  gdtError.style.display = "none";
+});
+
+gdtClearBtn.addEventListener("click", () => {
+  gdtJson.value = "";
+  gdtError.style.display = "none";
+});
+
+gdtExportBtn.addEventListener("click", () => {
+  if (!model || !currentMesh) {
+    gdtError.textContent = "No model loaded.";
+    gdtError.style.display = "block";
+    return;
+  }
+  const raw = gdtJson.value.trim();
+  let annotations: GdtAnnotations | undefined;
+  if (raw) {
+    try {
+      annotations = JSON.parse(raw) as GdtAnnotations;
+    } catch (e) {
+      gdtError.textContent = `JSON parse error: ${e}`;
+      gdtError.style.display = "block";
+      return;
+    }
+  }
+  gdtError.style.display = "none";
+  exportThreeViewPng(currentMesh, model.targetId, annotations);
+});
+
 // --- view presets ---
 function setView(kind: "iso" | "front" | "top" | "side") {
   if (!currentMesh?.geometry.boundingBox) return;
@@ -1299,6 +1485,10 @@ window.addEventListener("keydown", (e) => {
       refreshFaceColors();
       refreshVertexHighlight();
       refreshEdgeHighlight();
+      highlightedFace = -1;
+      selectedFeatureId = null;
+      refreshFaceColors();
+      renderSelectedFeaturePanel();
       break;
     case "Backspace": {
       // Navigate back in pick history.
