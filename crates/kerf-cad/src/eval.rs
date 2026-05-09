@@ -211,6 +211,17 @@ impl Model {
     fn eval_into_p(
         &self,
         id: &str,
+        local: &mut HashMap<String, Solid>,
+        fps: &mut HashMap<String, Fingerprint>,
+        cache: &mut EvalCache,
+        stack: &mut Vec<String>,
+    ) -> Result<(), EvalError> {
+        self.eval_into_cached_p(id, local, fps, cache, stack, &self.parameters)
+    }
+
+    fn eval_into_p(
+        &self,
+        id: &str,
         params: &HashMap<String, f64>,
         cache: &mut HashMap<String, Solid>,
         stack: &mut Vec<String>,
