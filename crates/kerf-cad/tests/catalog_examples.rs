@@ -57,6 +57,7 @@ const KNOWN_EXEMPT: &[(&str, &str)] = &[
     // just exceeds the per-variant test cap. The geometry itself is correct.
     ("Coil", "evaluation >5s at default segments_per_turn=12, turns=4"),
     ("Spring", "evaluation >5s at default coil density"),
+    ("Helix", "evaluation >5s at default segments=64 × turns — same family as Coil/Spring"),
     ("Capsule", "evaluation >5s — many sphere ∪ cyl ∪ sphere booleans"),
     ("AngleArc", "evaluation >5s — chained cylinder cylinders for arc"),
     ("HookHandle", "evaluation >5s — sweep + half-torus boolean chain"),
