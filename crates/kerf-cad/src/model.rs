@@ -19,8 +19,10 @@ pub enum ModelError {
     UnknownId(String),
     #[error("cycle detected involving id: {0}")]
     Cycle(String),
-    #[error("equation '{0}' evaluation error: {1}")]
-    ExprError(String, String),
+    #[error("duplicate configuration name: {0}")]
+    DuplicateName(String),
+    #[error("unknown configuration name: {0}")]
+    UnknownConfiguration(String),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("io error: {0}")]
@@ -35,11 +37,18 @@ pub struct Model {
     /// feature fields. Empty by default.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub parameters: HashMap<String, f64>,
-    /// Part-level geometric constraints between feature outputs. The solver
-    /// runs after parameter resolution and adjusts top-level parameters to
-    /// satisfy. Empty by default.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub geometric_constraints: Vec<GeometricConstraint>,
+    /// Named parameter overlays. Each value is a sparse map: param-name →
+    /// override-value. A configuration is "applied" by overlaying its
+    /// entries onto `parameters` before evaluation. The "default" config
+    /// is implicit (no entries) — evaluating Model without selecting a
+    /// configuration uses `parameters` as-is.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub configurations: BTreeMap<String, HashMap<String, f64>>,
+    /// Currently active configuration name, or None for the implicit
+    /// default. When Some(name), `configurations[name]` is overlaid onto
+    /// `parameters` at evaluation time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_configuration: Option<String>,
     /// Features keyed by id, kept in insertion order so the JSON/file form
     /// matches what the user wrote.
     pub(crate) features: Vec<Feature>,
@@ -147,6 +156,228 @@ impl Model {
         let f = File::open(path.as_ref()).map_err(ModelError::Io)?;
         let mut r = BufReader::new(f);
         Self::read_json(&mut r)
+    }
+
+    // ---------- Configuration management ----------
+
+    /// Iterate over configuration names in sorted order. Excludes the
+    /// implicit "default" (no overrides) — that's represented by
+    /// `active_configuration == None`.
+    pub fn configuration_names(&self) -> impl Iterator<Item = &str> {
+        // BTreeMap iterates in key order; returned references live as
+        // long as &self.
+        self.configurations.keys().map(|s| s.as_str())
+    }
+
+    /// Set (or clear) the active configuration. `None` resets to the
+    /// implicit default. `Some(name)` errors with
+    /// `ModelError::UnknownConfiguration` if `name` isn't a defined
+    /// configuration.
+    pub fn set_active_configuration(&mut self, name: Option<&str>) -> Result<(), ModelError> {
+        match name {
+            None => {
+                self.active_configuration = None;
+                Ok(())
+            }
+            Some(n) => {
+                if !self.configurations.contains_key(n) {
+                    return Err(ModelError::UnknownConfiguration(n.to_string()));
+                }
+                self.active_configuration = Some(n.to_string());
+                Ok(())
+            }
+        }
+    }
+
+    /// Add a new named configuration. Errors with `DuplicateName` if a
+    /// configuration with the same name already exists.
+    pub fn add_configuration(
+        &mut self,
+        name: impl Into<String>,
+        overrides: HashMap<String, f64>,
+    ) -> Result<(), ModelError> {
+        let n = name.into();
+        if self.configurations.contains_key(&n) {
+            return Err(ModelError::DuplicateName(n));
+        }
+        self.configurations.insert(n, overrides);
+        Ok(())
+    }
+
+    /// Remove a configuration by name. Errors with `UnknownConfiguration`
+    /// if it isn't present. Clears `active_configuration` if it referred
+    /// to the removed config.
+    pub fn remove_configuration(&mut self, name: &str) -> Result<(), ModelError> {
+        if self.configurations.remove(name).is_none() {
+            return Err(ModelError::UnknownConfiguration(name.to_string()));
+        }
+        if self.active_configuration.as_deref() == Some(name) {
+            self.active_configuration = None;
+        }
+        Ok(())
+    }
+
+    /// Compute the effective parameter map for evaluation: base
+    /// `parameters` overlaid by the active configuration's overrides
+    /// (if any). When no configuration is active, returns a clone of
+    /// `parameters`. The base map is never mutated.
+    pub(crate) fn effective_parameters(&self) -> HashMap<String, f64> {
+        let mut out = self.parameters.clone();
+        if let Some(name) = &self.active_configuration {
+            if let Some(overrides) = self.configurations.get(name) {
+                for (k, v) in overrides {
+                    out.insert(k.clone(), *v);
+                }
+            }
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::feature::Feature;
+    use crate::scalar::Scalar;
+
+    fn box_model() -> Model {
+        Model::new()
+            .with_parameter("w", 2.0)
+            .with_parameter("h", 3.0)
+            .add(Feature::Box {
+                id: "body".into(),
+                extents: [Scalar::param("w"), Scalar::param("h"), Scalar::lit(1.0)],
+            })
+    }
+
+    #[test]
+    fn add_configuration_round_trips_via_json() {
+        let mut m = box_model();
+        let mut overrides = HashMap::new();
+        overrides.insert("w".to_string(), 10.0);
+        m.add_configuration("Heavy", overrides).expect("add");
+
+        let json = m.to_json_string().expect("to_json");
+        // Deterministic ordering: BTreeMap serializes keys in sorted order.
+        assert!(json.contains("\"configurations\""), "json includes configurations key");
+        assert!(json.contains("\"Heavy\""), "json includes Heavy entry");
+
+        let m2 = Model::from_json_str(&json).expect("from_json");
+        assert_eq!(m2.configurations.len(), 1);
+        assert_eq!(m2.configurations.get("Heavy").unwrap().get("w"), Some(&10.0));
+    }
+
+    #[test]
+    fn active_configuration_overlays_overrides() {
+        let mut m = box_model();
+        let mut overrides = HashMap::new();
+        overrides.insert("w".to_string(), 10.0);
+        m.add_configuration("Heavy", overrides).expect("add");
+        m.set_active_configuration(Some("Heavy")).expect("activate");
+
+        let eff = m.effective_parameters();
+        assert_eq!(eff.get("w"), Some(&10.0), "override applied");
+        assert_eq!(eff.get("h"), Some(&3.0), "non-overridden falls through");
+        // Base map untouched.
+        assert_eq!(m.parameters.get("w"), Some(&2.0));
+    }
+
+    #[test]
+    fn no_active_configuration_uses_base_params() {
+        let m = box_model();
+        let eff = m.effective_parameters();
+        assert_eq!(eff.get("w"), Some(&2.0));
+        assert_eq!(eff.get("h"), Some(&3.0));
+    }
+
+    #[test]
+    fn set_active_to_unknown_errors() {
+        let mut m = box_model();
+        let res = m.set_active_configuration(Some("Bogus"));
+        assert!(matches!(res, Err(ModelError::UnknownConfiguration(_))));
+        assert_eq!(m.active_configuration, None);
+    }
+
+    #[test]
+    fn remove_active_configuration_clears_active() {
+        let mut m = box_model();
+        m.add_configuration("Heavy", HashMap::new()).expect("add");
+        m.set_active_configuration(Some("Heavy")).expect("activate");
+        m.remove_configuration("Heavy").expect("remove");
+        assert_eq!(m.active_configuration, None);
+        assert!(m.configurations.is_empty());
+    }
+
+    #[test]
+    fn sparse_overlay_passes_through_other_params() {
+        let mut m = box_model();
+        let mut sparse = HashMap::new();
+        // Only override "w"; "h" should fall through to the base value.
+        sparse.insert("w".to_string(), 7.5);
+        m.add_configuration("Compact", sparse).expect("add");
+        m.set_active_configuration(Some("Compact")).expect("activate");
+
+        let eff = m.effective_parameters();
+        assert_eq!(eff.get("w"), Some(&7.5));
+        assert_eq!(eff.get("h"), Some(&3.0));
+    }
+
+    #[test]
+    fn legacy_json_without_configurations_loads() {
+        // Older JSON (pre-configurations) only has parameters + features.
+        // The "configurations" and "active_configuration" fields are
+        // absent — must default cleanly thanks to #[serde(default)].
+        let legacy = r#"{
+            "parameters": {"w": 2.0},
+            "features": [
+                { "kind": "Box", "id": "body",
+                  "extents": ["$w", 1.0, 1.0] }
+            ]
+        }"#;
+        let m = Model::from_json_str(legacy).expect("parse legacy");
+        assert!(m.configurations.is_empty());
+        assert_eq!(m.active_configuration, None);
+        assert_eq!(m.parameters.get("w"), Some(&2.0));
+    }
+
+    #[test]
+    fn duplicate_configuration_name_errors() {
+        let mut m = box_model();
+        m.add_configuration("Heavy", HashMap::new()).expect("first");
+        let res = m.add_configuration("Heavy", HashMap::new());
+        assert!(matches!(res, Err(ModelError::DuplicateName(_))));
+    }
+
+    #[test]
+    fn configuration_names_iterates_sorted() {
+        let mut m = box_model();
+        m.add_configuration("Zeta", HashMap::new()).expect("z");
+        m.add_configuration("Alpha", HashMap::new()).expect("a");
+        m.add_configuration("Mike", HashMap::new()).expect("m");
+        let names: Vec<&str> = m.configuration_names().collect();
+        assert_eq!(names, vec!["Alpha", "Mike", "Zeta"]);
+    }
+
+    #[test]
+    fn evaluate_with_active_configuration_uses_overlay() {
+        // Box w=2 base; activate config that sets w=10; resulting
+        // bounding-box-ish dimension along x must reflect the overlay.
+        let mut m = box_model();
+        let mut overrides = HashMap::new();
+        overrides.insert("w".to_string(), 10.0);
+        m.add_configuration("Heavy", overrides).expect("add");
+        m.set_active_configuration(Some("Heavy")).expect("activate");
+
+        let solid = m.evaluate("body").expect("evaluate");
+        // Compute extent along x via vertex sweep — Box geom uses
+        // its `extents` directly per the kerf primitives.
+        let (mut minx, mut maxx) = (f64::INFINITY, f64::NEG_INFINITY);
+        for (_, p) in solid.vertex_geom.iter() {
+            if p.x < minx { minx = p.x; }
+            if p.x > maxx { maxx = p.x; }
+        }
+        let dx = maxx - minx;
+        assert!((dx - 10.0).abs() < 1e-6, "x extent should be 10, got {dx}");
     }
 }
 

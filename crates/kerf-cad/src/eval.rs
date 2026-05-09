@@ -139,14 +139,17 @@ impl Model {
         }
         stack.pop();
 
-        // Compute this feature's fingerprint from its inputs'.
-        // Use the resolved params so equations affect cache keys.
+        // Compute this feature's fingerprint from its inputs'. We feed
+        // the "effective" parameter map (base + active configuration's
+        // overlay) so a config switch invalidates downstream cache
+        // entries that reference the changed params.
         let input_fps: Vec<Fingerprint> = feature
             .inputs()
             .iter()
             .map(|dep| *fps.get(*dep).expect("dep evaluated"))
             .collect();
-        let fp = feature_fingerprint(feature, params, &input_fps);
+        let params = self.effective_parameters();
+        let fp = feature_fingerprint(feature, &params, &input_fps);
         fps.insert(id.to_string(), fp);
 
         // Cache hit: clone the stored solid into local. Cloning a Solid
@@ -156,7 +159,7 @@ impl Model {
             return Ok(());
         }
 
-        let mut result = build(feature, params, local, self)?;
+        let mut result = build(feature, &params, local, self)?;
         // Picking provenance: tag any face in this feature's result that
         // doesn't already carry an owner tag with this feature's id.
         let owner = id.to_string();
@@ -208,7 +211,8 @@ impl Model {
         }
         stack.pop();
 
-        let mut result = build(feature, params, cache, self)?;
+        let params = self.effective_parameters();
+        let mut result = build(feature, &params, cache, self)?;
         // Picking provenance: tag any face in this feature's result that
         // doesn't already carry an owner tag with this feature's id. Boolean
         // operations propagate inputs' owner tags through stitch, so they
