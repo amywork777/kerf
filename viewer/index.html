@@ -152,6 +152,45 @@
   }
   .pm-expr-error { color: #ff7b72 !important; }
 
+  /* --- configuration dropdown --- */
+  #config-dropdown { margin-top: 14px; }
+  #config-dropdown .config-dropdown { display: block; }
+  #config-dropdown .config-dropdown[hidden] { display: none; }
+  #config-dropdown label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 12px; }
+  #config-dropdown select { width: 100%; padding: 6px 8px; background: var(--bg);
+    color: var(--fg); border: 1px solid var(--line); border-radius: 4px; }
+
+  /* --- design table panel --- */
+  #design-table { margin-top: 14px; }
+  #design-table .design-table { border: 1px solid var(--line); border-radius: 4px;
+    background: var(--bg); }
+  #design-table .dt-header { display: flex; align-items: center; gap: 6px;
+    padding: 6px 8px; cursor: pointer; user-select: none; color: var(--muted);
+    font-size: 12px; }
+  #design-table .dt-header:hover { color: var(--fg); }
+  #design-table .dt-toggle { display: inline-block; width: 12px; color: var(--muted); }
+  #design-table .dt-title { font-weight: 500; }
+  #design-table .dt-body { padding: 6px 8px 8px; border-top: 1px solid var(--line); }
+  #design-table .dt-body[hidden] { display: none; }
+  #design-table .dt-empty { margin: 6px 0; color: var(--muted); font-size: 11px; }
+  #design-table table.dt-grid { border-collapse: collapse; width: 100%;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; }
+  #design-table table.dt-grid th, #design-table table.dt-grid td {
+    border: 1px solid var(--line); padding: 3px 6px; text-align: left; }
+  #design-table table.dt-grid th { background: var(--panel); color: var(--muted);
+    font-weight: 500; }
+  #design-table table.dt-grid td.dt-row-label { color: var(--muted); white-space: nowrap; }
+  #design-table .dt-default-row td { background: rgba(88, 166, 255, 0.04); }
+  #design-table .dt-default-row td.dt-row-label { color: var(--accent); font-style: italic; }
+  #design-table .dt-readonly span { color: var(--muted); }
+  #design-table table.dt-grid input { width: 60px; padding: 1px 4px; background: transparent;
+    color: var(--fg); border: 1px solid transparent; border-radius: 2px; font: inherit; }
+  #design-table table.dt-grid input:focus { border-color: var(--accent); outline: none; }
+  #design-table table.dt-grid input.invalid { border-color: #ff7b72; color: #ff7b72; }
+  #design-table table.dt-grid input::placeholder { color: var(--muted); opacity: 0.4; }
+  #design-table .dt-footer-row td { padding: 4px; }
+  #design-table .dt-add-config { width: 100%; padding: 4px 8px; font-size: 11px; }
+
   /* --- sketcher panel --- */
   #sketcher-toggle { margin-top: 14px; }
   #sketcher-panel { display: none; position: fixed; right: 16px; top: 16px;
@@ -243,6 +282,8 @@
     <div id="actions2" hidden>
       <button id="drawing-btn">Export 3-view PNG</button>
     </div>
+    <div id="config-dropdown"></div>
+    <div id="design-table"></div>
     <div id="views" hidden>
       <label>View</label>
       <div class="view-row">

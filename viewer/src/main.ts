@@ -15,6 +15,7 @@ import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js
 import { mountPropertyManager, type PropertyManagerHandle } from "./property-manager.js";
 import { mountToolbar } from "./toolbar.js";
 import { mountMassProperties, type MassPropertiesData } from "./mass-properties.js";
+import { mountConfigDropdown, mountDesignTable } from "./configurations.js";
 
 await init();
 
