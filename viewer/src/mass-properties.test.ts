@@ -34,14 +34,17 @@ describe("mountMassProperties", () => {
 
   beforeEach(() => {
     document.body.innerHTML = "";
+    // Match the real viewer's index.html: the host already carries
+    // id="mass-properties" before mountMassProperties runs.
     host = document.createElement("div");
+    host.id = "mass-properties";
     document.body.appendChild(host);
   });
 
   it("mounts the panel into the host element", () => {
     mountMassProperties(host);
-    const panel = document.getElementById("mass-properties");
-    expect(panel).not.toBeNull();
+    expect(host.querySelector(".mp-body")).not.toBeNull();
+    expect(host.querySelector(".mp-header")).not.toBeNull();
   });
 
   it("starts collapsed (body hidden)", () => {
