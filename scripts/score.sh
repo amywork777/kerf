@@ -74,12 +74,18 @@ if [ "${1:-}" = "--check" ]; then
 fi
 
 # Print result
-echo "Solidworks-tier total: ${COMPUTED}% (was 65.0% on 2026-05-06)"
+if [ "$HEADER_SCORE" = "$COMPUTED" ]; then
+    echo "Solidworks-tier total: ${COMPUTED}%"
+else
+    echo "Solidworks-tier total: ${COMPUTED}% (header was ${HEADER_SCORE}%)"
+fi
 
 # Update the "Current score:" line in PROGRESS.md
 if [ "$HEADER_SCORE" != "$COMPUTED" ]; then
-    # Use a temp file for portability (no sed -i differences across platforms)
-    TMPFILE=$(mktemp)
+    # Create the temp file in the same directory as PROGRESS.md so the
+    # subsequent `mv` is a same-filesystem rename (atomic, no EXDEV on
+    # systems where /tmp is a separate mount).
+    TMPFILE=$(mktemp "$(dirname "$PROGRESS")/.score.XXXXXX")
     sed "s/^Current score:.*$/Current score: ${COMPUTED}%/" "$PROGRESS" > "$TMPFILE"
     mv "$TMPFILE" "$PROGRESS"
     echo "Updated Current score in $PROGRESS"
