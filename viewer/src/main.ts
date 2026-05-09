@@ -18,6 +18,17 @@ import { mountToolbar } from "./toolbar.js";
 import { mountMassProperties, type MassPropertiesData } from "./mass-properties.js";
 import { mountConfigDropdown, mountDesignTable } from "./configurations.js";
 import { mountBom, type BomEntry } from "./bom.js";
+import {
+  createPickingState,
+  handleFaceClick,
+  handleVertexClick,
+  handleEdgeClick,
+  handleHover,
+  clearHover,
+  clearAll,
+  faceSelectionLabel,
+  type PickingState,
+} from "./picking-state.js";
 
 await init();
 
@@ -86,8 +97,9 @@ let currentMesh: THREE.Mesh | null = null;
 let currentWireframe: THREE.LineSegments | null = null;
 let currentFaceIds: Uint32Array | null = null;
 let currentFaceCount = 0;
-let highlightedFace = -1;
-let hoveredFace = -1;
+
+// Picking state — owns selectedFaces (Set), hoveredFace, highlightedVertex/Edge.
+let picking: PickingState = createPickingState();
 
 // Topology data for vertex / edge picking. Set on every rebuild from
 // the WASM `evaluate_with_face_ids` response.
@@ -95,8 +107,6 @@ let currentVertexPositions: Float32Array | null = null;
 let currentEdgeEndpoints: Uint32Array | null = null;
 let currentVertexToFaces: { offsets: Uint32Array; indices: Uint32Array } | null = null;
 let currentEdgeToFaces: { offsets: Uint32Array; indices: Uint32Array } | null = null;
-let highlightedVertex = -1;
-let highlightedEdge = -1;
 
 // Picking mode: which kind of topology element does a click select?
 type PickMode = "face" | "edge" | "vertex";
@@ -238,8 +248,8 @@ function refreshVertexHighlight() {
     vertexHighlightDot.geometry.dispose();
     vertexHighlightDot = null;
   }
-  if (highlightedVertex < 0 || !currentVertexPositions) return;
-  const vid = highlightedVertex;
+  if (picking.highlightedVertex < 0 || !currentVertexPositions) return;
+  const vid = picking.highlightedVertex;
   const x = currentVertexPositions[vid * 3]!;
   const y = currentVertexPositions[vid * 3 + 1]!;
   const z = currentVertexPositions[vid * 3 + 2]!;
@@ -260,8 +270,8 @@ function refreshEdgeHighlight() {
     edgeHighlightLine.geometry.dispose();
     edgeHighlightLine = null;
   }
-  if (highlightedEdge < 0 || !currentEdgeEndpoints || !currentVertexPositions) return;
-  const eid = highlightedEdge;
+  if (picking.highlightedEdge < 0 || !currentEdgeEndpoints || !currentVertexPositions) return;
+  const eid = picking.highlightedEdge;
   const va = currentEdgeEndpoints[eid * 2]!;
   const vb = currentEdgeEndpoints[eid * 2 + 1]!;
   if (va === 0xffffffff || vb === 0xffffffff) return;
@@ -302,10 +312,7 @@ function setMesh(
   }
   currentFaceIds = faceIds;
   currentFaceCount = faceCount;
-  highlightedFace = -1;
-  hoveredFace = -1;
-  highlightedVertex = -1;
-  highlightedEdge = -1;
+  picking = clearAll(picking);
   refreshVertexHighlight();
   refreshEdgeHighlight();
 
@@ -346,8 +353,8 @@ function resetColors(colors: Float32Array, faceIds: Uint32Array) {
 }
 
 function colorForFace(faceId: number): THREE.Color {
-  if (faceId === highlightedFace) return HIGHLIGHT_COLOR;
-  if (faceId === hoveredFace) return HOVER_COLOR;
+  if (picking.selectedFaces.has(faceId)) return HIGHLIGHT_COLOR;
+  if (faceId === picking.hoveredFace) return HOVER_COLOR;
   return BASE_COLOR;
 }
 
@@ -381,9 +388,7 @@ pickModeButtons.forEach((btn) => {
     pickMode = btn.dataset.pick as PickMode;
     pickModeButtons.forEach((b) => b.classList.toggle("active", b === btn));
     // Clear selection when switching modes.
-    highlightedFace = -1;
-    highlightedVertex = -1;
-    highlightedEdge = -1;
+    picking = clearAll(picking);
     refreshFaceColors();
     refreshVertexHighlight();
     refreshEdgeHighlight();
@@ -432,20 +437,15 @@ function pickFaceAt(clientX: number, clientY: number): number {
 renderer.domElement.addEventListener("click", (e) => {
   if (pickMode === "face") {
     const fid = pickFaceAt(e.clientX, e.clientY);
-    highlightedFace = fid;
-    highlightedVertex = -1;
-    highlightedEdge = -1;
+    picking = handleFaceClick(picking, fid, e.shiftKey);
     refreshFaceColors();
     refreshVertexHighlight();
     refreshEdgeHighlight();
-    if (fid >= 0) {
-      ok(`selected face #${fid} (of ${currentFaceCount})`);
-    }
+    const label = faceSelectionLabel(picking, currentFaceCount);
+    if (label) ok(label);
   } else if (pickMode === "vertex") {
     const vid = pickVertexAt(e.clientX, e.clientY);
-    highlightedVertex = vid;
-    highlightedFace = -1;
-    highlightedEdge = -1;
+    picking = handleVertexClick(picking, vid);
     refreshFaceColors();
     refreshVertexHighlight();
     refreshEdgeHighlight();
@@ -456,9 +456,7 @@ renderer.domElement.addEventListener("click", (e) => {
     }
   } else if (pickMode === "edge") {
     const eid = pickEdgeAt(e.clientX, e.clientY);
-    highlightedEdge = eid;
-    highlightedFace = -1;
-    highlightedVertex = -1;
+    picking = handleEdgeClick(picking, eid);
     refreshFaceColors();
     refreshVertexHighlight();
     refreshEdgeHighlight();
@@ -469,12 +467,41 @@ renderer.domElement.addEventListener("click", (e) => {
   }
 });
 
+// Debounce hover updates to ~1 frame (16 ms) so we don't raytrace on every
+// raw mousemove event. We store the latest pointer coords and fire a single
+// pick after the timer expires.
+let hoverDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingHoverX = 0;
+let pendingHoverY = 0;
+
+function flushHover() {
+  hoverDebounceTimer = null;
+  if (!currentMesh || pickMode !== "face") return;
+  const fid = pickFaceAt(pendingHoverX, pendingHoverY);
+  const next = handleHover(picking, fid);
+  if (next !== null) {
+    picking = next;
+    refreshFaceColors();
+  }
+}
+
 renderer.domElement.addEventListener("pointermove", (e) => {
-  // Throttle hover detection by skipping when no model.
   if (!currentMesh) return;
-  const fid = pickFaceAt(e.clientX, e.clientY);
-  if (fid !== hoveredFace) {
-    hoveredFace = fid;
+  pendingHoverX = e.clientX;
+  pendingHoverY = e.clientY;
+  if (hoverDebounceTimer === null) {
+    hoverDebounceTimer = setTimeout(flushHover, 16);
+  }
+});
+
+renderer.domElement.addEventListener("pointerleave", () => {
+  if (hoverDebounceTimer !== null) {
+    clearTimeout(hoverDebounceTimer);
+    hoverDebounceTimer = null;
+  }
+  const next = clearHover(picking);
+  if (next !== picking) {
+    picking = next;
     refreshFaceColors();
   }
 });
@@ -825,8 +852,10 @@ window.addEventListener("keydown", (e) => {
       downloadBtn.click();
       break;
     case "Escape":
-      highlightedFace = -1;
+      picking = clearAll(picking);
       refreshFaceColors();
+      refreshVertexHighlight();
+      refreshEdgeHighlight();
       break;
   }
 });
