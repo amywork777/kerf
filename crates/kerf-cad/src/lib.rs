@@ -10,7 +10,7 @@ pub mod catalog;
 pub mod equations;
 pub mod eval;
 pub mod feature;
-pub mod geometric;
+pub mod mass;
 pub mod model;
 pub mod scalar;
 pub mod sketch;
@@ -23,6 +23,7 @@ pub use assembly::{
     Pose, ResolvedPose, SurfaceRef,
 };
 pub use cache::{EvalCache, Fingerprint};
+pub use mass::{mass_properties, MassProperties};
 pub use eval::EvalError;
 pub use feature::{Feature, FilletEdge, Profile2D};
 pub use geometric::{ConstraintError, FaceRef, GeoAxisRef, GeometricConstraint};
