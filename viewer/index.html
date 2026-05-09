@@ -152,6 +152,16 @@
   }
   .pm-expr-error { color: #ff7b72 !important; }
 
+  /* --- save status --- */
+  .save-status { font-size: 11px; color: var(--muted); margin-top: 6px;
+    font-family: ui-monospace, Menlo, monospace; min-height: 14px; }
+  .save-status.dirty::after { content: " *"; color: var(--accent); }
+  .save-toast { position: fixed; bottom: 16px; right: 16px; padding: 10px 14px;
+    background: var(--panel); border: 1px solid var(--accent); border-radius: 6px;
+    color: var(--fg); font-size: 12px; cursor: pointer; z-index: 60;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
+  .save-toast:hover { border-color: var(--fg); }
+
   /* --- sketcher panel --- */
   #sketcher-toggle { margin-top: 14px; }
   #sketcher-panel { display: none; position: fixed; right: 16px; top: 16px;
@@ -210,8 +220,11 @@
     </div>
     <div id="params"></div>
     <div id="actions" hidden>
-      <button id="download-btn">Download JSON</button>
+      <button id="open-btn" title="Open a kerf-cad model file">Open…</button>
+      <button id="save-btn" title="Save (⌘S / Ctrl+S)">Save</button>
+      <button id="save-as-btn" title="Save as…">Save as…</button>
       <button id="reset-btn">Reset params</button>
+      <div id="save-status" class="save-status"></div>
     </div>
     <div id="actions2" hidden>
       <button id="drawing-btn">Export 3-view PNG</button>

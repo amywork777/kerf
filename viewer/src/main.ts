@@ -12,6 +12,7 @@ import { exportThreeViewPng } from "./drawings.js";
 import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js";
 import { mountPropertyManager, type PropertyManagerHandle } from "./property-manager.js";
 import { mountToolbar } from "./toolbar.js";
+import { createFileHandle } from "./file-system.js";
 
 await init();
 
@@ -24,7 +25,10 @@ const targetsEl = document.getElementById("targets")!;
 const targetSelect = document.getElementById("target-select") as HTMLSelectElement;
 const actionsEl = document.getElementById("actions")!;
 const viewsEl = document.getElementById("views")!;
-const downloadBtn = document.getElementById("download-btn")!;
+const openBtn = document.getElementById("open-btn")!;
+const saveBtn = document.getElementById("save-btn")!;
+const saveAsBtn = document.getElementById("save-as-btn")!;
+const saveStatusEl = document.getElementById("save-status")!;
 const resetBtn = document.getElementById("reset-btn")!;
 const wireframeToggle = document.getElementById("wireframe-toggle") as HTMLInputElement;
 const drawingBtn = document.getElementById("drawing-btn")!;
@@ -668,6 +672,7 @@ function deleteFeature(id: string) {
   };
   renderTargets(remainingIds);
   renderFeatureTree();
+  markDirty();
   rebuild();
 }
 
@@ -702,33 +707,108 @@ function loadJson(json: string) {
     actions2El.hidden = false;
     viewsEl.hidden = false;
     rebuild(true);
+    refreshSaveStatus();
   } catch (e) {
     err(String(e));
   }
 }
 
-// --- save back to JSON ---
-downloadBtn.addEventListener("click", () => {
-  if (!model) return;
-  // Re-emit JSON with the slider-modified parameters baked in.
+// --- file save / open via File System Access API (with anchor-download
+// + <input> fallback for browsers without it) ---
+const fileHandle = createFileHandle();
+const ACCEPT = {
+  description: "kerf-cad model",
+  mimes: ["application/json"],
+  extensions: [".json"],
+};
+let isDirty = false;
+let unsavedToast: HTMLElement | null = null;
+
+function currentModelJson(): string {
+  if (!model) return "";
   const parsed = JSON.parse(model.json);
   parsed.parameters = { ...model.parameters };
-  const out = JSON.stringify(parsed, null, 2);
-  const blob = new Blob([out], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "model.kerf-cad.json";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-});
+  return JSON.stringify(parsed, null, 2);
+}
+
+function refreshSaveStatus() {
+  const name = fileHandle.currentName();
+  saveStatusEl.textContent = name ?? "(unsaved)";
+  saveStatusEl.classList.toggle("dirty", isDirty);
+}
+
+function markDirty() {
+  if (!isDirty) {
+    isDirty = true;
+    refreshSaveStatus();
+    scheduleUnsavedToast();
+  }
+}
+
+function markClean() {
+  isDirty = false;
+  refreshSaveStatus();
+  if (unsavedToast) {
+    unsavedToast.remove();
+    unsavedToast = null;
+  }
+}
+
+function scheduleUnsavedToast() {
+  if (unsavedToast) return;
+  setTimeout(() => {
+    if (!isDirty || unsavedToast) return;
+    unsavedToast = document.createElement("div");
+    unsavedToast.className = "save-toast";
+    unsavedToast.textContent = "Unsaved changes — Save (⌘S)";
+    unsavedToast.addEventListener("click", () => saveBtn.click());
+    document.body.appendChild(unsavedToast);
+  }, 30_000);
+}
+
+async function doSave() {
+  if (!model) return;
+  const content = currentModelJson();
+  const fallbackName = fileHandle.currentName() ?? "model.kerf-cad.json";
+  const result = fileHandle.hasHandle()
+    ? await fileHandle.saveExisting(content, fallbackName, ACCEPT)
+    : await fileHandle.saveAs(content, fallbackName, ACCEPT);
+  if (result) {
+    markClean();
+    ok(`Saved to ${result.name}`);
+  }
+}
+
+async function doSaveAs() {
+  if (!model) return;
+  const result = await fileHandle.saveAs(
+    currentModelJson(),
+    fileHandle.currentName() ?? "model.kerf-cad.json",
+    ACCEPT,
+  );
+  if (result) {
+    markClean();
+    ok(`Saved to ${result.name}`);
+  }
+}
+
+async function doOpen() {
+  const opened = await fileHandle.open(ACCEPT);
+  if (!opened) return;
+  loadJson(opened.text);
+  markClean();
+  ok(`Opened ${opened.name}`);
+}
+
+saveBtn.addEventListener("click", () => void doSave());
+saveAsBtn.addEventListener("click", () => void doSaveAs());
+openBtn.addEventListener("click", () => void doOpen());
 
 resetBtn.addEventListener("click", () => {
   if (!model) return;
   model.parameters = { ...model.defaults };
   renderParams();
+  markDirty();
   rebuild();
 });
 
@@ -760,7 +840,14 @@ viewsEl.querySelectorAll<HTMLButtonElement>("button[data-view]").forEach((b) => 
 
 // --- keyboard shortcuts ---
 window.addEventListener("keydown", (e) => {
-  // Don't intercept while typing in a slider/input.
+  // Cmd/Ctrl+S → save (works even from inside an input — that's expected
+  // for a save shortcut).
+  if ((e.metaKey || e.ctrlKey) && (e.key === "s" || e.key === "S")) {
+    e.preventDefault();
+    if (model) saveBtn.click();
+    return;
+  }
+  // Don't intercept other keys while typing in a slider/input.
   const t = e.target as HTMLElement | null;
   if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) {
     return;
@@ -785,7 +872,7 @@ window.addEventListener("keydown", (e) => {
       break;
     case "s":
     case "S":
-      downloadBtn.click();
+      saveBtn.click();
       break;
     case "Escape":
       highlightedFace = -1;
