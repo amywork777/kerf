@@ -13,6 +13,7 @@ import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js
 import { mountPropertyManager, type PropertyManagerHandle } from "./property-manager.js";
 import { mountToolbar } from "./toolbar.js";
 import { createFileHandle } from "./file-system.js";
+import { mountSectionView, type SectionViewHandle } from "./section-view.js";
 
 await init();
 
@@ -73,6 +74,9 @@ const meshMaterial = new THREE.MeshStandardMaterial({
   side: THREE.DoubleSide,
   vertexColors: true,
 });
+// Required for per-material clipping planes to take effect.
+renderer.localClippingEnabled = true;
+meshMaterial.clippingPlanes = [];
 
 let currentMesh: THREE.Mesh | null = null;
 let currentWireframe: THREE.LineSegments | null = null;
@@ -80,6 +84,10 @@ let currentFaceIds: Uint32Array | null = null;
 let currentFaceCount = 0;
 let highlightedFace = -1;
 let hoveredFace = -1;
+
+// Initialized in the section-view mount block below; safe to call only
+// after a model has been loaded (i.e., from rebuild() / setMesh()).
+let sectionView: SectionViewHandle;
 
 // Topology data for vertex / edge picking. Set on every rebuild from
 // the WASM `evaluate_with_face_ids` response.
@@ -301,7 +309,10 @@ function setMesh(
   refreshVertexHighlight();
   refreshEdgeHighlight();
 
-  if (triangles.length === 0) return;
+  if (triangles.length === 0) {
+    sectionView.refresh(null);
+    return;
+  }
 
   const geom = new THREE.BufferGeometry();
   geom.setAttribute("position", new THREE.BufferAttribute(triangles, 3));
@@ -319,6 +330,15 @@ function setMesh(
   scene.add(currentMesh);
   refreshWireframe();
   if (fit && geom.boundingBox) fitToView(geom.boundingBox);
+
+  // Update section-view slider range when a new mesh is loaded.
+  if (geom.boundingBox) {
+    const bb = geom.boundingBox;
+    sectionView.refresh({
+      min: [bb.min.x, bb.min.y, bb.min.z],
+      max: [bb.max.x, bb.max.y, bb.max.z],
+    });
+  }
 }
 
 const BASE_COLOR = new THREE.Color(0x6ea8ff);
@@ -364,6 +384,14 @@ function refreshWireframe() {
 }
 
 wireframeToggle.addEventListener("change", refreshWireframe);
+
+// --- section view ---
+const sectionViewEl = document.getElementById("section-view-host")!;
+sectionView = mountSectionView(sectionViewEl, {
+  getRenderer: () => renderer,
+  getMeshMaterial: () => meshMaterial,
+  onChange: () => renderer.render(scene, camera),
+});
 
 const pickModeButtons = document.querySelectorAll(
   "#pick-mode button",
