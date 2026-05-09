@@ -797,11 +797,11 @@ window.addEventListener("keydown", (e) => {
 
 // --- file drop / picker ---
 
-/// Route a dropped/picked file through either the JSON loader or the STEP
-/// importer based on its extension. STEP files are converted to a kerf-cad
-/// Model JSON via WASM, then handed to the same `loadJson` flow as a
-/// hand-authored JSON model — this keeps the rest of the pipeline (params
-/// panel, target picker, picking) unchanged.
+// Route a dropped/picked file through either the JSON loader or the STEP
+// importer based on its extension. STEP files are converted to a kerf-cad
+// Model JSON via WASM, then handed to the same `loadJson` flow as a
+// hand-authored JSON model — this keeps the rest of the pipeline (params
+// panel, target picker, picking) unchanged.
 async function handleFile(f: File) {
   const text = await f.text();
   const lower = f.name.toLowerCase();

@@ -4045,6 +4045,13 @@ pub enum Feature {
     ///
     /// Used by `kerf_cad::step_import::import_step` to wrap the imported
     /// solid into a Model.
+    ///
+    /// **Limitation (v1):** an ImportedMesh has no input dependencies and
+    /// cannot currently participate as the input of another feature
+    /// (boolean operands, transforms, fillets) because its evaluator
+    /// reports an empty dep list. To compose with kerf-native features,
+    /// re-author the geometry through the catalog or extend the evaluator
+    /// to expose ImportedMesh as a referenceable Solid.
     ImportedMesh {
         id: String,
         vertices: Vec<[f64; 3]>,
