@@ -9885,6 +9885,173 @@ fn build(
                 id: id.into(), op: "cross3d_union", message: e.message,
             })
         }
+        // ---------------------------------------------------------------
+        // Reference geometry batch 4 (5 features) — ship 2026-05-10.
+        // ---------------------------------------------------------------
+
+        Feature::Centerline { from, to, radius, .. } => {
+            let p0 = resolve3(id, from, params)?;
+            let p1 = resolve3(id, to, params)?;
+            let r = resolve_one(id, radius, params)?;
+            if r <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Centerline radius must be > 0 (got {r})"),
+                });
+            }
+            let seg = sweep_cylinder_segment(p0, p1, r, 12);
+            match seg {
+                Some(s) => Ok(s),
+                None => Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "Centerline from and to must be distinct points".into(),
+                }),
+            }
+        }
+
+        Feature::MidPlane { point_a, point_b, normal, extent, .. } => {
+            let pa = resolve3(id, point_a, params)?;
+            let pb = resolve3(id, point_b, params)?;
+            let n = resolve3(id, normal, params)?;
+            let ext = resolve_one(id, extent, params)?;
+            if ext <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("MidPlane extent must be > 0 (got {ext})"),
+                });
+            }
+            let nlen = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            if nlen < 1e-12 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "MidPlane normal must be non-zero".into(),
+                });
+            }
+            // Midpoint between the two points.
+            let mid = [
+                0.5 * (pa[0] + pb[0]),
+                0.5 * (pa[1] + pb[1]),
+                0.5 * (pa[2] + pb[2]),
+            ];
+            // Build a thin box centered at mid. Axis is the primary component
+            // of normal. Use RefPlane pattern: thin along normal, wide in perps.
+            let nu = [n[0] / nlen, n[1] / nlen, n[2] / nlen];
+            // Find the axis closest to normal for a simple axis-aligned slab.
+            let abs_n = [nu[0].abs(), nu[1].abs(), nu[2].abs()];
+            let axis_idx = if abs_n[0] >= abs_n[1] && abs_n[0] >= abs_n[2] {
+                0
+            } else if abs_n[1] >= abs_n[2] {
+                1
+            } else {
+                2
+            };
+            let thickness = 0.05_f64;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            let mut box_extents = [0.0_f64; 3];
+            box_extents[axis_idx] = thickness;
+            box_extents[a_idx] = 2.0 * ext;
+            box_extents[b_idx] = 2.0 * ext;
+            let mut origin = [0.0_f64; 3];
+            origin[axis_idx] = mid[axis_idx] - thickness / 2.0;
+            origin[a_idx] = mid[a_idx] - ext;
+            origin[b_idx] = mid[b_idx] - ext;
+            Ok(box_at(
+                Vec3::new(box_extents[0], box_extents[1], box_extents[2]),
+                Point3::new(origin[0], origin[1], origin[2]),
+            ))
+        }
+
+        Feature::ConstructionAxis { origin, direction, length, radius, .. } => {
+            let orig = resolve3(id, origin, params)?;
+            let dir = resolve3(id, direction, params)?;
+            let l = resolve_one(id, length, params)?;
+            let r = resolve_one(id, radius, params)?;
+            if l <= 0.0 || r <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("ConstructionAxis length and radius must be > 0 (got l={l}, r={r})"),
+                });
+            }
+            let dlen = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+            if dlen < 1e-12 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "ConstructionAxis direction must be non-zero".into(),
+                });
+            }
+            // Build a rod centered at origin along direction by half_length.
+            let du = [dir[0] / dlen, dir[1] / dlen, dir[2] / dlen];
+            let half = l / 2.0;
+            let p0 = [orig[0] - du[0] * half, orig[1] - du[1] * half, orig[2] - du[2] * half];
+            let p1 = [orig[0] + du[0] * half, orig[1] + du[1] * half, orig[2] + du[2] * half];
+            let seg = sweep_cylinder_segment(p0, p1, r, 12);
+            match seg {
+                Some(s) => Ok(s),
+                None => Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "ConstructionAxis: degenerate geometry".into(),
+                }),
+            }
+        }
+
+        Feature::AnchorPoint2 { position, size, .. } => {
+            let p = resolve3(id, position, params)?;
+            let s = resolve_one(id, size, params)?;
+            if s <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("AnchorPoint2 size must be > 0 (got {s})"),
+                });
+            }
+            // Small cube centered at position.
+            Ok(box_at(
+                Vec3::new(s, s, s),
+                Point3::new(p[0] - s / 2.0, p[1] - s / 2.0, p[2] - s / 2.0),
+            ))
+        }
+
+        Feature::BoundingSphere { input, segments, .. } => {
+            if *segments < 2 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("BoundingSphere segments must be >= 2 (got {segments})"),
+                });
+            }
+            let base = cache_get(cache, input)?;
+            let mut min = [f64::INFINITY; 3];
+            let mut max = [f64::NEG_INFINITY; 3];
+            for (_, p) in base.vertex_geom.iter() {
+                if p.x < min[0] { min[0] = p.x; }
+                if p.y < min[1] { min[1] = p.y; }
+                if p.z < min[2] { min[2] = p.z; }
+                if p.x > max[0] { max[0] = p.x; }
+                if p.y > max[1] { max[1] = p.y; }
+                if p.z > max[2] { max[2] = p.z; }
+            }
+            if !min[0].is_finite() {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "BoundingSphere input has no vertices".into(),
+                });
+            }
+            let cx = 0.5 * (min[0] + max[0]);
+            let cy = 0.5 * (min[1] + max[1]);
+            let cz = 0.5 * (min[2] + max[2]);
+            let dx = max[0] - min[0];
+            let dy = max[1] - min[1];
+            let dz = max[2] - min[2];
+            let diag = (dx * dx + dy * dy + dz * dz).sqrt();
+            let radius = diag / 2.0;
+            if radius < 1e-12 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "BoundingSphere input AABB is degenerate (radius ~ 0)".into(),
+                });
+            }
+            let sph = sphere_faceted(radius, *segments, 2 * segments);
+            Ok(translate_solid(&sph, Vec3::new(cx, cy, cz)))
+        }
+
         Feature::Chair { seat_size, seat_thickness, leg_height, leg_thickness, leg_inset, back_thickness, back_height, .. } => {
             let ss = resolve_one(id, seat_size, params)?;
             let st = resolve_one(id, seat_thickness, params)?;
