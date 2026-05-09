@@ -12,7 +12,7 @@ import init, {
 } from "./wasm/kerf_cad_wasm.js";
 import { exportThreeViewPng } from "./drawings.js";
 import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js";
-import { reorderFeatures, filterFeatures } from "./feature-tree-ops.js";
+import { applyFilter, collectFeatureKinds, type ParsedFeature, type FilterKind } from "./pick-filter.js";
 
 await init();
 
@@ -47,8 +47,8 @@ const gdtHelpLink = document.getElementById("gdt-help-link")!;
 const featureTreeEl = document.getElementById("feature-tree")!;
 const featureListEl = document.getElementById("feature-list")!;
 const featureCountEl = document.getElementById("feature-count")!;
-const featureSearchEl = document.getElementById("feature-search") as HTMLInputElement;
-const featureSearchClearEl = document.getElementById("feature-search-clear")!;
+const pickModeGroupEl = document.getElementById("pick-mode-group")!;
+const pickFilterEl = document.getElementById("pick-filter") as HTMLSelectElement;
 
 // --- three.js scene ---
 const scene = new THREE.Scene();
@@ -114,6 +114,13 @@ let currentEdgeToFaces: { offsets: Uint32Array; indices: Uint32Array } | null = 
 // Picking mode: which kind of topology element does a click select?
 type PickMode = "face" | "edge" | "vertex";
 let pickMode: PickMode = "face";
+
+// Feature-kind filter for face picking. "All" means no filtering.
+let filterKind: FilterKind = "All";
+// Map from face-id → owner feature id, populated from WASM face_owner_tags.
+let faceOwnerTags: Map<number, string> = new Map();
+// Parsed feature summaries from the loaded model JSON, used by applyFilter.
+let parsedFeaturesForFilter: ParsedFeature[] = [];
 
 // Display helpers for vertex/edge picking — small markers/highlighters
 // that mount under the mesh while a non-face mode is active.
@@ -397,16 +404,8 @@ function refreshWireframe() {
 
 wireframeToggle.addEventListener("change", refreshWireframe);
 
-// --- section view ---
-const sectionViewEl = document.getElementById("section-view-host")!;
-sectionView = mountSectionView(sectionViewEl, {
-  getRenderer: () => renderer,
-  getMeshMaterial: () => meshMaterial,
-  onChange: () => renderer.render(scene, camera),
-});
-
-const pickModeButtons = document.querySelectorAll(
-  "#pick-mode button",
+const pickModeButtons = pickModeGroupEl.querySelectorAll(
+  "button",
 ) as NodeListOf<HTMLButtonElement>;
 pickModeButtons.forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -418,6 +417,18 @@ pickModeButtons.forEach((btn) => {
     refreshVertexHighlight();
     refreshEdgeHighlight();
   });
+});
+
+// Wire the filter dropdown.
+pickFilterEl.addEventListener("change", () => {
+  filterKind = pickFilterEl.value as FilterKind;
+  // Clear any selection that may no longer be valid under the new filter.
+  if (filterKind !== "All" && highlightedFace >= 0) {
+    if (!applyFilter(highlightedFace, faceOwnerTags, parsedFeaturesForFilter, filterKind)) {
+      highlightedFace = -1;
+    }
+  }
+  refreshFaceColors();
 });
 
 document.addEventListener("keydown", (e) => {
@@ -461,13 +472,24 @@ function pickFaceAt(clientX: number, clientY: number): number {
 
 renderer.domElement.addEventListener("click", (e) => {
   if (pickMode === "face") {
-    const fid = pickFaceAt(e.clientX, e.clientY);
-    picking = handleFaceClick(picking, fid, e.shiftKey);
+    const rawFid = pickFaceAt(e.clientX, e.clientY);
+    // Apply feature-kind filter: if the face doesn't pass, treat as a miss.
+    const fid =
+      rawFid >= 0 &&
+      applyFilter(rawFid, faceOwnerTags, parsedFeaturesForFilter, filterKind)
+        ? rawFid
+        : -1;
+    highlightedFace = fid;
+    highlightedVertex = -1;
+    highlightedEdge = -1;
     refreshFaceColors();
     refreshVertexHighlight();
     refreshEdgeHighlight();
-    const label = faceSelectionLabel(picking, currentFaceCount);
-    if (label) ok(label);
+    if (fid >= 0) {
+      const ownerTag = faceOwnerTags.get(fid);
+      const ownerInfo = ownerTag ? ` owner=${ownerTag}` : "";
+      ok(`selected face #${fid}${ownerInfo} (of ${currentFaceCount})`);
+    }
   } else if (pickMode === "vertex") {
     const vid = pickVertexAt(e.clientX, e.clientY);
     picking = handleVertexClick(picking, vid);
@@ -512,21 +534,15 @@ function flushHover() {
 
 renderer.domElement.addEventListener("pointermove", (e) => {
   if (!currentMesh) return;
-  pendingHoverX = e.clientX;
-  pendingHoverY = e.clientY;
-  if (hoverDebounceTimer === null) {
-    hoverDebounceTimer = setTimeout(flushHover, 16);
-  }
-});
-
-renderer.domElement.addEventListener("pointerleave", () => {
-  if (hoverDebounceTimer !== null) {
-    clearTimeout(hoverDebounceTimer);
-    hoverDebounceTimer = null;
-  }
-  const next = clearHover(picking);
-  if (next !== picking) {
-    picking = next;
+  const rawFid = pickFaceAt(e.clientX, e.clientY);
+  // Apply feature-kind filter to hover as well.
+  const fid =
+    rawFid >= 0 &&
+    applyFilter(rawFid, faceOwnerTags, parsedFeaturesForFilter, filterKind)
+      ? rawFid
+      : -1;
+  if (fid !== hoveredFace) {
+    hoveredFace = fid;
     refreshFaceColors();
   }
 });
@@ -586,6 +602,8 @@ function rebuild(fit: boolean = false) {
       vertex_to_faces_indices: number[];
       edge_to_faces_offsets: number[];
       edge_to_faces_indices: number[];
+      // Optional: map of face-id → owner feature id string.
+      face_owner_tags?: Record<string, string>;
     };
     const tris = new Float32Array(result.triangles);
     const faceIds = new Uint32Array(result.face_ids);
@@ -606,6 +624,16 @@ function rebuild(fit: boolean = false) {
       currentVertexToFaces = null;
       currentEdgeToFaces = null;
     }
+    // Extract face_owner_tags (face-id string key → owner feature id).
+    faceOwnerTags = new Map();
+    if (result.face_owner_tags) {
+      for (const [k, v] of Object.entries(result.face_owner_tags)) {
+        faceOwnerTags.set(Number(k), v);
+      }
+    }
+    // Sync the feature kind filter dropdown with the current model.
+    parsedFeaturesForFilter = model ? summarizeFeatures(model.json) : [];
+    renderFilterDropdown();
     setMesh(tris, faceIds, result.face_count, fit);
     ok(
       `target='${model.targetId}'  V/E/F/S=${result.vertex_count}/${result.edge_count}/${result.face_count_topo}/${result.shell_count}` +
@@ -666,6 +694,31 @@ function renderTargets(ids: string[]) {
 }
 
 type FeatureSummary = { id: string; kind: string };
+
+/**
+ * Rebuild the #pick-filter dropdown with the feature kinds present in the
+ * current model. Preserves the current selection when possible.
+ */
+function renderFilterDropdown() {
+  const prev = pickFilterEl.value;
+  pickFilterEl.innerHTML = "";
+  const allOpt = document.createElement("option");
+  allOpt.value = "All";
+  allOpt.textContent = "All";
+  pickFilterEl.appendChild(allOpt);
+
+  const kinds = collectFeatureKinds(parsedFeaturesForFilter);
+  for (const k of kinds) {
+    const opt = document.createElement("option");
+    opt.value = k;
+    opt.textContent = k;
+    pickFilterEl.appendChild(opt);
+  }
+
+  // Restore previous selection when the kind still exists, else reset.
+  pickFilterEl.value = kinds.includes(prev) || prev === "All" ? prev : "All";
+  filterKind = pickFilterEl.value as FilterKind;
+}
 
 function summarizeFeatures(json: string): FeatureSummary[] {
   try {
