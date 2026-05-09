@@ -249,15 +249,24 @@ fn jacobi_eigen_3x3(m: [[f64; 3]; 3]) -> ([f64; 3], [[f64; 3]; 3]) {
 
     for _ in 0..MAX_SWEEPS {
         // Find the off-diagonal element with the largest absolute value.
+        // Initialize max_off to -1 so the first comparison always wins —
+        // a strict `>` against `a[0][1]` would skip the (0,1) candidate
+        // and pick the wrong pivot when (0,1) ties with another entry.
         let mut p = 0usize;
         let mut q = 1usize;
-        let mut max_off = a[0][1].abs();
-        let candidates = [(0,1),(0,2),(1,2)];
-        for &(i,j) in &candidates {
+        let mut max_off = -1.0_f64;
+        let candidates = [(0, 1), (0, 2), (1, 2)];
+        for &(i, j) in &candidates {
             let val = a[i][j].abs();
-            if val > max_off { max_off = val; p = i; q = j; }
+            if val > max_off {
+                max_off = val;
+                p = i;
+                q = j;
+            }
         }
-        if max_off < EPS { break; }
+        if max_off < EPS {
+            break;
+        }
 
         // Compute the Jacobi rotation angle.
         let theta = 0.5 * (a[q][q] - a[p][p]) / a[p][q];

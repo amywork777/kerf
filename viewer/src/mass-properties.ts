@@ -40,8 +40,11 @@ function fmt3(v: [number, number, number], decimals = 3): string {
  */
 export function mountMassProperties(host: HTMLElement): MassPropertiesPanel {
   // --- Build DOM ---
+  // The host is `<div id="mass-properties">` from index.html; the inner
+  // wrapper avoids duplicating the id (which would shadow getElementById
+  // lookups and produce invalid HTML).
   const container = document.createElement("div");
-  container.id = "mass-properties";
+  container.className = "mp-panel";
 
   const header = document.createElement("div");
   header.className = "mp-header";
