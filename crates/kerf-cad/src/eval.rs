@@ -9868,6 +9868,134 @@ fn build(
                 reason: format!("ImportedMesh from_triangles: {e}"),
             })
         }
+        Feature::TruncatedSphere { radius, clip_z, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let cz = resolve_one(id, clip_z, params)?;
+            if r <= 0.0 || *segments < 4 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("TruncatedSphere requires positive radius, segments>=4 (got r={r}, segs={})", *segments),
+                });
+            }
+            if cz >= r {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("TruncatedSphere clip_z must be < radius (got clip_z={cz}, r={r})"),
+                });
+            }
+            // Build sphere, cut away z < clip_z.
+            let sph = sphere_faceted(r, *segments, *segments);
+            let big = 4.0 * r;
+            let cutter = box_at(
+                Vec3::new(2.0 * big, 2.0 * big, big + cz.abs() + r),
+                Point3::new(-big, -big, cz - big - cz.abs() - r),
+            );
+            sph.try_difference(&cutter).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "truncated_sphere_clip",
+                message: e.message,
+            })
+        }
+        Feature::Lens2 { radius, thickness, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let t = resolve_one(id, thickness, params)?;
+            if r <= 0.0 || t <= 0.0 || t > 2.0 * r || *segments < 4 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Lens2 requires r>0, 0<thickness<=2r, segments>=4 (got r={r}, t={t})"),
+                });
+            }
+            // d = r - t/2; spheres centered at (0,0,+d) and (0,0,-d).
+            // Intersection z-range on axis = [d-r, r-d] = [-t/2, t/2], total thickness = t.
+            // When t = 2r → d = 0 → both spheres are the same sphere → intersection is full sphere.
+            let d = r - t / 2.0;
+            let sph_a = sphere_faceted(r, *segments, *segments);
+            let sph_a_t = translate_solid(&sph_a, Vec3::new(0.0, 0.0, d));
+            let sph_b = sphere_faceted(r, *segments, *segments);
+            let sph_b_t = translate_solid(&sph_b, Vec3::new(0.0, 0.0, -d));
+            sph_a_t.try_intersection(&sph_b_t).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "lens2_intersection",
+                message: e.message,
+            })
+        }
+        Feature::Capsule2 { radius, length, axis, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let len = resolve_one(id, length, params)?;
+            if r <= 0.0 || len < 0.0 || *segments < 4 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Capsule2 requires positive radius, non-negative length, segments>=4 (got r={r}, len={len})"),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            // Build along +z: cylinder of radius r, height len, at z=0.
+            // Top hemisphere: sphere at z=len, clip away z < len (keep z >= len).
+            // Bottom hemisphere: sphere at z=0, clip away z > 0 (keep z <= 0).
+            let body = cylinder_faceted(r, len, *segments);
+            let big = 4.0 * r;
+            // Top cap: sphere at z=len, keep z >= len.
+            let sph_top_raw = sphere_faceted(r, *segments, *segments);
+            let sph_top = translate_solid(&sph_top_raw, Vec3::new(0.0, 0.0, len));
+            let cut_top = box_at(Vec3::new(2.0 * big, 2.0 * big, big + len), Point3::new(-big, -big, -big));
+            let top_cap = sph_top.try_difference(&cut_top).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "capsule2_top_clip", message: e.message,
+            })?;
+            // Bottom cap: sphere at z=0, keep z <= 0.
+            let sph_bot_raw = sphere_faceted(r, *segments, *segments);
+            let cut_bot = box_at(Vec3::new(2.0 * big, 2.0 * big, big), Point3::new(-big, -big, 0.0));
+            let bot_cap = sph_bot_raw.try_difference(&cut_bot).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "capsule2_bot_clip", message: e.message,
+            })?;
+            let with_top = body.try_union(&top_cap).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "capsule2_top_join", message: e.message,
+            })?;
+            let local = with_top.try_union(&bot_cap).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "capsule2_bot_join", message: e.message,
+            })?;
+            // Reorient if not z-axis.
+            Ok(match axis_idx {
+                2 => local,
+                0 => axis_swap_xz_to_x(&local),
+                1 => axis_swap_yz_to_y(&local),
+                _ => unreachable!(),
+            })
+        }
+        Feature::OvoidShell { radius_min, radius_max, length, thickness, segments, .. } => {
+            let r_min = resolve_one(id, radius_min, params)?;
+            let r_max = resolve_one(id, radius_max, params)?;
+            let l = resolve_one(id, length, params)?;
+            let th = resolve_one(id, thickness, params)?;
+            if r_min <= 0.0 || r_max <= 0.0 || l <= 0.0 || th <= 0.0 || th >= r_min || *segments < 4 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("OvoidShell requires positive dims, thickness < radius_min (got r_min={r_min}, r_max={r_max}, l={l}, th={th})"),
+                });
+            }
+            // Outer ovoid: sphere of radius r_max scaled by (r_min/r_max, r_min/r_max, l/(2*r_max))
+            // so x/y extent = r_min, z extent = l/2.
+            let outer_sph = sphere_faceted(r_max, *segments, *segments);
+            let sx = r_min / r_max;
+            let sz = l / (2.0 * r_max);
+            let outer = scale_xyz_solid(&outer_sph, sx, sx, sz);
+            // Inner ovoid: shrink all dims by thickness.
+            let r_max_in = r_max - th;
+            let r_min_in = r_min - th;
+            let l_in = l - 2.0 * th;
+            if r_max_in <= 0.0 || r_min_in <= 0.0 || l_in <= 0.0 {
+                // Thickness so large it eats the whole ovoid — just return outer.
+                return Ok(outer);
+            }
+            let inner_sph = sphere_faceted(r_max_in, *segments, *segments);
+            let sx_in = r_min_in / r_max_in;
+            let sz_in = l_in / (2.0 * r_max_in);
+            let inner = scale_xyz_solid(&inner_sph, sx_in, sx_in, sz_in);
+            outer.try_difference(&inner).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "ovoid_shell_diff",
+                message: e.message,
+            })
+        }
 }
 }
 
