@@ -211,6 +211,40 @@ pub fn evaluate_with_face_ids(
     .map_err(|e| JsError::new(&e.to_string()))
 }
 
+/// Return the `equations` map of the model as a JS object: `{name: expression_string}`.
+/// Equations are cross-parameter constraint relationships; see `evaluate_equations`
+/// to actually resolve them.
+#[wasm_bindgen]
+pub fn list_equations(json: &str) -> Result<JsValue, JsError> {
+    let model = Model::from_json_str(json).map_err(|e| JsError::new(&format!("parse: {e}")))?;
+    serde_wasm_bindgen::to_value(&model.equations).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Resolve all equations in the model JSON against the provided parameter
+/// overrides (or the model's stored parameters if `params_json` is `"{}"`).
+///
+/// `params_json` — a flat `{"name": number}` JSON object. These override
+/// the model's `parameters` before equations are resolved, mirroring the
+/// behaviour of `evaluate_with_params`.
+///
+/// Returns `Object<name, number>` — the full resolved parameter map (base
+/// parameters merged with all equation results). Errors surface as a JS
+/// `Error` with a descriptive message (cycle, unknown reference, etc.).
+#[wasm_bindgen]
+pub fn evaluate_equations(json: &str, params_json: &str) -> Result<JsValue, JsError> {
+    let mut model =
+        Model::from_json_str(json).map_err(|e| JsError::new(&format!("parse model: {e}")))?;
+    let overrides: HashMap<String, f64> = serde_json::from_str(params_json)
+        .map_err(|e| JsError::new(&format!("parse params: {e}")))?;
+    for (k, v) in overrides {
+        model.parameters.insert(k, v);
+    }
+    let resolved = model
+        .resolve_params()
+        .map_err(|e| JsError::new(&format!("equations: {e}")))?;
+    serde_wasm_bindgen::to_value(&resolved).map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Drop both the eval cache and the tessellation cache.
 ///
 /// Call from JS when:
