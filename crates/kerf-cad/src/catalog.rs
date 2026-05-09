@@ -312,6 +312,9 @@ pub fn categorize(name: &str) -> Category {
             | "AxisTaperedTube"
             | "AxisTwistExtrude"
             | "PolarRevolveLoft"
+            | "SpinalLoft"
+            | "RailedSweep"
+            | "ScaledExtrude"
     ) {
         return Category::Sweeps;
     }
@@ -1868,6 +1871,46 @@ fn curated_override(variant: &str) -> Option<serde_json::Map<String, serde_json:
             m.insert("insert_depth".into(), num(6.0));
             m.insert("lead_in_radius".into(), num(2.0));
             m.insert("segments".into(), json!(12));
+            Some(m)
+        }
+        "SpinalLoft" => {
+            m.insert(
+                "sections".into(),
+                json!([
+                    {"points": [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]},
+                    {"points": [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]},
+                    {"points": [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]}
+                ]),
+            );
+            m.insert("spacing".into(), num(5.0));
+            m.insert("twist".into(), num(90.0));
+            m.insert("axis".into(), json!("z"));
+            Some(m)
+        }
+        "RailedSweep" => {
+            m.insert(
+                "profile".into(),
+                json!({"points": [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]}),
+            );
+            m.insert(
+                "path".into(),
+                json!([[0.0, 0.0, 0.0], [0.0, 0.0, 5.0], [0.0, 0.0, 10.0]]),
+            );
+            m.insert(
+                "rail".into(),
+                json!([[2.0, 0.0, 0.0], [2.0, 0.0, 5.0], [2.0, 0.0, 10.0]]),
+            );
+            Some(m)
+        }
+        "ScaledExtrude" => {
+            m.insert(
+                "profile".into(),
+                json!({"points": [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]}),
+            );
+            m.insert("direction".into(), json!([0.0, 0.0, 1.0]));
+            m.insert("length".into(), num(10.0));
+            m.insert("scale_at_end".into(), num(2.0));
+            m.insert("segments".into(), json!(4));
             Some(m)
         }
         _ => None,
