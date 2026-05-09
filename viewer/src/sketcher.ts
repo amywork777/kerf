@@ -1,4 +1,5 @@
 // Interactive 2D sketcher panel.
+// Glyph rendering is delegated to sketcher-glyphs.ts.
 //
 // Self-contained module: renders a `<canvas>` for sketch authoring, drives a
 // tool state machine (Point / Line / Circle / Arc / Pan / Select / Delete),
@@ -17,6 +18,8 @@
 // host page via `onValidate` (which wraps the WASM evaluator). Extruding a
 // sketch likewise calls `onExtrude` with a constructed Model JSON; the host
 // loads it into the 3D viewer.
+
+import { renderConstraintGlyphs } from "./sketcher-glyphs.js";
 
 export type SketchPlane =
   | "Xy"
@@ -826,35 +829,7 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
   }
 
   function drawConstraints() {
-    ctx.fillStyle = "#7ee787";
-    ctx.font = "9px ui-monospace,Menlo,monospace";
-    for (const c of constraints) {
-      // Place the marker near the midpoint of the referenced primitive.
-      const refIds = constraintRefs(c);
-      const points: Pt[] = [];
-      for (const id of refIds) {
-        const prim = primitives.get(id);
-        if (!prim) continue;
-        if (prim.kind === "Point") points.push({ x: prim.x, y: prim.y });
-        else if (prim.kind === "Line") {
-          const a = primitives.get(prim.from);
-          const b = primitives.get(prim.to);
-          if (a?.kind === "Point" && b?.kind === "Point") {
-            points.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
-          }
-        } else if (prim.kind === "Circle" || prim.kind === "Arc") {
-          const cc = primitives.get(prim.center);
-          if (cc?.kind === "Point") points.push({ x: cc.x, y: cc.y });
-        }
-      }
-      if (points.length === 0) continue;
-      const cx = points.reduce((s, p) => s + p.x, 0) / points.length;
-      const cy = points.reduce((s, p) => s + p.y, 0) / points.length;
-      const [px, py] = worldToCanvas(cx, cy);
-      const tag = constraintTag(c);
-      ctx.fillStyle = "#7ee787";
-      ctx.fillText(tag, px + 8, py + 12);
-    }
+    renderConstraintGlyphs(canvas, toSketch(), view);
   }
 
   function drawCursorPreview() {
