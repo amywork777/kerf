@@ -25,6 +25,7 @@ use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 
 use kerf_brep::{
+    mass::mass_properties,
     measure::solid_volume,
     tessellate::{tessellate, tessellate_with_face_index},
     Solid,
@@ -243,6 +244,55 @@ pub fn evaluate_equations(json: &str, params_json: &str) -> Result<JsValue, JsEr
         .resolve_params()
         .map_err(|e| JsError::new(&format!("equations: {e}")))?;
     serde_wasm_bindgen::to_value(&resolved).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Compute mass properties for the model's target. Assumes uniform unit
+/// density. Returns a JS object with: volume, surface_area, centroid (3-tuple),
+/// inertia_tensor (3×3 array), principal_moments (3-tuple),
+/// principal_axes (3×3 array), aabb_min (3-tuple), aabb_max (3-tuple).
+#[wasm_bindgen]
+pub fn mass_properties_of(
+    json: &str,
+    target_id: &str,
+    params_json: &str,
+    _segments: usize,
+) -> Result<JsValue, JsError> {
+    let mut model =
+        Model::from_json_str(json).map_err(|e| JsError::new(&format!("parse model: {e}")))?;
+    let overrides: HashMap<String, f64> = serde_json::from_str(params_json)
+        .map_err(|e| JsError::new(&format!("parse params: {e}")))?;
+    for (k, v) in overrides {
+        model.parameters.insert(k, v);
+    }
+    let solid = EVAL_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        model.evaluate_cached(target_id, &mut cache)
+    })
+    .map_err(|e| JsError::new(&format!("evaluate '{target_id}': {e}")))?;
+    let mp = mass_properties(&solid);
+
+    #[derive(serde::Serialize)]
+    struct MassPropertiesOut {
+        volume: f64,
+        surface_area: f64,
+        centroid: [f64; 3],
+        inertia_tensor: [[f64; 3]; 3],
+        principal_moments: [f64; 3],
+        principal_axes: [[f64; 3]; 3],
+        aabb_min: [f64; 3],
+        aabb_max: [f64; 3],
+    }
+    serde_wasm_bindgen::to_value(&MassPropertiesOut {
+        volume: mp.volume,
+        surface_area: mp.surface_area,
+        centroid: mp.centroid,
+        inertia_tensor: mp.inertia_tensor,
+        principal_moments: mp.principal_moments,
+        principal_axes: mp.principal_axes,
+        aabb_min: mp.aabb_min,
+        aabb_max: mp.aabb_max,
+    })
+    .map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Parse a STEP (ISO 10303-21) AP203/AP214 file and return a kerf-cad
