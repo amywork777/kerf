@@ -702,22 +702,13 @@ impl<'a> Resolver<'a> {
             });
         }
         let params = self.params_of(face_id)?;
-        // Args (AP203/214): ('label', (#bound, #bound, ...), #surface, .T./.F.)
-        // Use positional extraction so a surface_ref that happens to appear
-        // before the bound list (e.g. when the label is omitted) doesn't
-        // shadow the real surface ref.
-        let bound_list: &[Param] = match params.get(1) {
-            Some(Param::List(items)) => items.as_slice(),
-            _ => return Err(StepImportError::Topology(
-                format!("ADVANCED_FACE #{face_id} missing bound list at slot 1"),
-            )),
-        };
-        let surface_ref = match params.get(2) {
-            Some(Param::Ref(r)) => *r,
-            _ => return Err(StepImportError::Topology(
-                format!("ADVANCED_FACE #{face_id} missing surface reference at slot 2"),
-            )),
-        };
+        // Args: ('label', (#bound, #bound, ...), #surface, .T./.F.)
+        let bound_list = first_list(&params).ok_or_else(|| StepImportError::Topology(
+            format!("ADVANCED_FACE #{face_id} missing bound list"),
+        ))?;
+        let surface_ref = first_ref(&params).ok_or_else(|| StepImportError::Topology(
+            format!("ADVANCED_FACE #{face_id} missing surface reference"),
+        ))?;
         let face_sense = last_enum(&params).map(|s| s == "T").unwrap_or(true);
 
         // Reject unsupported surfaces with a clear error.

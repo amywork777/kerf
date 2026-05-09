@@ -4241,52 +4241,24 @@ pub enum Feature {
         thickness: Scalar,
     },
 
-    /// Onion: onion-dome shape — hemispherical lower body transitioning via
-    /// a frustum collar into a pointed conical spire on top. Evokes
-    /// Russian-orthodox / Mughal architectural cupolas.
-    Onion {
+    /// Triangle-soup imported from an external file (e.g. STEP, STL). The
+    /// evaluator hands `vertices` and `indices` to
+    /// `kerf_brep::from_triangles`, which builds a half-edge solid by
+    /// pairing directed edges with their twins.
+    ///
+    /// `vertices` is a flat list of distinct 3D positions; `indices` is one
+    /// `[a, b, c]` per triangle, indexing into `vertices`. Why this and not
+    /// a stored `Solid`? Models are JSON-serializable Features; carrying
+    /// raw triangle data round-trips through serde cleanly, and the
+    /// evaluator reconstructs the B-rep on the fly. Vertex dedup happens
+    /// inside `from_triangles`, so callers don't need to dedup themselves.
+    ///
+    /// Used by `kerf_cad::step_import::import_step` to wrap the imported
+    /// solid into a Model.
+    ImportedMesh {
         id: String,
-        base_radius: Scalar,
-        mid_height: Scalar,
-        point_height: Scalar,
-        segments: usize,
-    },
-
-    /// WaspWaist: pinched-middle solid built from two opposing frustums
-    /// sharing a common narrow waist ring. Wide at top and bottom, minimum
-    /// radius at the waist mid-point. When waist_radius equals top_radius
-    /// the shape degenerates to a cylinder.
-    WaspWaist {
-        id: String,
-        top_radius: Scalar,
-        waist_radius: Scalar,
-        total_height: Scalar,
-        segments: usize,
-    },
-
-    /// Flask: flat-bottomed laboratory flask shape — cylindrical body,
-    /// smooth frustum shoulder tapering up, and a thin cylindrical neck.
-    /// Models Erlenmeyer / conical-flask silhouettes.
-    Flask {
-        id: String,
-        body_radius: Scalar,
-        body_height: Scalar,
-        neck_radius: Scalar,
-        neck_height: Scalar,
-        shoulder_height: Scalar,
-        segments: usize,
-    },
-
-    /// Pear: a pear-shaped solid with a wide spherical bottom body and a
-    /// narrow frustum neck tapering to a small flat top. Inspired by the
-    /// natural pear fruit profile.
-    Pear {
-        id: String,
-        body_radius: Scalar,
-        neck_radius: Scalar,
-        neck_height: Scalar,
-        stacks: usize,
-        segments: usize,
+        vertices: Vec<[f64; 3]>,
+        indices: Vec<[usize; 3]>,
     },
 }
 
@@ -4631,10 +4603,7 @@ impl Feature {
             | Feature::Star3D { id, .. }
             | Feature::Cross3D { id, .. }
             | Feature::Chair { id, .. }
-            | Feature::PetalCluster { id, .. }
-            | Feature::HeartSolid { id, .. }
-            | Feature::Whisker { id, .. }
-            | Feature::CrossShape { id, .. }
+            | Feature::ImportedMesh { id, .. }
 => id,
 }
     }
@@ -4989,10 +4958,7 @@ impl Feature {
             | Feature::Star3D { .. }
             | Feature::Cross3D { .. }
             | Feature::Chair { .. }
-            | Feature::PetalCluster { .. }
-            | Feature::HeartSolid { .. }
-            | Feature::Whisker { .. }
-            | Feature::CrossShape { .. }
+            | Feature::ImportedMesh { .. }
 => Vec::new(),
 
             Feature::ChamferedHole { input, .. }
