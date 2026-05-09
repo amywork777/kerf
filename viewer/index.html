@@ -102,6 +102,26 @@
     border-radius: 3px; cursor: pointer; }
   #feature-list li:hover .del { visibility: visible; }
   #feature-list .del:hover { color: #ff7b72; background: rgba(255,123,114,0.1); }
+  #selected-feature { margin-top: 14px; padding: 10px; border: 1px solid var(--accent);
+    border-radius: 4px; background: rgba(88,166,255,0.04); }
+  #selected-feature .sf-head { display: flex; justify-content: space-between;
+    align-items: center; margin-bottom: 8px; }
+  #selected-feature-title { font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px; color: var(--accent); }
+  #selected-feature .sf-close { color: var(--muted); cursor: pointer; padding: 0 6px;
+    border-radius: 3px; font-size: 11px; }
+  #selected-feature .sf-close:hover { color: var(--fg); background: var(--bg); }
+  #selected-feature .sf-row { margin-bottom: 8px; }
+  #selected-feature .sf-row label { display: flex; justify-content: space-between;
+    color: var(--muted); margin-bottom: 2px; font-size: 11px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  #selected-feature .sf-row label .sf-val { color: var(--fg); }
+  #selected-feature .sf-row label .sf-muted { color: var(--muted); font-style: italic; }
+  #selected-feature .sf-row input[type=range] { width: 100%; }
+  #selected-feature .sf-row input[type=text] { width: 100%; padding: 4px 6px;
+    background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 3px; font: 11px ui-monospace, "SF Mono", Menlo, monospace; }
+  #selected-feature .sf-empty { color: var(--muted); font-style: italic; font-size: 11px; }
   button { background: var(--bg); color: var(--fg); border: 1px solid var(--line);
     border-radius: 4px; padding: 6px 10px; font: inherit; cursor: pointer; flex: 1;
     transition: border-color .15s, color .15s; }
@@ -263,6 +283,22 @@
     </div>
     <div id="actions2" hidden>
       <button id="drawing-btn">Export 3-view PNG</button>
+      <button id="gdt-btn">GD&amp;T</button>
+    </div>
+    <div id="gdt-panel" hidden style="margin-top:10px;">
+      <label style="display:block;color:var(--muted);font-size:12px;margin-bottom:4px;">
+        GD&amp;T annotations JSON
+        <a id="gdt-help-link" href="#" style="color:var(--accent);font-size:11px;margin-left:6px;" title="Click for example JSON">example</a>
+      </label>
+      <textarea id="gdt-json" rows="6" style="width:100%;padding:6px 8px;background:var(--bg);
+        color:var(--fg);border:1px solid var(--line);border-radius:4px;
+        font:11px ui-monospace,'SF Mono',Menlo,monospace;resize:vertical;"
+        placeholder='{"datums":[],"frames":[],"finishes":[]}'></textarea>
+      <div style="margin-top:6px;display:flex;gap:6px;">
+        <button id="gdt-export-btn" style="flex:1;">Export with GD&amp;T</button>
+        <button id="gdt-clear-btn" style="flex:0 0 auto;padding:6px 8px;">Clear</button>
+      </div>
+      <div id="gdt-error" style="margin-top:4px;font-size:11px;color:#ff7b72;display:none;"></div>
     </div>
     <div id="views" hidden>
       <label>View</label>
@@ -281,7 +317,13 @@
         <code>W</code>wireframe <code>R</code>reset <code>D</code>drawing <code>S</code>save
       </div>
     </div>
-    <div id="mass-properties"></div>
+    <div id="selected-feature" hidden>
+      <div class="sf-head">
+        <span id="selected-feature-title"></span>
+        <span class="sf-close" title="clear (Esc)">✕</span>
+      </div>
+      <div id="selected-feature-body"></div>
+    </div>
     <div id="status">no model loaded</div>
     <button id="sketcher-toggle">Open 2D sketcher</button>
   </aside>

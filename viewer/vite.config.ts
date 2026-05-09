@@ -5,4 +5,8 @@ export default defineConfig({
   build: { target: "es2022" },
   optimizeDeps: { exclude: ["./src/wasm/kerf_cad_wasm.js"] },
   assetsInclude: ["**/*.wasm"],
+  test: {
+    environment: "jsdom",
+    include: ["src/**/*.test.ts"],
+  },
 });
