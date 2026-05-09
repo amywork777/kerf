@@ -148,8 +148,7 @@ impl Model {
             .iter()
             .map(|dep| *fps.get(*dep).expect("dep evaluated"))
             .collect();
-        let params = self.effective_parameters();
-        let fp = feature_fingerprint(feature, &params, &input_fps);
+        let fp = feature_fingerprint(feature, params, &input_fps);
         fps.insert(id.to_string(), fp);
 
         // Cache hit: clone the stored solid into local. Cloning a Solid
@@ -159,7 +158,7 @@ impl Model {
             return Ok(());
         }
 
-        let mut result = build(feature, &params, local, self)?;
+        let mut result = build(feature, params, local, self)?;
         // Picking provenance: tag any face in this feature's result that
         // doesn't already carry an owner tag with this feature's id.
         let owner = id.to_string();
@@ -177,6 +176,17 @@ impl Model {
     // Legacy helper kept for internal use (no constraint solving).
     #[allow(dead_code)]
     fn eval_into_cached(
+        &self,
+        id: &str,
+        local: &mut HashMap<String, Solid>,
+        fps: &mut HashMap<String, Fingerprint>,
+        cache: &mut EvalCache,
+        stack: &mut Vec<String>,
+    ) -> Result<(), EvalError> {
+        self.eval_into_cached_p(id, local, fps, cache, stack, &self.parameters)
+    }
+
+    fn eval_into_p(
         &self,
         id: &str,
         local: &mut HashMap<String, Solid>,
@@ -211,8 +221,7 @@ impl Model {
         }
         stack.pop();
 
-        let params = self.effective_parameters();
-        let mut result = build(feature, &params, cache, self)?;
+        let mut result = build(feature, params, cache, self)?;
         // Picking provenance: tag any face in this feature's result that
         // doesn't already carry an owner tag with this feature's id. Boolean
         // operations propagate inputs' owner tags through stitch, so they

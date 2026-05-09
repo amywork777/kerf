@@ -11,7 +11,7 @@ pub mod catalog;
 pub mod equations;
 pub mod eval;
 pub mod feature;
-pub mod mass;
+pub mod geometric;
 pub mod model;
 pub mod scalar;
 pub mod sketch;
