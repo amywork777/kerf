@@ -35,6 +35,18 @@ pub enum ModelError {
 /// keep their authored order) but lookup is by id.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Model {
+    /// Human-readable part name (used by the BOM panel). Optional; if absent
+    /// the BOM falls back to the model's last feature id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Material name (e.g. "Steel", "Aluminium"). Optional; BOM shows "—"
+    /// when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+    /// Material density in g/cm³ (e.g. 7.85 for steel). Optional; BOM
+    /// assumes 1.0 g/cm³ when absent (mass = volume in mm³ × 0.001 g/mm³).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub density_g_per_cm3: Option<f64>,
     /// Named numeric parameters referenced by `Scalar::Param("$name")` in
     /// feature fields. Empty by default.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
