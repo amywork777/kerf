@@ -7,8 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:legacy": "rm -rf .test-out && tsc --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop --outDir .test-out --lib ES2022,DOM src/sketcher.ts src/sketch_state.test.ts && node .test-out/sketch_state.test.js",
-    "test": "vitest run"
+    "test": "rm -rf .test-out && tsc --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop --outDir .test-out --lib ES2022,DOM src/sketcher.ts src/sketch_state.test.ts && node .test-out/sketch_state.test.js",
+    "test:vitest": "vitest run"
   },
   "dependencies": {
     "three": "^0.170.0"

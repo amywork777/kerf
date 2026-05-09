@@ -9,6 +9,8 @@
 // each click, not just a face id.
 
 import * as THREE from "three";
+import { layoutDimensions, applyDragOffset } from "./dimension-layout.js";
+import type { DragOffsets } from "./dimension-layout.js";
 
 export type DimKind = "linear" | "radial" | "angular";
 export type ViewKind = "top" | "front" | "side" | "iso";
@@ -166,6 +168,8 @@ export class DimensionsPanel {
   private pendingPicks: THREE.Vector3[] = [];
   private pendingMarkers: THREE.Object3D[] = [];
   private allMarkers: THREE.Object3D[] = [];
+  /** Session-level drag offsets — keyed by dimension index, cleared on reset. */
+  private dragOffsets: DragOffsets = new Map();
 
   private kindSel: HTMLSelectElement;
   private viewSel: HTMLSelectElement;
@@ -296,6 +300,7 @@ export class DimensionsPanel {
   private clear() {
     this.dims = [];
     this.pendingPicks = [];
+    this.dragOffsets.clear();
     this.removeAllMarkers();
     this.picking = false;
     this.pickBtn.textContent = "Pick points";
@@ -373,6 +378,97 @@ export class DimensionsPanel {
     } catch (e) {
       this.deps.setStatus(`SVG render failed: ${e}`, true);
     }
+  }
+
+  /**
+   * Attach drag handlers to every `<g data-dim-idx="N">` group inside an SVG
+   * element. Call this after injecting WASM SVG output into the DOM. Each
+   * drag updates `this.dragOffsets` which is applied on the next render.
+   *
+   * The SVG must be in the live DOM (so getBoundingClientRect works).
+   */
+  attachDragHandlers(svgEl: SVGSVGElement): void {
+    const groups = svgEl.querySelectorAll<SVGGElement>("g[data-dim-idx]");
+    groups.forEach((g) => {
+      const idx = parseInt(g.dataset["dimIdx"] ?? "-1", 10);
+      if (idx < 0) return;
+
+      let dragStart: { clientX: number; clientY: number } | null = null;
+      let baseOffset = { dx: 0, dy: 0 };
+
+      const onMouseDown = (e: MouseEvent) => {
+        e.preventDefault();
+        dragStart = { clientX: e.clientX, clientY: e.clientY };
+        baseOffset = this.dragOffsets.get(idx) ?? { dx: 0, dy: 0 };
+        window.addEventListener("mousemove", onMouseMove);
+        window.addEventListener("mouseup", onMouseUp, { once: true });
+      };
+
+      const onMouseMove = (e: MouseEvent) => {
+        if (!dragStart) return;
+        const dx = baseOffset.dx + (e.clientX - dragStart.clientX);
+        const dy = baseOffset.dy + (e.clientY - dragStart.clientY);
+        this.dragOffsets.set(idx, { dx, dy });
+        // Apply transform immediately for live feedback.
+        g.setAttribute("transform", `translate(${dx}, ${dy})`);
+      };
+
+      const onMouseUp = () => {
+        dragStart = null;
+        window.removeEventListener("mousemove", onMouseMove);
+      };
+
+      g.style.cursor = "grab";
+      g.addEventListener("mousedown", onMouseDown);
+    });
+  }
+
+  /**
+   * Build render args with layout applied: drag offsets are respected and
+   * auto-layout is used to avoid overlaps. The `Dim` bounding boxes are
+   * estimated from default offsets (in SVG px), then adjusted.
+   *
+   * Returns the render args plus a serialised layout hint that callers can
+   * pass to the WASM `viewportJson` if the back-end gains layout support.
+   */
+  buildLayoutedRenderArgs(opts: {
+    json: string;
+    targetId: string;
+    parameters: Record<string, number>;
+    view: ViewKind;
+    viewport?: { width?: number; height?: number; padding?: number };
+  }): RenderArgs {
+    // Estimate bounding boxes for the dimension labels (SVG px).
+    // Default placement: dimension i sits at a fixed offset from the
+    // top-left of the drawing area (incremented per-dim by 28 px).
+    const DEFAULT_W = 80;
+    const DEFAULT_H = 20;
+    const RAW_DIMS = this.dims.map((_, i) => {
+      const base = { x: 20, y: 20 + i * 28, w: DEFAULT_W, h: DEFAULT_H };
+      return applyDragOffset(base, this.dragOffsets.get(i));
+    });
+
+    const laid = layoutDimensions(RAW_DIMS);
+
+    // Encode layout offsets back into the dimensions array as metadata.
+    const dimensionsWithLayout = this.dims.map((d, i) => {
+      const pos = laid[i];
+      return pos !== undefined ? { ...d, _layoutX: pos.x, _layoutY: pos.y } : d;
+    });
+
+    return buildRenderArgs({
+      json: opts.json,
+      targetId: opts.targetId,
+      parameters: opts.parameters,
+      view: opts.view,
+      dimensions: dimensionsWithLayout,
+      viewport: opts.viewport,
+    });
+  }
+
+  /** Test/inspection hook: current drag offsets map. */
+  getDragOffsets(): DragOffsets {
+    return new Map(this.dragOffsets);
   }
 
   /** Test/inspection hook: current dimension list. */
