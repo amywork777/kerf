@@ -15,6 +15,7 @@ use thiserror::Error;
 
 use crate::cache::{feature_fingerprint, EvalCache, Fingerprint};
 use crate::feature::{Feature, FilletEdge, Profile2D};
+use crate::geometric::{solve_constraints, ConstraintError};
 use crate::model::Model;
 use crate::scalar::{resolve_arr, Scalar};
 use crate::sketch::Sketch;
@@ -34,9 +35,24 @@ pub enum EvalError {
     Invalid { id: String, reason: String },
     #[error("in feature '{id}': {message}")]
     Parameter { id: String, message: String },
+    #[error("geometric constraint error: {0}")]
+    Constraint(#[from] ConstraintError),
 }
 
 impl Model {
+    /// Compute the effective parameter map after running the geometric
+    /// constraint solver. If there are no constraints the original map is
+    /// returned as-is (zero allocation). Otherwise a cloned, solved map is
+    /// returned.
+    fn solved_params(&self) -> Result<std::borrow::Cow<'_, HashMap<String, f64>>, EvalError> {
+        if self.geometric_constraints.is_empty() {
+            return Ok(std::borrow::Cow::Borrowed(&self.parameters));
+        }
+        let mut params = self.parameters.clone();
+        solve_constraints(self, &self.geometric_constraints, &mut params)?;
+        Ok(std::borrow::Cow::Owned(params))
+    }
+
     /// Evaluate `target_id` and all its transitive dependencies. Returns the
     /// computed Solid for `target_id`. Intermediate results are cached so
     /// shared sub-DAGs are evaluated once.
@@ -44,14 +60,10 @@ impl Model {
         if self.feature(target_id).is_none() {
             return Err(EvalError::UnknownId(target_id.to_string()));
         }
-        // Resolve equations before feature evaluation. If there are no
-        // equations this is just a clone of self.parameters.
-        let resolved_params = self
-            .resolve_params()
-            .map_err(|e| EvalError::Equation(e.to_string()))?;
+        let params = self.solved_params()?;
         let mut cache: HashMap<String, Solid> = HashMap::new();
         let mut stack: Vec<String> = Vec::new();
-        self.eval_into(target_id, &resolved_params, &mut cache, &mut stack)?;
+        self.eval_into_p(target_id, &mut cache, &mut stack, &params)?;
         Ok(cache.remove(target_id).expect("just computed"))
     }
 
@@ -86,11 +98,7 @@ impl Model {
         if self.feature(target_id).is_none() {
             return Err(EvalError::UnknownId(target_id.to_string()));
         }
-        // Resolve equations before feature evaluation. If there are no
-        // equations this is just a clone of self.parameters.
-        let resolved_params = self
-            .resolve_params()
-            .map_err(|e| EvalError::Equation(e.to_string()))?;
+        let params = self.solved_params()?;
         // Fingerprints computed during this walk, by feature id. Local to
         // one evaluate_cached call so the same DAG produces consistent
         // upstream fingerprints regardless of caller's previous state.
@@ -100,12 +108,12 @@ impl Model {
         // here as clones from the long-lived cache.
         let mut local: HashMap<String, Solid> = HashMap::new();
         let mut stack: Vec<String> = Vec::new();
-        self.eval_into_cached(target_id, &resolved_params, &mut local, &mut fps, cache, &mut stack)?;
+        self.eval_into_cached_p(target_id, &mut local, &mut fps, cache, &mut stack, &params)?;
         let fp = *fps.get(target_id).expect("just computed");
         Ok((local.remove(target_id).expect("just computed"), fp))
     }
 
-    fn eval_into_cached(
+    fn eval_into_cached_p(
         &self,
         id: &str,
         params: &HashMap<String, f64>,
@@ -113,6 +121,7 @@ impl Model {
         fps: &mut HashMap<String, Fingerprint>,
         cache: &mut EvalCache,
         stack: &mut Vec<String>,
+        params: &HashMap<String, f64>,
     ) -> Result<(), EvalError> {
         if local.contains_key(id) {
             return Ok(());
@@ -126,7 +135,7 @@ impl Model {
 
         stack.push(id.to_string());
         for dep in feature.inputs() {
-            self.eval_into_cached(dep, params, local, fps, cache, stack)?;
+            self.eval_into_cached_p(dep, local, fps, cache, stack, params)?;
         }
         stack.pop();
 
@@ -162,12 +171,26 @@ impl Model {
         Ok(())
     }
 
-    fn eval_into(
+    // Legacy helper kept for internal use (no constraint solving).
+    #[allow(dead_code)]
+    fn eval_into_cached(
+        &self,
+        id: &str,
+        local: &mut HashMap<String, Solid>,
+        fps: &mut HashMap<String, Fingerprint>,
+        cache: &mut EvalCache,
+        stack: &mut Vec<String>,
+    ) -> Result<(), EvalError> {
+        self.eval_into_cached_p(id, local, fps, cache, stack, &self.parameters)
+    }
+
+    fn eval_into_p(
         &self,
         id: &str,
         params: &HashMap<String, f64>,
         cache: &mut HashMap<String, Solid>,
         stack: &mut Vec<String>,
+        params: &HashMap<String, f64>,
     ) -> Result<(), EvalError> {
         if cache.contains_key(id) {
             return Ok(());
@@ -181,7 +204,7 @@ impl Model {
 
         stack.push(id.to_string());
         for dep in feature.inputs() {
-            self.eval_into(dep, params, cache, stack)?;
+            self.eval_into_p(dep, cache, stack, params)?;
         }
         stack.pop();
 
@@ -200,6 +223,17 @@ impl Model {
         }
         cache.insert(id.to_string(), result);
         Ok(())
+    }
+
+    // Legacy helper kept for internal use (no constraint solving).
+    #[allow(dead_code)]
+    fn eval_into(
+        &self,
+        id: &str,
+        cache: &mut HashMap<String, Solid>,
+        stack: &mut Vec<String>,
+    ) -> Result<(), EvalError> {
+        self.eval_into_p(id, cache, stack, &self.parameters)
     }
 }
 
