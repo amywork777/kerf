@@ -1266,6 +1266,47 @@ pub enum Feature {
         slices: usize,
     },
 
+    /// SpinalLoft: loft through N profiles placed along a spine axis at
+    /// equal `spacing`, each section progressively rotated/twisted by a
+    /// fraction of `twist` (total degrees over all sections, linearly
+    /// distributed). Combines lofting with a built-in twist — equivalent
+    /// to `LoftMulti + LinearTwist` in a single op. `axis` sets the spine
+    /// direction ("x", "y", or "z"). The spine is centred on the origin;
+    /// sections span [-half_span, +half_span] along the axis.
+    SpinalLoft {
+        id: String,
+        sections: Vec<Profile2D>,
+        spacing: Scalar,
+        twist: Scalar,
+        axis: String,
+    },
+
+    /// RailedSweep: sweep `profile` along `path` while constraining the
+    /// profile orientation via a secondary `rail` curve. At each path
+    /// point the rail provides an "up" reference direction; the profile is
+    /// rotated about the path tangent so its local +Y points toward the
+    /// nearest rail point. Lengths of `path` and `rail` must match.
+    RailedSweep {
+        id: String,
+        profile: Profile2D,
+        path: Vec<[Scalar; 3]>,
+        rail: Vec<[Scalar; 3]>,
+    },
+
+    /// ScaledExtrude: extrude `profile` along `direction` by `length`,
+    /// scaling it linearly from 1.0 at the start to `scale_at_end` at the
+    /// end (measured around the profile centroid). The extrusion is
+    /// subdivided into `segments` equal slices so the scale gradient is
+    /// well-resolved. `scale_at_end` must be > 0; `segments` ≥ 1.
+    ScaledExtrude {
+        id: String,
+        profile: Profile2D,
+        direction: [Scalar; 3],
+        length: Scalar,
+        scale_at_end: Scalar,
+        segments: usize,
+    },
+
     /// Mortise: rectangular pocket cut into the +z face of a workpiece.
     /// Centered on (cx, cy), spanning (width, length, depth) where depth
     /// is along -z. Produces a freestanding pocket solid; subtract it
@@ -4122,6 +4163,9 @@ impl Feature {
             | Feature::SweepWithScale { id, .. }
             | Feature::HelicalThread { id, .. }
             | Feature::TwistedTube { id, .. }
+            | Feature::SpinalLoft { id, .. }
+            | Feature::RailedSweep { id, .. }
+            | Feature::ScaledExtrude { id, .. }
             | Feature::Mortise { id, .. }
             | Feature::Tenon { id, .. }
             | Feature::FingerJoint { id, .. }
@@ -4440,6 +4484,9 @@ impl Feature {
             | Feature::SweepWithScale { .. }
             | Feature::HelicalThread { .. }
             | Feature::TwistedTube { .. }
+            | Feature::SpinalLoft { .. }
+            | Feature::RailedSweep { .. }
+            | Feature::ScaledExtrude { .. }
             | Feature::Mortise { .. }
             | Feature::Tenon { .. }
             | Feature::FingerJoint { .. }
