@@ -34,6 +34,7 @@ import { findEdgeLoop, findFaceLoop } from "./pick-loops.js";
 import { PickHistory } from "./pick-history.js";
 import { attachFeatureContextMenu } from "./feature-tree-context.js";
 import { mountViewPresetsUI } from "./view-presets.js";
+import { reorderFeatures, filterFeatures } from "./feature-tree-ops.js";
 
 await init();
 
@@ -62,6 +63,8 @@ const massPropHost = document.getElementById("mass-properties")!;
 const massPropertiesPanel = mountMassProperties(massPropHost);
 const pickModeGroupEl = document.getElementById("pick-mode-group")!;
 const pickFilterEl = document.getElementById("pick-filter") as HTMLSelectElement;
+const featureSearchEl = document.getElementById("feature-search") as HTMLInputElement;
+const featureSearchClearEl = document.getElementById("feature-search-clear")!;
 
 // --- three.js scene ---
 const scene = new THREE.Scene();
@@ -961,6 +964,24 @@ function summarizeFeatures(json: string): FeatureSummary[] {
   }
 }
 
+// Drag-to-reorder state.
+let dragSrcId: string | null = null;
+
+function applyFeatureSearch() {
+  const query = featureSearchEl.value;
+  const features = summarizeFeatures(model?.json ?? "[]");
+  const visible = new Set(filterFeatures(features, query).map((f) => f.id));
+  for (const li of featureListEl.children as HTMLCollectionOf<HTMLLIElement>) {
+    li.classList.toggle("hidden", !visible.has(li.dataset.id ?? ""));
+  }
+}
+
+featureSearchEl.addEventListener("input", applyFeatureSearch);
+featureSearchClearEl.addEventListener("click", () => {
+  featureSearchEl.value = "";
+  applyFeatureSearch();
+});
+
 function renderFeatureTree() {
   if (!model) {
     featureTreeEl.hidden = true;
@@ -973,8 +994,14 @@ function renderFeatureTree() {
   for (const f of features) {
     const li = document.createElement("li");
     li.dataset.id = f.id;
-    li.innerHTML = `<span class="kind">${f.kind}</span><span class="id">${f.id}</span><span class="del" title="Delete this feature">✕</span>`;
+    li.draggable = true;
+    li.innerHTML =
+      `<span class="drag-handle" title="Drag to reorder">⠿</span>` +
+      `<span class="kind">${f.kind}</span><span class="id">${f.id}</span>` +
+      `<span class="del" title="Delete this feature">✕</span>`;
     (li.querySelector(".id") as HTMLElement).title = `Click to set as target — current: '${f.id}'`;
+
+    // Click to set target.
     li.querySelector(".id")!.addEventListener("click", () => {
       if (!model) return;
       model.targetId = f.id;
@@ -982,13 +1009,69 @@ function renderFeatureTree() {
       refreshFeatureTreeSelection();
       rebuild();
     });
+
+    // Delete button.
     li.querySelector(".del")!.addEventListener("click", (e) => {
       e.stopPropagation();
       deleteFeature(f.id);
     });
+
+    // --- HTML5 drag-to-reorder ---
+    li.addEventListener("dragstart", (e) => {
+      dragSrcId = f.id;
+      li.classList.add("dragging");
+      e.dataTransfer!.effectAllowed = "move";
+      e.dataTransfer!.setData("text/plain", f.id);
+    });
+
+    li.addEventListener("dragend", () => {
+      dragSrcId = null;
+      li.classList.remove("dragging");
+      // Clear all drop indicators.
+      for (const row of featureListEl.children as HTMLCollectionOf<HTMLLIElement>) {
+        row.classList.remove("drag-over-before", "drag-over-after");
+      }
+    });
+
+    li.addEventListener("dragover", (e) => {
+      if (!dragSrcId || dragSrcId === f.id) return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = "move";
+      // Determine whether to place before or after based on cursor position.
+      const rect = li.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      const position = e.clientY < midY ? "before" : "after";
+      li.classList.toggle("drag-over-before", position === "before");
+      li.classList.toggle("drag-over-after", position === "after");
+    });
+
+    li.addEventListener("dragleave", () => {
+      li.classList.remove("drag-over-before", "drag-over-after");
+    });
+
+    li.addEventListener("drop", (e) => {
+      e.preventDefault();
+      li.classList.remove("drag-over-before", "drag-over-after");
+      if (!dragSrcId || !model || dragSrcId === f.id) return;
+      const rect = li.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      const position: "before" | "after" = e.clientY < midY ? "before" : "after";
+      try {
+        model.json = reorderFeatures(model.json, dragSrcId, f.id, position);
+        const newIds = summarizeFeatures(model.json).map((feat) => feat.id);
+        renderTargets(newIds);
+        renderFeatureTree();
+        rebuild();
+      } catch (ex) {
+        err(String(ex));
+      }
+    });
+
     featureListEl.appendChild(li);
   }
   refreshFeatureTreeSelection();
+  // Re-apply any active search filter after re-render.
+  applyFeatureSearch();
 }
 
 function deleteFeature(id: string) {
