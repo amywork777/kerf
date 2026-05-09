@@ -3582,6 +3582,86 @@ pub enum Feature {
         groove_count: usize,
     },
 
+    // -------------------------------------------------------------------
+    // Manufacturing batch 5 (5 features) — ship 2026-05-10.
+    // -------------------------------------------------------------------
+
+    /// **ChamferedHole**: counterbore + 45° chamfer at the top edge of the
+    /// bore. Drills a cylinder of `hole_radius`/`hole_depth` and adds a
+    /// conical chamfer frustum (from `hole_radius` at `chamfer_depth` to
+    /// `chamfer_radius` at the surface) at the top of the opening.
+    /// `axis` is "x"|"y"|"z" (drill direction is -axis). `center` is the
+    /// center of the opening on the +axis-facing surface.
+    ChamferedHole {
+        id: String,
+        input: String,
+        center: [Scalar; 3],
+        axis: String,
+        hole_radius: Scalar,
+        hole_depth: Scalar,
+        chamfer_radius: Scalar,
+        chamfer_depth: Scalar,
+    },
+
+    /// **ThreadedHoleMarker**: visual marker for a threaded hole in `input`.
+    /// Drills a cylinder of `thread_diameter / 2` radius and `depth` along
+    /// -`axis` from `center` on the +axis face. Tags the hole with
+    /// `face_owner_tag = "thread"` so drawing tools can render the thread
+    /// symbol. No actual threads are modelled.
+    ThreadedHoleMarker {
+        id: String,
+        input: String,
+        center: [Scalar; 3],
+        axis: String,
+        thread_diameter: Scalar,
+        depth: Scalar,
+        thread_pitch: Scalar,
+    },
+
+    /// **BoltPattern**: circular array of `count` bolt holes, each of
+    /// `hole_radius` and `hole_depth`, distributed at `pattern_radius` from
+    /// `center` around `axis`. `phase` (radians) offsets the first hole.
+    /// Drills all holes into `input` in a single feature.
+    BoltPattern {
+        id: String,
+        input: String,
+        center: [Scalar; 3],
+        axis: String,
+        pattern_radius: Scalar,
+        hole_radius: Scalar,
+        hole_depth: Scalar,
+        count: usize,
+        phase: Scalar,
+    },
+
+    /// **SquareDrive**: square pocket for a square key or drive. Subtracts
+    /// a square prismatic pocket of `side_length` × `side_length` × `depth`
+    /// from `input`, centered at `center` on the +`axis`-facing surface.
+    /// The pocket axis runs in -`axis` from the opening at `center`.
+    SquareDrive {
+        id: String,
+        input: String,
+        center: [Scalar; 3],
+        axis: String,
+        side_length: Scalar,
+        depth: Scalar,
+    },
+
+    /// **RaisedBoss**: raised cylindrical boss on `input` with an embedded
+    /// blind screw hole. Unions a cylinder of `boss_radius`/`boss_height`
+    /// at `center` on the +`axis` surface, then drills a blind hole of
+    /// `hole_radius`/`hole_depth` along -`axis` from the top of the boss.
+    RaisedBoss {
+        id: String,
+        input: String,
+        center: [Scalar; 3],
+        axis: String,
+        boss_radius: Scalar,
+        boss_height: Scalar,
+        hole_radius: Scalar,
+        hole_depth: Scalar,
+    },
+
     Union {
         id: String,
         inputs: Vec<String>,
@@ -4145,6 +4225,13 @@ impl Feature {
             | Feature::Cross3D { id, .. }
             | Feature::Chair { id, .. }
 => id,
+
+            Feature::ChamferedHole { id, .. }
+            | Feature::ThreadedHoleMarker { id, .. }
+            | Feature::BoltPattern { id, .. }
+            | Feature::SquareDrive { id, .. }
+            | Feature::RaisedBoss { id, .. }
+=> id,
 }
     }
 
@@ -4469,6 +4556,12 @@ impl Feature {
             | Feature::Cross3D { .. }
             | Feature::Chair { .. }
 => Vec::new(),
+
+            Feature::ChamferedHole { input, .. }
+            | Feature::ThreadedHoleMarker { input, .. }
+            | Feature::BoltPattern { input, .. }
+            | Feature::SquareDrive { input, .. }
+            | Feature::RaisedBoss { input, .. } => vec![input.as_str()],
 }
     }
 }
