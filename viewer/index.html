@@ -161,17 +161,10 @@
   .examples a { color: var(--accent); text-decoration: none; cursor: pointer; }
   .examples a:hover { text-decoration: underline; }
 
-  /* --- pick-mode group --- */
-  #pick-mode-group { margin-top: 14px; }
-  .pick-label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 12px; }
-  .pick-row { display: flex; gap: 4px; }
-  .pick-row button { flex: 1; }
-  .pick-row button.active { border-color: var(--accent); color: var(--accent); }
-  .filter-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-  .filter-label { color: var(--muted); font-size: 12px; white-space: nowrap; }
-  #pick-filter { flex: 1; padding: 5px 8px; background: var(--bg);
-    color: var(--fg); border: 1px solid var(--line); border-radius: 4px;
-    font: inherit; font-size: 12px; }
+  /* --- view presets --- */
+  #view-presets-mount { margin-top: 8px; }
+  #view-presets-mount input[type="text"] { font-size: 11px; }
+  #view-presets-mount select { font-size: 11px; }
 
   /* --- sketcher panel --- */
   #sketcher-toggle { margin-top: 14px; }
@@ -301,8 +294,9 @@
       <div class="hotkeys">
         <code>1</code>iso <code>2</code>front <code>3</code>top <code>4</code>side<br>
         <code>W</code>wireframe <code>R</code>reset <code>D</code>drawing <code>S</code>save<br>
-        <code>F</code>face <code>E</code>edge <code>V</code>vertex mode
+        <code>⌫</code>pick back
       </div>
+      <div id="view-presets-mount"></div>
     </div>
     <div id="mass-properties"></div>
     <div id="status">no model loaded</div>

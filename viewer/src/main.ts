@@ -12,7 +12,9 @@ import init, {
 } from "./wasm/kerf_cad_wasm.js";
 import { exportThreeViewPng } from "./drawings.js";
 import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js";
-import { findEdgeLoop, findFaceLoop } from "./pick-loops.js";
+import { PickHistory } from "./pick-history.js";
+import { attachFeatureContextMenu } from "./feature-tree-context.js";
+import { mountViewPresetsUI } from "./view-presets.js";
 
 await init();
 
@@ -128,12 +130,8 @@ let highlightedFaceLoop: number[] = [];
 type PickMode = "face" | "edge" | "vertex";
 let pickMode: PickMode = "face";
 
-// Feature-kind filter for face picking. "All" means no filtering.
-let filterKind: FilterKind = "All";
-// Map from face-id → owner feature id, populated from WASM face_owner_tags.
-let faceOwnerTags: Map<number, string> = new Map();
-// Parsed feature summaries from the loaded model JSON, used by applyFilter.
-let parsedFeaturesForFilter: ParsedFeature[] = [];
+// Pick history — up to 10 recent selections; Backspace navigates back.
+const pickHistory = new PickHistory(10);
 
 // Display helpers for vertex/edge picking — small markers/highlighters
 // that mount under the mesh while a non-face mode is active.
@@ -506,6 +504,40 @@ function pickFaceAt(clientX: number, clientY: number): number {
   return tri < currentFaceIds.length ? currentFaceIds[tri]! : -1;
 }
 
+/** Apply a pick entry as the active selection and update visuals. */
+function applyPick(entry: { kind: PickMode; id: number } | null) {
+  if (!entry || entry.id < 0) return;
+  highlightedFace = -1;
+  highlightedVertex = -1;
+  highlightedEdge = -1;
+  if (entry.kind === "face") {
+    highlightedFace = entry.id;
+    refreshFaceColors();
+    refreshVertexHighlight();
+    refreshEdgeHighlight();
+    ok(`selected face #${entry.id} (of ${currentFaceCount})`);
+  } else if (entry.kind === "vertex") {
+    highlightedVertex = entry.id;
+    refreshFaceColors();
+    refreshVertexHighlight();
+    refreshEdgeHighlight();
+    if (currentVertexToFaces) {
+      const faces = neighborsOf(currentVertexToFaces, entry.id);
+      ok(`selected vertex #${entry.id} — touches ${faces.length} faces, ` +
+         `${verticesIncidentEdges(entry.id).length} edges`);
+    }
+  } else if (entry.kind === "edge") {
+    highlightedEdge = entry.id;
+    refreshFaceColors();
+    refreshVertexHighlight();
+    refreshEdgeHighlight();
+    if (currentEdgeToFaces) {
+      const faces = neighborsOf(currentEdgeToFaces, entry.id);
+      ok(`selected edge #${entry.id} — bordered by ${faces.length} faces`);
+    }
+  }
+}
+
 renderer.domElement.addEventListener("click", (e) => {
   // --- Cmd+click: smart-pick — cycle face → edge → vertex → face ---
   if (e.metaKey || e.ctrlKey) {
@@ -565,13 +597,8 @@ renderer.domElement.addEventListener("click", (e) => {
   highlightedFaceLoop = [];
 
   if (pickMode === "face") {
-    const rawFid = pickFaceAt(e.clientX, e.clientY);
-    // Apply feature-kind filter: if the face doesn't pass, treat as a miss.
-    const fid =
-      rawFid >= 0 &&
-      applyFilter(rawFid, faceOwnerTags, parsedFeaturesForFilter, filterKind)
-        ? rawFid
-        : -1;
+    const fid = pickFaceAt(e.clientX, e.clientY);
+    if (fid >= 0) pickHistory.push({ kind: "face", id: fid });
     highlightedFace = fid;
     highlightedVertex = -1;
     highlightedEdge = -1;
@@ -585,7 +612,10 @@ renderer.domElement.addEventListener("click", (e) => {
     }
   } else if (pickMode === "vertex") {
     const vid = pickVertexAt(e.clientX, e.clientY);
-    picking = handleVertexClick(picking, vid);
+    if (vid >= 0) pickHistory.push({ kind: "vertex", id: vid });
+    highlightedVertex = vid;
+    highlightedFace = -1;
+    highlightedEdge = -1;
     refreshFaceColors();
     refreshVertexHighlight();
     refreshEdgeHighlight();
@@ -596,7 +626,10 @@ renderer.domElement.addEventListener("click", (e) => {
     }
   } else if (pickMode === "edge") {
     const eid = pickEdgeAt(e.clientX, e.clientY);
-    picking = handleEdgeClick(picking, eid);
+    if (eid >= 0) pickHistory.push({ kind: "edge", id: eid });
+    highlightedEdge = eid;
+    highlightedFace = -1;
+    highlightedVertex = -1;
     refreshFaceColors();
     refreshVertexHighlight();
     refreshEdgeHighlight();
@@ -1132,6 +1165,9 @@ function refreshFeatureTreeSelection() {
   }
 }
 
+// Cleanup for the previous feature-tree context menu binding.
+let featureContextCleanup: (() => void) | null = null;
+
 function loadJson(json: string) {
   try {
     const ids = target_ids_of(json) as string[];
@@ -1158,7 +1194,58 @@ function loadJson(json: string) {
     actions2El.hidden = false;
     viewsEl.hidden = false;
     rebuild(true);
-    refreshSaveStatus();
+
+    // Attach feature-tree right-click context menu.
+    featureContextCleanup?.();
+    featureContextCleanup = attachFeatureContextMenu(featureListEl, {
+      onRename(featureId) {
+        const newName = prompt(`Rename feature '${featureId}' to:`, featureId);
+        if (!newName || newName === featureId || !model) return;
+        const parsed = JSON.parse(model.json);
+        const feature = (parsed.features ?? []).find(
+          (f: { id?: string }) => f.id === featureId,
+        );
+        if (feature) {
+          feature.id = newName;
+          // Update target if it pointed at the renamed feature.
+          const nextTarget = model.targetId === featureId ? newName : model.targetId;
+          const allIds = (parsed.features ?? [])
+            .map((f: { id?: string }) => f.id)
+            .filter((x: unknown): x is string => typeof x === "string");
+          model = { ...model, json: JSON.stringify(parsed, null, 2), targetId: nextTarget };
+          renderTargets(allIds);
+          renderFeatureTree();
+          rebuild();
+        }
+      },
+      onSuppress(featureId) {
+        if (!model) return;
+        const parsed = JSON.parse(model.json);
+        const feature = (parsed.features ?? []).find(
+          (f: { id?: string }) => f.id === featureId,
+        );
+        if (feature) {
+          feature.suppressed = !feature.suppressed;
+          model = { ...model, json: JSON.stringify(parsed, null, 2) };
+          renderFeatureTree();
+          rebuild();
+          ok(`feature '${featureId}' ${feature.suppressed ? "suppressed" : "restored"}`);
+        }
+      },
+      onDelete(featureId) {
+        deleteFeature(featureId);
+      },
+      onShowProperties(featureId) {
+        if (!model) return;
+        const parsed = JSON.parse(model.json);
+        const feature = (parsed.features ?? []).find(
+          (f: { id?: string }) => f.id === featureId,
+        );
+        if (feature) {
+          ok(`Properties — ${JSON.stringify(feature)}`);
+        }
+      },
+    });
   } catch (e) {
     err(String(e));
   }
@@ -1354,6 +1441,21 @@ viewsEl.querySelectorAll<HTMLButtonElement>("button[data-view]").forEach((b) => 
   b.addEventListener("click", () => setView(b.dataset.view as any));
 });
 
+// Mount view-preset save/load controls into the views panel.
+const viewPresetsContainer = document.getElementById("view-presets-mount")!;
+mountViewPresetsUI(
+  viewPresetsContainer,
+  () => ({
+    position: [camera.position.x, camera.position.y, camera.position.z],
+    target: [controls.target.x, controls.target.y, controls.target.z],
+  }),
+  (state) => {
+    camera.position.set(...state.position);
+    controls.target.set(...state.target);
+    controls.update();
+  },
+);
+
 // --- keyboard shortcuts ---
 window.addEventListener("keydown", (e) => {
   // Cmd/Ctrl+S → save (works even from inside an input — that's expected
@@ -1396,6 +1498,14 @@ window.addEventListener("keydown", (e) => {
       refreshVertexHighlight();
       refreshEdgeHighlight();
       break;
+    case "Backspace": {
+      // Navigate back in pick history.
+      const prev = pickHistory.back();
+      if (prev) {
+        applyPick(prev);
+      }
+      break;
+    }
   }
 });
 
