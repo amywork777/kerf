@@ -29,3 +29,4 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 approx    = { workspace = true }
+zip       = { version = "2", default-features = false, features = ["deflate"] }
