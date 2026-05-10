@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mountMassProperties, type MassPropertiesData } from "./mass-properties.js";
 
 const SAMPLE: MassPropertiesData = {
@@ -39,6 +39,12 @@ describe("mountMassProperties", () => {
     host = document.createElement("div");
     host.id = "mass-properties";
     document.body.appendChild(host);
+    // Ensure metric is the default for each test (session state is module-global).
+    // We mount the panel first so setUnitSystem can reach the select element.
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = "";
   });
 
   it("mounts the panel into the host element", () => {
@@ -67,36 +73,43 @@ describe("mountMassProperties", () => {
 
   it("update with sample data renders volume and surface area", () => {
     const panel = mountMassProperties(host);
+    panel.setUnitSystem("metric");
     panel.update(SAMPLE);
-    expect(getById("mp-volume").textContent).toBe("12.345 mm³");
-    expect(getById("mp-area").textContent).toBe("43.210 mm²");
+    // 12.345 → 3 sig figs → 12.3; 43.210 → 43.2
+    expect(getById("mp-volume").textContent).toBe("12.3 mm³");
+    expect(getById("mp-area").textContent).toBe("43.2 mm²");
   });
 
   it("update with sample data renders centroid", () => {
     const panel = mountMassProperties(host);
+    panel.setUnitSystem("metric");
     panel.update(SAMPLE);
     const centroidText = getById("mp-centroid").textContent;
-    expect(centroidText).toContain("1.234");
-    expect(centroidText).toContain("2.345");
-    expect(centroidText).toContain("3.456");
+    // Values are shown in mm with 3 sig figs: 1.234→1.23, 2.345→2.35, 3.456→3.46
+    expect(centroidText).toContain("1.23");
+    expect(centroidText).toContain("2.35");
+    expect(centroidText).toContain("3.46");
   });
 
   it("update with sample data renders bounding box deltas", () => {
     const panel = mountMassProperties(host);
+    panel.setUnitSystem("metric");
     panel.update(SAMPLE);
     const bboxText = getById("mp-bbox").textContent;
-    // Δx=10, Δy=5, Δz=8
-    expect(bboxText).toContain("10.00");
-    expect(bboxText).toContain("5.00");
-    expect(bboxText).toContain("8.00");
+    // Δx=10, Δy=5, Δz=8 — shown with unit suffix
+    expect(bboxText).toContain("10 mm");
+    expect(bboxText).toContain("5 mm");
+    expect(bboxText).toContain("8 mm");
   });
 
   it("update with sample data renders principal moments", () => {
     const panel = mountMassProperties(host);
+    panel.setUnitSystem("metric");
     panel.update(SAMPLE);
-    expect(getById("mp-i1").textContent).toBe("60.000");
-    expect(getById("mp-i2").textContent).toBe("80.000");
-    expect(getById("mp-i3").textContent).toBe("100.000");
+    // Principal moments: 60, 80, 100 — 3 sig figs, no trailing zeros
+    expect(getById("mp-i1").textContent).toBe("60");
+    expect(getById("mp-i2").textContent).toBe("80");
+    expect(getById("mp-i3").textContent).toBe("100");
   });
 
   it("update with null clears values back to dashes", () => {
@@ -107,6 +120,36 @@ describe("mountMassProperties", () => {
     expect(getById("mp-area").textContent).toBe("—");
     expect(getById("mp-centroid").textContent).toBe("—");
     expect(getById("mp-i1").textContent).toBe("—");
+  });
+
+  it("panel exposes getUnitSystem defaulting to metric", () => {
+    const panel = mountMassProperties(host);
+    panel.setUnitSystem("metric");
+    expect(panel.getUnitSystem()).toBe("metric");
+  });
+
+  it("setUnitSystem to imperial re-renders volume in in³", () => {
+    const panel = mountMassProperties(host);
+    panel.setUnitSystem("metric");
+    panel.update(SAMPLE);
+    panel.setUnitSystem("imperial");
+    const volText = getById("mp-volume").textContent ?? "";
+    expect(volText).toMatch(/in³$/);
+  });
+
+  it("setUnitSystem to imperial re-renders bbox in in", () => {
+    const panel = mountMassProperties(host);
+    panel.setUnitSystem("metric");
+    panel.update(SAMPLE);
+    panel.setUnitSystem("imperial");
+    const bboxText = getById("mp-bbox").textContent ?? "";
+    expect(bboxText).toMatch(/in/);
+  });
+
+  it("unit-select element is present in the header", () => {
+    mountMassProperties(host);
+    const sel = document.getElementById("mp-unit-select");
+    expect(sel).not.toBeNull();
   });
 
   it("clicking the header toggles expanded/collapsed state", () => {
