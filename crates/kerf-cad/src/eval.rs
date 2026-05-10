@@ -10436,6 +10436,106 @@ fn build(
             }
             Ok(extrude_polygon(&profile, Vec3::new(0.0, 0.0, sz)))
         }
+
+        Feature::Onion { base_radius, mid_height, point_height, segments, .. } => {
+            let br = resolve_one(id, base_radius, params)?;
+            let mh = resolve_one(id, mid_height, params)?;
+            let ph = resolve_one(id, point_height, params)?;
+            if br <= 0.0 || mh <= 0.0 || ph <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Onion requires positive base_radius, mid_height, point_height, segments>=6 (got br={br}, mh={mh}, ph={ph})"),
+                });
+            }
+            // Lower hemisphere of radius br at z=0 (bottom hemisphere sits below z=0,
+            // upper hemisphere forms the bulge up to z=br).
+            // Clip lower half: remove z < 0 from sphere.
+            let sph = sphere_faceted(br, *segments, *segments);
+            let cutter = box_at(
+                Vec3::new(4.0 * br, 4.0 * br, 2.0 * br),
+                Point3::new(-2.0 * br, -2.0 * br, -2.0 * br),
+            );
+            let lower_hemi = sph
+                .try_difference(&cutter)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "onion_clip", message: e.message })?;
+            // Frustum collar from sphere top (z=br) tapering down to a narrow radius,
+            // then a cone spire.
+            let collar_r = br * 0.5;
+            let collar = frustum_faceted(collar_r, br, mh, *segments);
+            let collar_t = translate_solid(&collar, Vec3::new(0.0, 0.0, br - 1e-3));
+            // Cone spire sitting atop the collar.
+            let spire_r = collar_r * 0.8;
+            let spire = cone_faceted(spire_r, ph, *segments);
+            let spire_t = translate_solid(&spire, Vec3::new(0.0, 0.0, br + mh - 1e-3));
+            let with_collar = lower_hemi
+                .try_union(&collar_t)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "onion_collar", message: e.message })?;
+            with_collar.try_union(&spire_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "onion_spire", message: e.message })
+        }
+
+        Feature::WaspWaist { top_radius, waist_radius, total_height, segments, .. } => {
+            let tr = resolve_one(id, top_radius, params)?;
+            let wr = resolve_one(id, waist_radius, params)?;
+            let th = resolve_one(id, total_height, params)?;
+            if tr <= 0.0 || wr <= 0.0 || th <= 0.0 || wr > tr || *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("WaspWaist requires waist_radius<=top_radius, positive dims (got tr={tr}, wr={wr}, th={th})"),
+                });
+            }
+            // Two frustums back-to-back: bottom half tapers from top_radius at z=0
+            // down to waist_radius at z=th/2, then top half tapers back up to
+            // top_radius at z=th.
+            let half_h = th / 2.0;
+            let bottom = frustum_faceted(wr, tr, half_h, *segments);
+            let top_frust = frustum_faceted(tr, wr, half_h, *segments);
+            let top_t = translate_solid(&top_frust, Vec3::new(0.0, 0.0, half_h - 1e-3));
+            bottom.try_union(&top_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "wasp_waist_join", message: e.message })
+        }
+
+        Feature::Flask { body_radius, body_height, neck_radius, neck_height, shoulder_height, segments, .. } => {
+            let br = resolve_one(id, body_radius, params)?;
+            let bh = resolve_one(id, body_height, params)?;
+            let nr = resolve_one(id, neck_radius, params)?;
+            let nh = resolve_one(id, neck_height, params)?;
+            let sh = resolve_one(id, shoulder_height, params)?;
+            if br <= 0.0 || bh <= 0.0 || nr <= 0.0 || nr >= br || nh <= 0.0 || sh <= 0.0 || *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Flask requires neck_radius<body_radius, positive dims (got br={br}, nr={nr}, bh={bh})"),
+                });
+            }
+            // Body cylinder from z=0 to bh, then frustum shoulder from br down
+            // to nr over shoulder_height, then thin neck cylinder.
+            let body = cylinder_faceted(br, bh, *segments);
+            let shoulder = frustum_faceted(nr, br, sh, *segments);
+            let shoulder_t = translate_solid(&shoulder, Vec3::new(0.0, 0.0, bh - 1e-3));
+            let neck = cylinder_faceted(nr, nh, *segments);
+            let neck_t = translate_solid(&neck, Vec3::new(0.0, 0.0, bh + sh - 1e-3));
+            let with_shoulder = body
+                .try_union(&shoulder_t)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "flask_shoulder", message: e.message })?;
+            with_shoulder.try_union(&neck_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "flask_neck", message: e.message })
+        }
+
+        Feature::Pear { body_radius, neck_radius, neck_height, stacks, segments, .. } => {
+            let br = resolve_one(id, body_radius, params)?;
+            let nr = resolve_one(id, neck_radius, params)?;
+            let nh = resolve_one(id, neck_height, params)?;
+            if br <= 0.0 || nr <= 0.0 || nr >= br || nh <= 0.0 || *stacks < 2 || *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Pear requires neck_radius<body_radius, positive dims (got br={br}, nr={nr}, nh={nh})"),
+                });
+            }
+            // Sphere body at origin (centered at z=0 so hemisphere forms the
+            // bottom half). Frustum neck tapers from br at z=br (sphere top) down to
+            // nr over neck_height.
+            let body = sphere_faceted(br, *stacks, *segments);
+            let neck = frustum_faceted(nr, br, nh, *segments);
+            let neck_t = translate_solid(&neck, Vec3::new(0.0, 0.0, br - 1e-3));
+            body.try_union(&neck_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "pear_neck_join", message: e.message })
+        }
 }
 }
 

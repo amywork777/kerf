@@ -147,6 +147,9 @@ const SLOW_VARIANTS: &[(&str, &str)] = &[
     ("PaperLantern", "cylinder + 2 hemisphere caps — 10–25s"),
     ("Pawn", "chained body ∪ head ∪ base — 10–25s"),
     ("ToroidalCap", "sweep_cylinder_segment chain for arc wedge — 10–25s"),
+    // Batch 6 curved shapes — sphere-involving booleans can exceed 5s or trip stitch.
+    ("Onion", "evaluation >5s — sphere hemisphere ∪ frustum collar ∪ cone spire"),
+    ("Pear", "evaluation >5s — sphere ∪ frustum neck"),
 ];
 
 /// Parse feature.rs once at the top of every test (cheap — feature.rs is ~3k
