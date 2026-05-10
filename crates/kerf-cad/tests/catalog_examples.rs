@@ -110,13 +110,9 @@ const KNOWN_EXEMPT: &[(&str, &str)] = &[
     ("PaperLantern", "evaluation >5s — cylinder + 2 hemisphere caps"),
     // Stitch trip on default sweep-with-twist parameters.
     ("SweepWithTwist", "stitch: non-manifold on segment-1 union of twisted-profile sweep"),
-    // Batch-2 sweep/loft variants: Profile2D fields use profile2d_default which
-    // emits a square profile; however the axis field defaults to "z" as a String
-    // which parses fine. HelicalSweep and AxisTwistExtrude may trip stitch on
-    // the helical / twisted union chains at default segment counts.
-    ("HelicalSweep", "stitch: helical-profile sweep union chain may trip on default parameters"),
-    ("AxisTwistExtrude", "stitch: twisted-extrude segment union may trip on default parameters"),
-    ("PolarRevolveLoft", "stitch: polar-loft segment union may trip on default parameters"),
+    // Batch 6 curved shapes — sphere-involving booleans can exceed 5s or trip stitch.
+    ("Onion", "evaluation >5s — sphere hemisphere ∪ frustum collar ∪ cone spire"),
+    ("Pear", "evaluation >5s — sphere ∪ frustum neck"),
 ];
 
 /// Parse feature.rs once at the top of every test (cheap — feature.rs is ~3k

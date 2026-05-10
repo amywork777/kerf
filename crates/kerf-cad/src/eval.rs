@@ -10575,249 +10575,104 @@ fn build(
             Ok(acc)
         }
 
-        // ---------------------------------------------------------------
-        // Curved-surface batch 4
-        // ---------------------------------------------------------------
-
-        Feature::Bagel { major_radius, minor_radius, dome_height, segments, .. } => {
-            let r_maj = resolve_one(id, major_radius, params)?;
-            let r_min = resolve_one(id, minor_radius, params)?;
-            let dh = resolve_one(id, dome_height, params)?;
-            if r_maj <= r_min || r_min <= 0.0 {
+        Feature::Onion { base_radius, mid_height, point_height, segments, .. } => {
+            let br = resolve_one(id, base_radius, params)?;
+            let mh = resolve_one(id, mid_height, params)?;
+            let ph = resolve_one(id, point_height, params)?;
+            if br <= 0.0 || mh <= 0.0 || ph <= 0.0 || *segments < 6 {
                 return Err(EvalError::Invalid {
                     id: id.into(),
-                    reason: format!(
-                        "Bagel requires major > minor > 0 (got major={r_maj}, minor={r_min})"
-                    ),
+                    reason: format!("Onion requires positive base_radius, mid_height, point_height, segments>=6 (got br={br}, mh={mh}, ph={ph})"),
                 });
             }
-            if dh <= 0.0 || dh > r_min {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: format!(
-                        "Bagel dome_height must be in (0, minor_radius] (got {dh}, minor={r_min})"
-                    ),
-                });
-            }
-            if *segments < 3 {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: "Bagel segments must be >= 3".into(),
-                });
-            }
-            let n = *segments;
-            // Base torus using torus_faceted.
-            let base = torus_faceted(r_maj, r_min, n, n / 2 + 3);
-            // Dome: a thin flattened toroidal ridge on top.
-            // Modeled as a narrow torus of minor_radius = dh/2 sitting at
-            // z = r_min (top of base torus cross-section), major radius = r_maj.
-            // dome_minor = dh/2 ensures dome_minor < r_maj always (since dh <= r_min < r_maj).
-            let dome_minor = dh / 2.0;
-            let dome_offset = r_min - dome_minor; // shift center of dome minor circle
-            // The dome torus center is at z = dome_offset (upward shift so its
-            // top face aligns with top of bagel cross-section).
-            let dome_raw = torus_faceted(r_maj, dome_minor, n, (n / 2).max(3));
-            let dome = translate_solid(&dome_raw, Vec3::new(0.0, 0.0, dome_offset));
-            base.try_union(&dome).map_err(|e| EvalError::Boolean {
-                id: id.into(),
-                op: "bagel_dome",
-                message: e.message,
-            })
-        }
-
-        Feature::Pringle { side, dome_height, segments, .. } => {
-            let s = resolve_one(id, side, params)?;
-            let dh = resolve_one(id, dome_height, params)?;
-            if s <= 0.0 {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: format!("Pringle side must be > 0 (got {s})"),
-                });
-            }
-            if dh <= 0.0 {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: format!("Pringle dome_height must be > 0 (got {dh})"),
-                });
-            }
-            if *segments < 2 {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: "Pringle segments must be >= 2".into(),
-                });
-            }
-            let n = *segments;
-            // Build a grid of (n+1)^2 points on z = dh*(x^2 - y^2)/s^2
-            // over the square [-s/2, s/2]^2, then loft thin slabs.
-            // We stack two layers: top surface at z = f(x,y) and bottom
-            // at z = f(x,y) - thickness, where thickness = dh/4.
-            let thickness = (dh / 4.0).max(s * 0.02);
-            let half = s / 2.0;
-            let step = s / n as f64;
-            // Accumulate quads as lofted prisms (each quad is a near-planar slab).
-            let mut acc: Option<Solid> = None;
-            for i in 0..n {
-                for j in 0..n {
-                    // Four corners of this grid cell.
-                    let xs = [
-                        -half + i as f64 * step,
-                        -half + (i + 1) as f64 * step,
-                    ];
-                    let ys = [
-                        -half + j as f64 * step,
-                        -half + (j + 1) as f64 * step,
-                    ];
-                    let z = |x: f64, y: f64| dh * (x * x - y * y) / (s * s);
-                    // Top quad (CCW from above: (i,j), (i+1,j), (i+1,j+1), (i,j+1))
-                    let top: Vec<Point3> = vec![
-                        Point3::new(xs[0], ys[0], z(xs[0], ys[0])),
-                        Point3::new(xs[1], ys[0], z(xs[1], ys[0])),
-                        Point3::new(xs[1], ys[1], z(xs[1], ys[1])),
-                        Point3::new(xs[0], ys[1], z(xs[0], ys[1])),
-                    ];
-                    // Bottom quad shifted down by thickness.
-                    let bot: Vec<Point3> = top.iter()
-                        .map(|p| Point3::new(p.x, p.y, p.z - thickness))
-                        .collect();
-                    // extrude_lofted expects bottom first, top second.
-                    let cell = extrude_lofted(&bot, &top);
-                    acc = Some(match acc.take() {
-                        None => cell,
-                        Some(prev) => prev.try_union(&cell).map_err(|e| EvalError::Boolean {
-                            id: id.into(),
-                            op: "pringle_cell",
-                            message: format!("cell ({i},{j}): {}", e.message),
-                        })?,
-                    });
-                }
-            }
-            Ok(acc.expect("segments >= 2 guarantees at least one cell"))
-        }
-
-        Feature::Cone2 { base_radius, tip_radius, height, segments, .. } => {
-            let r_base = resolve_one(id, base_radius, params)?;
-            let r_tip = resolve_one(id, tip_radius, params)?;
-            let h = resolve_one(id, height, params)?;
-            if r_base <= 0.0 || r_tip < 0.0 || h <= 0.0 {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: format!(
-                        "Cone2 requires base_radius > 0, tip_radius >= 0, height > 0 (got {r_base}, {r_tip}, {h})"
-                    ),
-                });
-            }
-            if r_tip >= r_base {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: format!(
-                        "Cone2 requires base_radius > tip_radius (got base={r_base}, tip={r_tip})"
-                    ),
-                });
-            }
-            if *segments < 3 {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: "Cone2 segments must be >= 3".into(),
-                });
-            }
-            let n = *segments;
-            // Body: frustum or cone from base at z=0 to tip at z=h.
-            let body = if r_tip < 1e-12 {
-                cone_faceted(r_base, h, n)
-            } else {
-                frustum_faceted(r_base, r_tip, h, n)
-            };
-            if r_tip < 1e-12 {
-                // Pure cone — no hemisphere cap needed.
-                return Ok(body);
-            }
-            // Cap: hemisphere of radius r_tip centered at (0, 0, h).
-            // Build hemisphere as sphere clipped to upper half.
-            let stacks = (n / 2).max(2);
-            let full_sphere = sphere_faceted(r_tip, stacks, n);
-            let sphere_top = translate_solid(&full_sphere, Vec3::new(0.0, 0.0, h));
-            // Clip off the lower hemisphere: difference with a slab below z=h.
-            let slab_margin = r_tip * 1.1;
-            let slab_half = slab_margin * 2.0;
-            let clip_box = box_at(
-                Vec3::new(slab_half, slab_half, slab_margin + 0.1),
-                Point3::new(-slab_margin, -slab_margin, h - slab_margin - 0.05),
+            // Lower hemisphere of radius br at z=0 (bottom hemisphere sits below z=0,
+            // upper hemisphere forms the bulge up to z=br).
+            // Clip lower half: remove z < 0 from sphere.
+            let sph = sphere_faceted(br, *segments, *segments);
+            let cutter = box_at(
+                Vec3::new(4.0 * br, 4.0 * br, 2.0 * br),
+                Point3::new(-2.0 * br, -2.0 * br, -2.0 * br),
             );
-            let hemi = sphere_top.try_difference(&clip_box).map_err(|e| EvalError::Boolean {
-                id: id.into(),
-                op: "cone2_hemisphere_clip",
-                message: e.message,
-            })?;
-            body.try_union(&hemi).map_err(|e| EvalError::Boolean {
-                id: id.into(),
-                op: "cone2_cap_union",
-                message: e.message,
-            })
+            let lower_hemi = sph
+                .try_difference(&cutter)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "onion_clip", message: e.message })?;
+            // Frustum collar from sphere top (z=br) tapering down to a narrow radius,
+            // then a cone spire.
+            let collar_r = br * 0.5;
+            let collar = frustum_faceted(collar_r, br, mh, *segments);
+            let collar_t = translate_solid(&collar, Vec3::new(0.0, 0.0, br - 1e-3));
+            // Cone spire sitting atop the collar.
+            let spire_r = collar_r * 0.8;
+            let spire = cone_faceted(spire_r, ph, *segments);
+            let spire_t = translate_solid(&spire, Vec3::new(0.0, 0.0, br + mh - 1e-3));
+            let with_collar = lower_hemi
+                .try_union(&collar_t)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "onion_collar", message: e.message })?;
+            with_collar.try_union(&spire_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "onion_spire", message: e.message })
         }
 
-        Feature::Lozenge { size, corner_radius, segments, .. } => {
-            let arr = resolve3(id, size, params)?;
-            let (sx, sy, sz) = (arr[0], arr[1], arr[2]);
-            let cr = resolve_one(id, corner_radius, params)?;
-            if sx <= 0.0 || sy <= 0.0 || sz <= 0.0 {
+        Feature::WaspWaist { top_radius, waist_radius, total_height, segments, .. } => {
+            let tr = resolve_one(id, top_radius, params)?;
+            let wr = resolve_one(id, waist_radius, params)?;
+            let th = resolve_one(id, total_height, params)?;
+            if tr <= 0.0 || wr <= 0.0 || th <= 0.0 || wr > tr || *segments < 6 {
                 return Err(EvalError::Invalid {
                     id: id.into(),
-                    reason: format!("Lozenge size components must be > 0 (got [{sx}, {sy}, {sz}])"),
+                    reason: format!("WaspWaist requires waist_radius<=top_radius, positive dims (got tr={tr}, wr={wr}, th={th})"),
                 });
             }
-            if cr <= 0.0 {
+            // Two frustums back-to-back: bottom half tapers from top_radius at z=0
+            // down to waist_radius at z=th/2, then top half tapers back up to
+            // top_radius at z=th.
+            let half_h = th / 2.0;
+            let bottom = frustum_faceted(wr, tr, half_h, *segments);
+            let top_frust = frustum_faceted(tr, wr, half_h, *segments);
+            let top_t = translate_solid(&top_frust, Vec3::new(0.0, 0.0, half_h - 1e-3));
+            bottom.try_union(&top_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "wasp_waist_join", message: e.message })
+        }
+
+        Feature::Flask { body_radius, body_height, neck_radius, neck_height, shoulder_height, segments, .. } => {
+            let br = resolve_one(id, body_radius, params)?;
+            let bh = resolve_one(id, body_height, params)?;
+            let nr = resolve_one(id, neck_radius, params)?;
+            let nh = resolve_one(id, neck_height, params)?;
+            let sh = resolve_one(id, shoulder_height, params)?;
+            if br <= 0.0 || bh <= 0.0 || nr <= 0.0 || nr >= br || nh <= 0.0 || sh <= 0.0 || *segments < 6 {
                 return Err(EvalError::Invalid {
                     id: id.into(),
-                    reason: format!("Lozenge corner_radius must be > 0 (got {cr})"),
+                    reason: format!("Flask requires neck_radius<body_radius, positive dims (got br={br}, nr={nr}, bh={bh})"),
                 });
             }
-            if cr * 2.0 >= sx || cr * 2.0 >= sy {
+            // Body cylinder from z=0 to bh, then frustum shoulder from br down
+            // to nr over shoulder_height, then thin neck cylinder.
+            let body = cylinder_faceted(br, bh, *segments);
+            let shoulder = frustum_faceted(nr, br, sh, *segments);
+            let shoulder_t = translate_solid(&shoulder, Vec3::new(0.0, 0.0, bh - 1e-3));
+            let neck = cylinder_faceted(nr, nh, *segments);
+            let neck_t = translate_solid(&neck, Vec3::new(0.0, 0.0, bh + sh - 1e-3));
+            let with_shoulder = body
+                .try_union(&shoulder_t)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "flask_shoulder", message: e.message })?;
+            with_shoulder.try_union(&neck_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "flask_neck", message: e.message })
+        }
+
+        Feature::Pear { body_radius, neck_radius, neck_height, stacks, segments, .. } => {
+            let br = resolve_one(id, body_radius, params)?;
+            let nr = resolve_one(id, neck_radius, params)?;
+            let nh = resolve_one(id, neck_height, params)?;
+            if br <= 0.0 || nr <= 0.0 || nr >= br || nh <= 0.0 || *stacks < 2 || *segments < 6 {
                 return Err(EvalError::Invalid {
                     id: id.into(),
-                    reason: format!(
-                        "Lozenge corner_radius ({cr}) must be < min(sx,sy)/2 = {}",
-                        sx.min(sy) / 2.0
-                    ),
+                    reason: format!("Pear requires neck_radius<body_radius, positive dims (got br={br}, nr={nr}, nh={nh})"),
                 });
             }
-            if *segments < 2 {
-                return Err(EvalError::Invalid {
-                    id: id.into(),
-                    reason: "Lozenge segments must be >= 2".into(),
-                });
-            }
-            let n = *segments;
-            // Build a rounded-corner profile in the xy plane (CCW from +z).
-            // The four corners of the box are at (±sx/2, ±sy/2); each corner
-            // is replaced with a quarter-circle arc of radius cr.
-            let mut profile: Vec<Point3> = Vec::new();
-            // Corner centres (inset by cr from each corner).
-            let cx = sx / 2.0 - cr;
-            let cy = sy / 2.0 - cr;
-            // Four arcs, one per corner, CCW from +x/+y quadrant:
-            //   Q1 (+x,+y): arc from π/2 → 0 (from top edge to right edge)
-            //   Q4 (+x,-y): arc from 0 → -π/2
-            //   Q3 (-x,-y): arc from -π/2 → -π
-            //   Q2 (-x,+y): arc from π → π/2 (equivalently 3π/2 → π)
-            // Iterate four quadrants in CCW order, each arc sweeping 90°.
-            // The profile goes: right edge → top-right arc → top edge →
-            //   top-left arc → left edge → bottom-left arc → bottom edge →
-            //   bottom-right arc → back.
-            profile.clear();
-            let quadrants: [(f64, f64, f64); 4] = [
-                // (center_x, center_y, start_angle) — arc sweeps +90° CCW
-                ( cx,  cy, 0.0),                              // Q1: right edge to top edge
-                (-cx,  cy, std::f64::consts::FRAC_PI_2),     // Q2: top edge to left edge
-                (-cx, -cy, std::f64::consts::PI),             // Q3: left edge to bottom edge
-                ( cx, -cy, std::f64::consts::PI + std::f64::consts::FRAC_PI_2), // Q4: bottom edge to right edge
-            ];
-            for (qcx, qcy, start) in quadrants {
-                for k in 0..n {
-                    let t = start + (std::f64::consts::FRAC_PI_2 * k as f64 / n as f64);
-                    profile.push(Point3::new(qcx + cr * t.cos(), qcy + cr * t.sin(), 0.0));
-                }
-            }
-            Ok(extrude_polygon(&profile, Vec3::new(0.0, 0.0, sz)))
+            // Sphere body at origin (centered at z=0 so hemisphere forms the
+            // bottom half). Frustum neck tapers from br at z=br (sphere top) down to
+            // nr over neck_height.
+            let body = sphere_faceted(br, *stacks, *segments);
+            let neck = frustum_faceted(nr, br, nh, *segments);
+            let neck_t = translate_solid(&neck, Vec3::new(0.0, 0.0, br - 1e-3));
+            body.try_union(&neck_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "pear_neck_join", message: e.message })
         }
 }
 }
