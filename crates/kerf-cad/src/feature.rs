@@ -3611,50 +3611,105 @@ pub enum Feature {
     },
 
     // -------------------------------------------------------------------
-    // Reference geometry batch 2 — ship 2026-05-10.
+    // Manufacturing batch 5 (5 features) — ship 2026-05-10.
     // -------------------------------------------------------------------
 
-    /// CenterMarker: a 3D crosshair at a world-space `position`. Three
-    /// thin rods (cylinders) pass through the point — one along each of
-    /// the x, y, z axes — each centered on `position` with half-length
-    /// `size / 2`. Each rod has radius `rod_radius`. Useful as a visual
-    /// "snapping target" or centroid indicator in CAD models.
-    CenterMarker {
+    /// **ShaftOilHole**: small radial lubrication channel drilled through a
+    /// shaft. Subtracts a through-bore of `radius` from `input`, passing
+    /// through `center`. The bore is drilled along the first perpendicular
+    /// axis to `axis` (the shaft axis). The bore extends `depth` in both
+    /// directions from `center` along that perpendicular so it exits both
+    /// sides of the shaft.
+    ///
+    /// `axis` is the shaft axis ("x"|"y"|"z"). `radius` is the bore radius.
+    /// `depth` is the half-length of the bore (total bore = 2*depth).
+    /// `segments` ≥ 6.
+    ShaftOilHole {
         id: String,
-        position: [Scalar; 3],
-        size: Scalar,
-        rod_radius: Scalar,
+        input: String,
+        center: [Scalar; 3],
+        axis: String,
+        radius: Scalar,
+        depth: Scalar,
         segments: usize,
     },
 
-    /// AxisLabel: a visual axis indicator — a cylinder shaft from `origin`
-    /// in the given `direction` (does not need to be unit-length; it is
-    /// normalised internally) with a cone tip at the far end. The shaft
-    /// runs from `origin` for `length` units; the cone head is centred at
-    /// `origin + normalised(direction) * length`. `head_radius` must be
-    /// greater than `shaft_radius`. Segments >= 6 required.
-    AxisLabel {
+    /// **WoodruffKey**: semi-circular keyway slot (half-moon shape) cut into a
+    /// shaft. The cutter is a half-disc (cylinder sliced through the center)
+    /// of `radius` and `width` (axial thickness of the slot along the shaft
+    /// `axis`). `center` is the midpoint of the slot opening on the shaft
+    /// surface. The slot extends `depth` into the shaft in the -radial
+    /// direction from `center`. Built as a cylinder of `radius` and `width`
+    /// along the shaft axis subtracted from `input`; the full cylinder
+    /// includes the half that pokes into the shaft.
+    ///
+    /// `axis` is the shaft axis ("x"|"y"|"z"). The keyway cuts in the direction
+    /// perpendicular to `axis` starting from `center`. `segments` ≥ 6.
+    WoodruffKey {
         id: String,
-        origin: [Scalar; 3],
-        direction: [Scalar; 3],
-        length: Scalar,
-        head_radius: Scalar,
-        shaft_radius: Scalar,
+        input: String,
+        center: [Scalar; 3],
+        axis: String,
+        radius: Scalar,
+        width: Scalar,
+        depth: Scalar,
         segments: usize,
     },
 
-    /// DistanceMarker: a visual measurement indicator between two points.
-    /// A thin rod (shaft) connects `from` to `to`; an outward-pointing cone
-    /// (arrowhead) is placed at each end, centred on the end-point. Both
-    /// cones point away from the shaft (i.e. the `from` cone points toward
-    /// `from - dir` and the `to` cone points toward `to + dir`). Useful
-    /// for annotating dimensions directly in 3D geometry.
-    DistanceMarker {
+    /// **DraftedHole**: a conical bore with a draft angle — the opening
+    /// (at the `center` on the +`axis`-facing surface) has `top_radius` and
+    /// the bottom has `bottom_radius` < `top_radius`, over `depth` along
+    /// -`axis`. Common in injection-moulded parts to ease ejection. Built as
+    /// a frustum cutter subtracted from `input`.
+    ///
+    /// `center` is the center of the entry opening on the +axis face.
+    /// `top_radius` > `bottom_radius` > 0; `depth` > 0. `axis` is
+    /// "x"|"y"|"z". `segments` ≥ 6.
+    DraftedHole {
         id: String,
-        from: [Scalar; 3],
-        to: [Scalar; 3],
-        shaft_radius: Scalar,
-        head_radius: Scalar,
+        input: String,
+        center: [Scalar; 3],
+        axis: String,
+        top_radius: Scalar,
+        bottom_radius: Scalar,
+        depth: Scalar,
+        segments: usize,
+    },
+
+    /// **HexFlange**: a hex-headed boss (like a hex-cap nut without a bore).
+    /// The hex prism of `across_flats` (apothem = across_flats / 2) and
+    /// `height` along +z sits centered on the origin. No input (standalone
+    /// primitive). Commonly used to represent a hex boss or a weld nut body.
+    ///
+    /// `across_flats` is the distance between two parallel flat faces of the
+    /// hex (a.k.a. wrench size). `height` is the boss height along +z.
+    HexFlange {
+        id: String,
+        center: [Scalar; 3],
+        axis: String,
+        across_flats: Scalar,
+        height: Scalar,
+    },
+
+    /// **Heatset**: cylindrical socket for a heat-set threaded insert (a
+    /// press-fit brass insert used in plastic parts). The socket is a blind
+    /// hole of `insert_radius` and `insert_depth` at `center` on the
+    /// +`axis`-facing surface of `input`. A short chamfered lead-in of
+    /// `lead_in_radius` > `insert_radius` and depth `lead_in_depth` (= 1/3
+    /// of insert_depth, min 0.5 mm) is added at the opening to guide the
+    /// hot insert. Built as: lead-in frustum ∪ insert cylinder, subtracted
+    /// from `input`.
+    ///
+    /// `axis` is "x"|"y"|"z". `lead_in_radius` must be > `insert_radius`.
+    /// `segments` ≥ 6.
+    Heatset {
+        id: String,
+        input: String,
+        center: [Scalar; 3],
+        axis: String,
+        insert_radius: Scalar,
+        insert_depth: Scalar,
+        lead_in_radius: Scalar,
         segments: usize,
     },
 
@@ -4511,6 +4566,11 @@ impl Feature {
             | Feature::ReliefCut { id, .. }
             | Feature::WrenchFlats { id, .. }
             | Feature::Knurl { id, .. }
+            | Feature::ShaftOilHole { id, .. }
+            | Feature::WoodruffKey { id, .. }
+            | Feature::DraftedHole { id, .. }
+            | Feature::HexFlange { id, .. }
+            | Feature::Heatset { id, .. }
 => id,
 
             Feature::TableTop { id, .. }
@@ -4863,7 +4923,13 @@ impl Feature {
             | Feature::OilHole { .. }
             | Feature::ReliefCut { .. }
             | Feature::WrenchFlats { .. }
-            | Feature::Knurl { .. } => Vec::new(),
+            | Feature::Knurl { .. }
+            | Feature::HexFlange { .. } => Vec::new(),
+
+            Feature::ShaftOilHole { input, .. }
+            | Feature::WoodruffKey { input, .. }
+            | Feature::DraftedHole { input, .. }
+            | Feature::Heatset { input, .. } => vec![input.as_str()],
 
             Feature::TableTop { .. }
             | Feature::Bench { .. }
