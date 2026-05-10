@@ -4,6 +4,21 @@
 
 import * as THREE from "three";
 import { extractHoles, renderHoleTable } from "./hole-table.js";
+// Multi-view orthographic snapshot export — front/top/right + iso + optional
+// section views and detail views, composed into a single PNG with labels and
+// overall bounding-box dimensions.
+
+import * as THREE from "three";
+import {
+  clipModelToSection,
+  renderSectionPanel,
+} from "./section-view.js";
+import type { SectionViewParams, Triangle } from "./section-view.js";
+import { renderDetailPanel } from "./detail-view.js";
+import type { DetailViewParams } from "./detail-view.js";
+
+export type { SectionViewParams } from "./section-view.js";
+export type { DetailViewParams } from "./detail-view.js";
 
 const VIEW_W = 480;
 const VIEW_H = 360;
@@ -32,6 +47,46 @@ const VIEWS: ViewSpec[] = [
 ];
 
 export function exportThreeViewPng(mesh: THREE.Mesh, fileName: string, modelJson?: string) {
+export interface ExportOptions {
+  sections?: SectionViewParams[];
+  details?: DetailViewParams[];
+}
+
+/** Map baseView name → cell index in the 2×2 grid (0=front, 1=top, 2=side). */
+const BASE_VIEW_CELL: Record<string, number> = {
+  front: 0,
+  top: 1,
+  side: 2,
+};
+
+/** Extract triangle soup from a THREE.Mesh geometry for section clipping. */
+function meshToTriangles(geometry: THREE.BufferGeometry): Triangle[] {
+  const pos = geometry.attributes["position"];
+  if (!pos) return [];
+  const index = geometry.index;
+  const tris: Triangle[] = [];
+  const getV = (i: number): [number, number, number] => [
+    pos.getX(i),
+    pos.getY(i),
+    pos.getZ(i),
+  ];
+  if (index) {
+    for (let i = 0; i < index.count; i += 3) {
+      tris.push({
+        a: getV(index.getX(i)),
+        b: getV(index.getX(i + 1)),
+        c: getV(index.getX(i + 2)),
+      });
+    }
+  } else {
+    for (let i = 0; i < pos.count; i += 3) {
+      tris.push({ a: getV(i), b: getV(i + 1), c: getV(i + 2) });
+    }
+  }
+  return tris;
+}
+
+export function exportThreeViewPng(mesh: THREE.Mesh, fileName: string, opts?: ExportOptions) {
   const sceneClone = new THREE.Scene();
   sceneClone.background = new THREE.Color(0xffffff);
   sceneClone.add(new THREE.AmbientLight(0xffffff, 0.7));
@@ -115,6 +170,95 @@ export function exportThreeViewPng(mesh: THREE.Mesh, fileName: string, modelJson
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Section views — rendered below the main 2×2 grid, one per entry.
+  // -------------------------------------------------------------------------
+  const sections = opts?.sections ?? [];
+  const SECTION_W = 220;
+  const SECTION_H = 180;
+  const triangles = sections.length > 0 ? meshToTriangles(mesh.geometry) : [];
+
+  let extraRowH = 0;
+  if (sections.length > 0) {
+    extraRowH = SECTION_H + PAD + LABEL_H;
+    // Extend the sheet canvas (we pre-allocated SHEET_H, so we need a new
+    // canvas if extra rows are needed — here we draw into an overlay region
+    // below SHEET_H by using a separate off-screen canvas and compositing).
+    // For simplicity we just clamp to pre-allocated area plus draw into a
+    // separate canvas that is merged below.
+    const secCanvas = document.createElement("canvas");
+    secCanvas.width = SHEET_W;
+    secCanvas.height = extraRowH;
+    const secCtx = secCanvas.getContext("2d")!;
+    secCtx.fillStyle = "#ffffff";
+    secCtx.fillRect(0, 0, SHEET_W, extraRowH);
+
+    sections.forEach((sectionParams, i) => {
+      const sx = PAD + i * (SECTION_W + PAD);
+      const sy = LABEL_H + PAD / 2;
+      const segs = clipModelToSection(triangles, {
+        normal: sectionParams.plane.normal,
+        offset: sectionParams.plane.offset,
+      });
+      renderSectionPanel(secCtx, {
+        segs,
+        hatchAngle: sectionParams.hatchAngle,
+        hatchSpacing: sectionParams.hatchSpacing,
+        destX: sx,
+        destY: sy,
+        destW: SECTION_W,
+        destH: SECTION_H,
+        label: `${String.fromCharCode(65 + i)}-A`,
+      });
+    });
+
+    // Merge secCanvas into sheet — extend sheet first.
+    const extSheet = document.createElement("canvas");
+    extSheet.width = SHEET_W;
+    extSheet.height = SHEET_H + extraRowH;
+    const extCtx = extSheet.getContext("2d")!;
+    extCtx.drawImage(sheet, 0, 0);
+    extCtx.drawImage(secCanvas, 0, SHEET_H);
+    // Replace sheet reference by drawing into original sheet buffer.
+    // (We can't reassign const; instead we'll use extSheet below for toBlob.)
+    // Re-assign via a local alias:
+    Object.defineProperty(sheet, "_ext", { value: extSheet, writable: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // Detail views — rendered next to (or below) the section row.
+  // -------------------------------------------------------------------------
+  const details = opts?.details ?? [];
+  if (details.length > 0) {
+    // The base-view cell origins on the sheet canvas.
+    const cellOrigins: { x: number; y: number }[] = [
+      { x: PAD,               y: PAD + LABEL_H },                     // front (col0 row0)
+      { x: PAD + VIEW_W + PAD, y: PAD + LABEL_H },                    // top   (col1 row0)
+      { x: PAD,               y: PAD + LABEL_H + VIEW_H + PAD + LABEL_H }, // side  (col0 row1)
+    ];
+
+    for (const dv of details) {
+      const cellIdx = BASE_VIEW_CELL[dv.baseView] ?? 0;
+      const origin = cellOrigins[cellIdx] ?? cellOrigins[0]!;
+
+      // Find a free spot for the detail panel: right of the ISO view.
+      // Simple: anchor to right side of sheet below the ISO cell.
+      const detX = PAD + VIEW_W + PAD + VIEW_W + PAD;
+      const detY = PAD + LABEL_H + VIEW_H + PAD + LABEL_H + 10;
+
+      renderDetailPanel(
+        renderer.domElement,  // srcCanvas — the last rendered view in the
+                              // WebGL canvas (post-loop it holds the ISO).
+        origin.x,
+        origin.y,
+        dv,
+        ctx,
+        Math.min(detX, SHEET_W - (dv.rect.w * (dv.zoom ?? 2)) - PAD),
+        detY,
+      );
+    }
+  }
+
   // Title block.
   const titleY = SHEET_H - 18;
   ctx.font = "12px ui-monospace, 'SF Mono', Menlo, monospace";
@@ -150,7 +294,11 @@ export function exportThreeViewPng(mesh: THREE.Mesh, fileName: string, modelJson
   (lines.material as THREE.Material).dispose();
   drawingMat.dispose();
 
-  sheet.toBlob((blob) => {
+  // Use the extended sheet if section panels were added.
+  const finalSheet: HTMLCanvasElement =
+    (sheet as any)["_ext"] ?? sheet;
+
+  finalSheet.toBlob((blob) => {
     if (!blob) return;
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
