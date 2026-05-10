@@ -3492,6 +3492,54 @@ pub enum Feature {
     },
 
     // -------------------------------------------------------------------
+    // Reference geometry batch 2 — ship 2026-05-10.
+    // -------------------------------------------------------------------
+
+    /// CenterMarker: a 3D crosshair at a world-space `position`. Three
+    /// thin rods (cylinders) pass through the point — one along each of
+    /// the x, y, z axes — each centered on `position` with half-length
+    /// `size / 2`. Each rod has radius `rod_radius`. Useful as a visual
+    /// "snapping target" or centroid indicator in CAD models.
+    CenterMarker {
+        id: String,
+        position: [Scalar; 3],
+        size: Scalar,
+        rod_radius: Scalar,
+        segments: usize,
+    },
+
+    /// AxisLabel: a visual axis indicator — a cylinder shaft from `origin`
+    /// in the given `direction` (does not need to be unit-length; it is
+    /// normalised internally) with a cone tip at the far end. The shaft
+    /// runs from `origin` for `length` units; the cone head is centred at
+    /// `origin + normalised(direction) * length`. `head_radius` must be
+    /// greater than `shaft_radius`. Segments >= 6 required.
+    AxisLabel {
+        id: String,
+        origin: [Scalar; 3],
+        direction: [Scalar; 3],
+        length: Scalar,
+        head_radius: Scalar,
+        shaft_radius: Scalar,
+        segments: usize,
+    },
+
+    /// DistanceMarker: a visual measurement indicator between two points.
+    /// A thin rod (shaft) connects `from` to `to`; an outward-pointing cone
+    /// (arrowhead) is placed at each end, centred on the end-point. Both
+    /// cones point away from the shaft (i.e. the `from` cone points toward
+    /// `from - dir` and the `to` cone points toward `to + dir`). Useful
+    /// for annotating dimensions directly in 3D geometry.
+    DistanceMarker {
+        id: String,
+        from: [Scalar; 3],
+        to: [Scalar; 3],
+        shaft_radius: Scalar,
+        head_radius: Scalar,
+        segments: usize,
+    },
+
+    // -------------------------------------------------------------------
     // Manufacturing batch 4 (5 features) — ship 2026-05-08.
     // -------------------------------------------------------------------
 
@@ -4127,6 +4175,9 @@ impl Feature {
             | Feature::OffsetRefPlane { id, .. }
             | Feature::CoordinateAxes { id, .. }
             | Feature::OriginPoint { id, .. }
+            | Feature::CenterMarker { id, .. }
+            | Feature::AxisLabel { id, .. }
+            | Feature::DistanceMarker { id, .. }
             | Feature::CenterDrill { id, .. }
             | Feature::OilHole { id, .. }
             | Feature::ReliefCut { id, .. }
@@ -4452,6 +4503,9 @@ impl Feature {
             | Feature::OffsetRefPlane { .. }
             | Feature::CoordinateAxes { .. }
             | Feature::OriginPoint { .. }
+            | Feature::CenterMarker { .. }
+            | Feature::AxisLabel { .. }
+            | Feature::DistanceMarker { .. }
             | Feature::CenterDrill { .. }
             | Feature::OilHole { .. }
             | Feature::ReliefCut { .. }
