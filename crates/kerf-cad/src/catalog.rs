@@ -508,6 +508,10 @@ pub fn categorize(name: &str) -> Category {
             | "Lens2"
             | "Capsule2"
             | "OvoidShell"
+            | "Bagel"
+            | "Pringle"
+            | "Cone2"
+            | "Lozenge"
     ) {
         return Category::Primitives;
     }
@@ -1715,6 +1719,35 @@ fn curated_override(variant: &str) -> Option<serde_json::Map<String, serde_json:
             m.insert("height".into(), num(3.0));
             m.insert("point_height".into(), num(2.0));
             m.insert("segments".into(), json!(16_u64));
+            Some(m)
+        }
+        "Bagel" => {
+            // major > minor, dome_height <= minor.
+            m.insert("major_radius".into(), num(5.0));
+            m.insert("minor_radius".into(), num(1.2));
+            m.insert("dome_height".into(), num(0.6));
+            m.insert("segments".into(), json!(12));
+            Some(m)
+        }
+        "Pringle" => {
+            m.insert("side".into(), num(8.0));
+            m.insert("dome_height".into(), num(2.0));
+            m.insert("segments".into(), json!(4));
+            Some(m)
+        }
+        "Cone2" => {
+            // base_radius > tip_radius > 0 for frustum+cap variant.
+            m.insert("base_radius".into(), num(5.0));
+            m.insert("tip_radius".into(), num(1.5));
+            m.insert("height".into(), num(8.0));
+            m.insert("segments".into(), json!(12));
+            Some(m)
+        }
+        "Lozenge" => {
+            // corner_radius < min(size[0], size[1]) / 2.
+            m.insert("size".into(), json!([8.0, 6.0, 4.0]));
+            m.insert("corner_radius".into(), num(1.5));
+            m.insert("segments".into(), json!(4));
             Some(m)
         }
         _ => None,

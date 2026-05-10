@@ -39,7 +39,32 @@ mod, sign, if_pos for conditionals, pi/tau/e constants).
 
 ## Readiness against published CAD packages
 
+<<<<<<< HEAD
 See [PROGRESS.md](./PROGRESS.md) for the current SW-tier scorecard.
+=======
+Weighted scorecard, where Solidworks/Fusion-tier = 100% and OpenSCAD-tier is
+the subset of categories OpenSCAD actually covers (~31 SW pts, mostly:
+kernel + authoring + viewer + production output).
+
+| Capability                                | SW weight | We're at | SW pts |
+|-------------------------------------------|----------:|---------:|-------:|
+| Planar booleans + primitives + validation | 15%       | 99%      | 14.85  |
+| Authoring layer (params + expressions)    | 6%        | 98%      | 5.88   |
+| 3D viewer (mesh, camera, lighting)        | 7%        | 90%      | 6.3    |
+| Picking / selection (face → owner Feature)| 5%        | 70%      | 3.5    |
+| Feature tree UI                           | 5%        | 60%      | 3.0    |
+| Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
+| Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
+| Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
+| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
+| Manufacturing features (240+ — see catalog) | 12% | 95% | 11.4 |
+| Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
+| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob + Bagel + Pringle + Cone2 + Lozenge compose for simple cases) | 8% | 90% | 7.2 |
+| 2D sketcher UI                            | 8%        | 0%       | 0      |
+| Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
+| **Solidworks-tier total**                 | **100%**  |          | **~65.0%** |
+| **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
+>>>>>>> 9970752 (feat(curved): add Bagel, Pringle, Cone2, Lozenge — curved-surface batch 4)
 
 ## Latest session (2026-05-06)
 

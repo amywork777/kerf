@@ -4165,6 +4165,62 @@ pub enum Feature {
         thickness: Scalar,
         segments: usize,
     },
+
+    /// Bagel: a faceted torus (like `Donut`) with a thin annular dome
+    /// on the top surface — like a baked bagel. The base is a standard
+    /// faceted torus (`major_radius` × `minor_radius`); the dome is a
+    /// narrow flattened toroidal ridge of height `dome_height` sitting on
+    /// top of the torus. `major_radius` must exceed `minor_radius`;
+    /// `dome_height` must be > 0 and ≤ `minor_radius`. Axis along +z,
+    /// centered on the origin.
+    Bagel {
+        id: String,
+        major_radius: Scalar,
+        minor_radius: Scalar,
+        dome_height: Scalar,
+        segments: usize,
+    },
+
+    /// Pringle: a saddle-shaped chip — a thin slab whose top surface
+    /// follows z = dome_height * (x² − y²) / side². Built as a grid of
+    /// points on that quadric surface, extruded downward by a small
+    /// thickness (dome_height / 4) to give a solid body. The chip is
+    /// `side` × `side` in the xy plane, centred on the origin.
+    /// `segments` controls grid resolution (≥ 2).
+    Pringle {
+        id: String,
+        side: Scalar,
+        dome_height: Scalar,
+        segments: usize,
+    },
+
+    /// Cone2: a refined cone with a smooth frustum body and a
+    /// hemispherical cap at the top. `tip_radius` = 0 gives a standard
+    /// pointed cone topped with a hemisphere of `tip_radius`; a small
+    /// `tip_radius` > 0 gives a frustum capped with a hemisphere.
+    /// Specifically: a frustum from `base_radius` at z=0 to `tip_radius`
+    /// at z=`height`, plus a hemisphere of radius `tip_radius` centred at
+    /// (0, 0, `height`). `base_radius` must be > `tip_radius` ≥ 0.
+    Cone2 {
+        id: String,
+        base_radius: Scalar,
+        tip_radius: Scalar,
+        height: Scalar,
+        segments: usize,
+    },
+
+    /// Lozenge: a rectangular box with rounded vertical edges — a
+    /// discrete "pillowed" cuboid. The box has dimensions `size[0]` × `size[1]`
+    /// × `size[2]` (x, y, z). Each of the four vertical (z-axis) edges is
+    /// replaced by a cylindrical fillet of radius `corner_radius`. Must
+    /// satisfy corner_radius > 0 and corner_radius < min(size[0], size[1]) / 2.
+    /// `segments` is the arc resolution per quarter-circle (≥ 2).
+    Lozenge {
+        id: String,
+        size: [Scalar; 3],
+        corner_radius: Scalar,
+        segments: usize,
+    },
 }
 
 impl Feature {
@@ -4500,6 +4556,10 @@ impl Feature {
             | Feature::Lens2 { id, .. }
             | Feature::Capsule2 { id, .. }
             | Feature::OvoidShell { id, .. }
+            | Feature::Bagel { id, .. }
+            | Feature::Pringle { id, .. }
+            | Feature::Cone2 { id, .. }
+            | Feature::Lozenge { id, .. }
 => id,
 
             Feature::ChamferedHole { id, .. }
@@ -4848,6 +4908,10 @@ impl Feature {
             | Feature::Cross3D { .. }
             | Feature::Chair { .. }
             | Feature::ImportedMesh { .. }
+            | Feature::Bagel { .. }
+            | Feature::Pringle { .. }
+            | Feature::Cone2 { .. }
+            | Feature::Lozenge { .. }
 => Vec::new(),
 
             Feature::ChamferedHole { input, .. }
