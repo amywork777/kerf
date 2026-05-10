@@ -1,367 +1,157 @@
-/**
- * @vitest-environment jsdom
- */
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import * as THREE from "three";
-
-// We import the module under test after mocking THREE.WebGLRenderer so
-// that constructing a renderer in jsdom doesn't blow up on WebGL.
-// The module itself only reads renderer.localClippingEnabled (set by
-// main.ts) and calls material.clippingPlanes — both are plain properties.
-
-import { mountSectionView } from "./section-view.js";
+import { describe, it, expect } from "vitest";
+import { clipModelToSection } from "./section-view.js";
+import type { Triangle, Plane, Seg2D } from "./section-view.js";
 
 // ---------------------------------------------------------------------------
-// Minimal stub for THREE.WebGLRenderer — only the properties section-view
-// reads/writes are needed.
+// Helpers
 // ---------------------------------------------------------------------------
-function makeFakeRenderer() {
-  return {
-    localClippingEnabled: false,
-  } as unknown as THREE.WebGLRenderer;
-}
 
-function makeFakeMaterial() {
-  const mat = new THREE.MeshStandardMaterial();
-  return mat;
-}
-
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-function makeHost() {
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  return el;
-}
-
-function makeOpts(onChange = vi.fn()) {
-  const renderer = makeFakeRenderer();
-  const material = makeFakeMaterial();
-  return {
-    opts: {
-      getRenderer: () => renderer,
-      getMeshMaterial: () => material,
-      onChange,
-    },
-    renderer,
-    material,
-    onChange,
-  };
+/** Build 12 triangles making up an axis-aligned box [0,sx]×[0,sy]×[0,sz]. */
+function makeBox(sx: number, sy: number, sz: number): Triangle[] {
+  const tris: Triangle[] = [];
+  // Each face = 2 triangles. Six faces:
+  const faces: [
+    [number, number, number],
+    [number, number, number],
+    [number, number, number],
+    [number, number, number],
+  ][] = [
+    // -Z face (z=0)
+    [[0,0,0],[sx,0,0],[sx,sy,0]],
+    [[0,0,0],[sx,sy,0],[0,sy,0]],
+    // +Z face (z=sz)
+    [[0,0,sz],[sx,sy,sz],[sx,0,sz]],
+    [[0,0,sz],[0,sy,sz],[sx,sy,sz]],
+    // -Y face (y=0)
+    [[0,0,0],[sx,0,sz],[sx,0,0]],
+    [[0,0,0],[0,0,sz],[sx,0,sz]],
+    // +Y face (y=sy)
+    [[0,sy,0],[sx,sy,0],[sx,sy,sz]],
+    [[0,sy,0],[sx,sy,sz],[0,sy,sz]],
+    // -X face (x=0)
+    [[0,0,0],[0,sy,0],[0,sy,sz]],
+    [[0,0,0],[0,sy,sz],[0,0,sz]],
+    // +X face (x=sx)
+    [[sx,0,0],[sx,sy,sz],[sx,sy,0]],
+    [[sx,0,0],[sx,0,sz],[sx,sy,sz]],
+  ] as any;
+  for (const [a, b, c] of faces as [[number,number,number],[number,number,number],[number,number,number]][]) {
+    tris.push({ a, b, c });
+  }
+  return tris;
 }
 
 // ---------------------------------------------------------------------------
-
-describe("mountSectionView — DOM structure", () => {
-  let host: HTMLElement;
-  beforeEach(() => {
-    document.body.innerHTML = "";
-    host = makeHost();
-  });
-
-  it("mounts a toggle button inside the host", () => {
-    const { opts } = makeOpts();
-    mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle");
-    expect(btn).not.toBeNull();
-    expect(btn!.textContent).toContain("Section");
-  });
-
-  it("mounts a slider that is initially hidden", () => {
-    const { opts } = makeOpts();
-    mountSectionView(host, opts);
-    const slider = host.querySelector<HTMLInputElement>("#section-slider");
-    expect(slider).not.toBeNull();
-    expect(slider!.hidden).toBe(true);
-  });
-
-  it("mounts a flip-direction button that is initially hidden", () => {
-    const { opts } = makeOpts();
-    mountSectionView(host, opts);
-    const flipBtn = host.querySelector<HTMLButtonElement>("#section-flip");
-    expect(flipBtn).not.toBeNull();
-    expect(flipBtn!.hidden).toBe(true);
-  });
-});
-
+// Tests
 // ---------------------------------------------------------------------------
 
-describe("mountSectionView — toggle cycles through modes", () => {
-  let host: HTMLElement;
-  beforeEach(() => {
-    document.body.innerHTML = "";
-    host = makeHost();
+describe("clipModelToSection", () => {
+  it("empty model → empty cross-section", () => {
+    const plane: Plane = { normal: [0, 0, 1], offset: 0 };
+    const result = clipModelToSection([], plane);
+    expect(result).toHaveLength(0);
   });
 
-  it("starts in 'off' mode (label shows 'off')", () => {
-    const { opts } = makeOpts();
-    mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    expect(btn.textContent!.toLowerCase()).toContain("off");
+  it("single triangle entirely above the plane → no segments", () => {
+    const tri: Triangle = {
+      a: [0, 0, 1],
+      b: [1, 0, 1],
+      c: [0, 1, 1],
+    };
+    // Plane z=0, all vertices above (dist > 0)
+    const plane: Plane = { normal: [0, 0, 1], offset: 0 };
+    const result = clipModelToSection([tri], plane);
+    expect(result).toHaveLength(0);
   });
 
-  it("first click changes mode to X", () => {
-    const { opts } = makeOpts();
-    mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click();
-    expect(btn.textContent).toContain("X");
+  it("single triangle straddling the plane → one segment", () => {
+    // Triangle: z goes from -1 to +1 — the plane z=0 cuts through it.
+    const tri: Triangle = {
+      a: [0, 0, -1],
+      b: [2, 0, -1],
+      c: [1, 0,  1],
+    };
+    const plane: Plane = { normal: [0, 0, 1], offset: 0 };
+    const segs = clipModelToSection([tri], plane);
+    expect(segs).toHaveLength(1);
+    const s = segs[0]!;
+    // Both endpoints should lie in the plane (z=0 → projected points lie at
+    // definite 2-D locations; we just verify the segment is non-degenerate).
+    const length = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+    expect(length).toBeGreaterThan(0.5);
   });
 
-  it("second click changes mode to Y", () => {
-    const { opts } = makeOpts();
-    mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); // off → X
-    btn.click(); // X → Y
-    expect(btn.textContent).toContain("Y");
+  it("unit box cut by midplane z=0.5 → segments forming the cross-section", () => {
+    // A box [0,1]×[0,1]×[0,1] cut at z=0.5.  The box has 12 triangles
+    // (6 faces × 2 tri each).  The four vertical faces (±X, ±Y sides) each
+    // contribute two triangles both of which are cut by the midplane,
+    // yielding 8 segments total.  The two horizontal faces (top/bottom)
+    // are parallel to the plane and not cut.
+    const box = makeBox(1, 1, 1);
+    const plane: Plane = { normal: [0, 0, 1], offset: 0.5 };
+    const segs = clipModelToSection(box, plane);
+
+    // 4 vertical faces × 2 triangles each = 8 segments.
+    expect(segs).toHaveLength(8);
+
+    // Every segment should have unit length (edge of the 1×1 square).
+    for (const s of segs) {
+      const l = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+      expect(l).toBeGreaterThan(0.4);
+      expect(l).toBeLessThanOrEqual(1.01);
+    }
+
+    // The collective 2-D bounding box of all segment endpoints should span
+    // [0,1]×[0,1] — confirming we captured the complete square cross-section.
+    const allX = segs.flatMap((s) => [s.x1, s.x2]);
+    const allY = segs.flatMap((s) => [s.y1, s.y2]);
+    expect(Math.max(...allX) - Math.min(...allX)).toBeCloseTo(1, 5);
+    expect(Math.max(...allY) - Math.min(...allY)).toBeCloseTo(1, 5);
   });
 
-  it("third click changes mode to Z", () => {
-    const { opts } = makeOpts();
-    mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); btn.click(); btn.click(); // off → X → Y → Z
-    expect(btn.textContent).toContain("Z");
+  it("2×3×4 box cut by y-midplane → rectangular cross-section spanning 2×4", () => {
+    const box = makeBox(2, 3, 4);
+    // Cut at y = 1.5 (midplane). 4 non-parallel faces × 2 tris = 8 segments.
+    const plane: Plane = { normal: [0, 1, 0], offset: 1.5 };
+    const segs = clipModelToSection(box, plane);
+    expect(segs).toHaveLength(8);
+    // The 2-D bounding box of the cross-section should span 2 (x-axis of box)
+    // × 4 (z-axis of box).
+    const allX = segs.flatMap((s) => [s.x1, s.x2]);
+    const allY = segs.flatMap((s) => [s.y1, s.y2]);
+    const spanX = Math.max(...allX) - Math.min(...allX);
+    const spanY = Math.max(...allY) - Math.min(...allY);
+    // One axis spans 2, the other spans 4.
+    const spans = [spanX, spanY].sort((a, b) => a - b);
+    expect(spans[0]).toBeCloseTo(2, 5);
+    expect(spans[1]).toBeCloseTo(4, 5);
   });
 
-  it("fourth click wraps back to off", () => {
-    const { opts } = makeOpts();
-    mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); btn.click(); btn.click(); btn.click(); // off→X→Y→Z→off
-    expect(btn.textContent!.toLowerCase()).toContain("off");
+  it("multiple sections produce independent results", () => {
+    const box = makeBox(1, 1, 1);
+
+    const planeA: Plane = { normal: [0, 0, 1], offset: 0.25 };
+    const planeB: Plane = { normal: [0, 0, 1], offset: 0.75 };
+
+    const segsA = clipModelToSection(box, planeA);
+    const segsB = clipModelToSection(box, planeB);
+
+    // Both planes cut a unit box through 4 vertical faces × 2 tris = 8 segs.
+    expect(segsA).toHaveLength(8);
+    expect(segsB).toHaveLength(8);
+
+    // The two results are computed independently — mutating one must not
+    // affect the other.
+    segsA[0]!.x1 = 999;
+    expect(segsB[0]!.x1).not.toBe(999);
   });
 
-  it("slider becomes visible when section is enabled", () => {
-    const { opts } = makeOpts();
-    mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    const slider = host.querySelector<HTMLInputElement>("#section-slider")!;
-    btn.click(); // enable X
-    expect(slider.hidden).toBe(false);
-  });
-
-  it("slider is hidden again when section is turned off", () => {
-    const { opts } = makeOpts();
-    mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    const slider = host.querySelector<HTMLInputElement>("#section-slider")!;
-    btn.click(); btn.click(); btn.click(); btn.click(); // full cycle → off
-    expect(slider.hidden).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
-
-describe("mountSectionView — getActivePlane()", () => {
-  let host: HTMLElement;
-  beforeEach(() => {
-    document.body.innerHTML = "";
-    host = makeHost();
-  });
-
-  it("returns null when section is off", () => {
-    const { opts } = makeOpts();
-    const sv = mountSectionView(host, opts);
-    expect(sv.getActivePlane()).toBeNull();
-  });
-
-  it("returns a plane with normal (1,0,0) for X mode", () => {
-    const { opts } = makeOpts();
-    const sv = mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); // → X
-    const plane = sv.getActivePlane();
-    expect(plane).not.toBeNull();
-    expect(plane!.normal.x).toBeCloseTo(1);
-    expect(plane!.normal.y).toBeCloseTo(0);
-    expect(plane!.normal.z).toBeCloseTo(0);
-  });
-
-  it("returns a plane with normal (0,1,0) for Y mode", () => {
-    const { opts } = makeOpts();
-    const sv = mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); btn.click(); // → Y
-    const plane = sv.getActivePlane();
-    expect(plane!.normal.y).toBeCloseTo(1);
-  });
-
-  it("returns a plane with normal (0,0,1) for Z mode", () => {
-    const { opts } = makeOpts();
-    const sv = mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); btn.click(); btn.click(); // → Z
-    const plane = sv.getActivePlane();
-    expect(plane!.normal.z).toBeCloseTo(1);
-  });
-
-  it("sets the clipping plane on the material when enabled", () => {
-    const { opts, material } = makeOpts();
-    const sv = mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); // → X
-    const plane = sv.getActivePlane();
-    expect(material.clippingPlanes).toContain(plane);
-  });
-
-  it("clears clipping planes from material when turned off", () => {
-    const { opts, material } = makeOpts();
-    const sv = mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); // → X
-    btn.click(); btn.click(); btn.click(); // → off
-    expect(material.clippingPlanes).toHaveLength(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-
-describe("mountSectionView — slider updates plane constant", () => {
-  let host: HTMLElement;
-  beforeEach(() => {
-    document.body.innerHTML = "";
-    host = makeHost();
-  });
-
-  it("slider value changes update the plane constant", () => {
-    const { opts } = makeOpts();
-    const sv = mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); // → X
-    const slider = host.querySelector<HTMLInputElement>("#section-slider")!;
-    // Set slider to a specific value and fire input event.
-    slider.value = "25";
-    slider.dispatchEvent(new Event("input"));
-    const plane = sv.getActivePlane();
-    expect(plane).not.toBeNull();
-    // constant should reflect the slider position (negated because THREE
-    // Plane uses -constant in the equation dot(n,x) + constant = 0).
-    expect(plane!.constant).toBeCloseTo(-25);
-  });
-
-  it("onChange is called when slider changes", () => {
-    const { opts, onChange } = makeOpts();
-    mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); // → X
-    const callsBefore = onChange.mock.calls.length;
-    const slider = host.querySelector<HTMLInputElement>("#section-slider")!;
-    slider.value = "10";
-    slider.dispatchEvent(new Event("input"));
-    expect(onChange.mock.calls.length).toBeGreaterThan(callsBefore);
-  });
-});
-
-// ---------------------------------------------------------------------------
-
-describe("mountSectionView — direction flip button", () => {
-  let host: HTMLElement;
-  beforeEach(() => {
-    document.body.innerHTML = "";
-    host = makeHost();
-  });
-
-  it("flip button negates the plane normal for X", () => {
-    const { opts } = makeOpts();
-    const sv = mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); // → X
-    const flipBtn = host.querySelector<HTMLButtonElement>("#section-flip")!;
-    flipBtn.click();
-    const plane = sv.getActivePlane()!;
-    expect(plane.normal.x).toBeCloseTo(-1);
-  });
-
-  it("flip button is visible when section is enabled", () => {
-    const { opts } = makeOpts();
-    mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); // → X
-    const flipBtn = host.querySelector<HTMLButtonElement>("#section-flip")!;
-    expect(flipBtn.hidden).toBe(false);
-  });
-
-  it("flipping twice restores original normal", () => {
-    const { opts } = makeOpts();
-    const sv = mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); // → X
-    const flipBtn = host.querySelector<HTMLButtonElement>("#section-flip")!;
-    flipBtn.click();
-    flipBtn.click();
-    expect(sv.getActivePlane()!.normal.x).toBeCloseTo(1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-
-describe("mountSectionView — refresh(aabb)", () => {
-  let host: HTMLElement;
-  beforeEach(() => {
-    document.body.innerHTML = "";
-    host = makeHost();
-  });
-
-  it("refresh(null) hides the slider even if section is enabled", () => {
-    const { opts } = makeOpts();
-    const sv = mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); // enable X
-    sv.refresh(null);
-    const slider = host.querySelector<HTMLInputElement>("#section-slider")!;
-    expect(slider.hidden).toBe(true);
-  });
-
-  it("refresh(aabb) shows the slider when section is on", () => {
-    const { opts } = makeOpts();
-    const sv = mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); // enable X
-    sv.refresh({ min: [-10, -5, -2], max: [10, 5, 2] });
-    const slider = host.querySelector<HTMLInputElement>("#section-slider")!;
-    expect(slider.hidden).toBe(false);
-  });
-
-  it("refresh(aabb) sets slider min/max to AABB range of active axis (X)", () => {
-    const { opts } = makeOpts();
-    const sv = mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); // → X
-    sv.refresh({ min: [-10, -5, -2], max: [10, 5, 2] });
-    const slider = host.querySelector<HTMLInputElement>("#section-slider")!;
-    expect(Number(slider.min)).toBeCloseTo(-10);
-    expect(Number(slider.max)).toBeCloseTo(10);
-  });
-
-  it("refresh(aabb) sets slider min/max to AABB range of active axis (Y)", () => {
-    const { opts } = makeOpts();
-    const sv = mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); btn.click(); // → Y
-    sv.refresh({ min: [-10, -5, -2], max: [10, 5, 2] });
-    const slider = host.querySelector<HTMLInputElement>("#section-slider")!;
-    expect(Number(slider.min)).toBeCloseTo(-5);
-    expect(Number(slider.max)).toBeCloseTo(5);
-  });
-
-  it("refresh(aabb) step is ~1% of range", () => {
-    const { opts } = makeOpts();
-    const sv = mountSectionView(host, opts);
-    const btn = host.querySelector<HTMLButtonElement>("#section-toggle")!;
-    btn.click(); // → X (range = 20)
-    sv.refresh({ min: [-10, 0, 0], max: [10, 0, 0] });
-    const slider = host.querySelector<HTMLInputElement>("#section-slider")!;
-    const step = Number(slider.step);
-    expect(step).toBeCloseTo(0.2, 1); // 1% of 20 = 0.2
-  });
-
-  it("refresh(null) keeps slider hidden when section is off", () => {
-    const { opts } = makeOpts();
-    const sv = mountSectionView(host, opts);
-    sv.refresh(null);
-    const slider = host.querySelector<HTMLInputElement>("#section-slider")!;
-    expect(slider.hidden).toBe(true);
+  it("non-axis-aligned normal is handled", () => {
+    // Diagonal plane: normal = [1,1,0]/√2, offset = 0 → cuts through origin.
+    const box = makeBox(2, 2, 2);
+    const plane: Plane = { normal: [1, 1, 0], offset: 2 }; // cuts diagonally
+    const segs = clipModelToSection(box, plane);
+    // We just check it produces segments without throwing.
+    expect(Array.isArray(segs)).toBe(true);
   });
 });

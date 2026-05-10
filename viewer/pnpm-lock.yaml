@@ -28,8 +28,8 @@ importers:
         specifier: ^5.4.10
         version: 5.4.21(@types/node@25.6.2)
       vitest:
-        specifier: ^2.1.9
-        version: 2.1.9(jsdom@25.0.1)
+        specifier: ^2.1.0
+        version: 2.1.9
 
 packages:
 
