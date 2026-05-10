@@ -1750,6 +1750,35 @@ fn curated_override(variant: &str) -> Option<serde_json::Map<String, serde_json:
             m.insert("segments".into(), json!(4));
             Some(m)
         }
+        "PetalCluster" => {
+            // petal_count>=2, segments>=3, petal_width<petal_length.
+            m.insert("petal_count".into(), json!(5_usize));
+            m.insert("petal_length".into(), num(3.0));
+            m.insert("petal_width".into(), num(1.0));
+            m.insert("segments".into(), json!(8_usize));
+            Some(m)
+        }
+        "HeartSolid" => {
+            // 2*lobe_radius <= total_height.
+            m.insert("lobe_radius".into(), num(1.0));
+            m.insert("total_height".into(), num(3.0));
+            m.insert("segments".into(), json!(12_usize));
+            Some(m)
+        }
+        "Whisker" => {
+            // length>0, wire_radius>0, segments>=3.
+            m.insert("length".into(), num(5.0));
+            m.insert("amplitude".into(), num(1.0));
+            m.insert("wire_radius".into(), num(0.15));
+            m.insert("segments".into(), json!(8_usize));
+            Some(m)
+        }
+        "CrossShape" => {
+            // arm_thickness < arm_length.
+            m.insert("arm_length".into(), num(6.0));
+            m.insert("arm_thickness".into(), num(1.5));
+            Some(m)
+        }
         _ => None,
     }
 }

@@ -150,6 +150,21 @@ const SLOW_VARIANTS: &[(&str, &str)] = &[
     // Batch 6 curved shapes — sphere-involving booleans can exceed 5s or trip stitch.
     ("Onion", "evaluation >5s — sphere hemisphere ∪ frustum collar ∪ cone spire"),
     ("Pear", "evaluation >5s — sphere ∪ frustum neck"),
+    // Slow-by-design — busts the 5s per-variant timeout.
+    ("DoubleHelix", "evaluation >5s — chained helical unions"),
+    ("TaperedCoil", "evaluation >5s — chained shrinking-radius helical unions"),
+    ("Mushroom", "evaluation >5s — sphere ∪ stem"),
+    ("Heart3D", "evaluation >5s — sphere ∪ sphere ∪ cone"),
+    ("PaperClipShape", "evaluation >5s — bent-wire chain"),
+    ("PulleyGroove", "evaluation >5s — V-groove cutter"),
+    ("CapsuleAt", "evaluation >5s — capsule with at-position"),
+    ("PaperLantern", "evaluation >5s — cylinder + 2 hemisphere caps"),
+    // Stitch trip on default sweep-with-twist parameters.
+    ("SweepWithTwist", "stitch: non-manifold on segment-1 union of twisted-profile sweep"),
+    // Batch 6 additions.
+    ("PetalCluster", "evaluation >5s — N anisotropic sphere unions"),
+    ("HeartSolid", "evaluation >5s — sphere ∪ sphere ∪ cone"),
+    ("Whisker", "evaluation >5s — chained cylinder S-curve chain"),
 ];
 
 /// Parse feature.rs once at the top of every test (cheap — feature.rs is ~3k
