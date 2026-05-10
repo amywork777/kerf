@@ -300,9 +300,10 @@ pub fn categorize(name: &str) -> Category {
             | "SweepPath"
             | "Coil"
             | "Spring"
-            | "SpinalLoft"
-            | "RailedSweep"
-            | "ScaledExtrude"
+            | "HelicalSweep"
+            | "AxisTaperedTube"
+            | "AxisTwistExtrude"
+            | "PolarRevolveLoft"
     ) {
         return Category::Sweeps;
     }
@@ -1613,31 +1614,28 @@ fn curated_override(variant: &str) -> Option<serde_json::Map<String, serde_json:
             m.insert("back_height".into(), num(12.0));
             Some(m)
         }
-        "TruncatedSphere" => {
-            m.insert("radius".into(), num(5.0));
-            m.insert("clip_z".into(), num(0.0)); // hemisphere by default
-            m.insert("segments".into(), json!(12));
+        "AxisTaperedTube" => {
+            m.insert("start_radius".into(), num(6.0));
+            m.insert("end_radius".into(), num(4.0));
+            m.insert("length".into(), num(10.0));
+            m.insert("axis".into(), serde_json::Value::String("z".into()));
+            m.insert("segments".into(), serde_json::json!(16));
+            m.insert("wall_thickness".into(), num(1.0));
             Some(m)
         }
-        "Lens2" => {
-            m.insert("radius".into(), num(5.0));
-            m.insert("thickness".into(), num(4.0));
-            m.insert("segments".into(), json!(12));
-            Some(m)
-        }
-        "Capsule2" => {
-            m.insert("radius".into(), num(3.0));
-            m.insert("length".into(), num(8.0));
-            m.insert("axis".into(), Value::String("z".into()));
-            m.insert("segments".into(), json!(12));
-            Some(m)
-        }
-        "OvoidShell" => {
-            m.insert("radius_min".into(), num(4.0));
-            m.insert("radius_max".into(), num(4.0));
-            m.insert("length".into(), num(8.0));
-            m.insert("thickness".into(), num(0.5));
-            m.insert("segments".into(), json!(12));
+        "PolarRevolveLoft" => {
+            // Vec<Profile2D> field needs a hand-crafted example.
+            // Four identical triangular sections arranged around a circle.
+            let tri = serde_json::json!({
+                "points": [[0.0, -1.0], [2.0, -1.0], [1.0, 1.0]]
+            });
+            m.insert(
+                "sections".into(),
+                serde_json::json!([tri, tri, tri, tri]),
+            );
+            m.insert("axis_radius".into(), num(6.0));
+            m.insert("axis".into(), serde_json::Value::String("z".into()));
+            m.insert("segments_around".into(), serde_json::json!(4));
             Some(m)
         }
         _ => None,

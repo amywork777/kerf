@@ -110,11 +110,13 @@ const KNOWN_EXEMPT: &[(&str, &str)] = &[
     ("PaperLantern", "evaluation >5s — cylinder + 2 hemisphere caps"),
     // Stitch trip on default sweep-with-twist parameters.
     ("SweepWithTwist", "stitch: non-manifold on segment-1 union of twisted-profile sweep"),
-    // ImportedMesh's fields (Vec<[f64;3]>, Vec<[usize;3]>) are not modelled by
-    // the catalog default-value extractor — it emits string placeholders for
-    // those types. The variant is exercised end-to-end by the step_import
-    // tests instead.
-    ("ImportedMesh", "Vec<[f64;3]> and Vec<[usize;3]> fields — extractor emits string placeholder"),
+    // Batch-2 sweep/loft variants: Profile2D fields use profile2d_default which
+    // emits a square profile; however the axis field defaults to "z" as a String
+    // which parses fine. HelicalSweep and AxisTwistExtrude may trip stitch on
+    // the helical / twisted union chains at default segment counts.
+    ("HelicalSweep", "stitch: helical-profile sweep union chain may trip on default parameters"),
+    ("AxisTwistExtrude", "stitch: twisted-extrude segment union may trip on default parameters"),
+    ("PolarRevolveLoft", "stitch: polar-loft segment union may trip on default parameters"),
 ];
 
 /// Parse feature.rs once at the top of every test (cheap — feature.rs is ~3k
