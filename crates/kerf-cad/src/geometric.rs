@@ -116,6 +116,45 @@ pub enum GeometricConstraint {
     FixedFace {
         face: FaceRef,
     },
+
+    // -----------------------------------------------------------------------
+    // Batch 4 — five new constraint types
+    // -----------------------------------------------------------------------
+
+    /// Two cylindrical (or cylinder-like) features must have equal radii.
+    /// Radius is extracted from the feature's bounding-box half-extent
+    /// perpendicular to the axis. Adjusts `adjust`.
+    EqualRadius {
+        axis_a: GeoAxisRef,
+        axis_b: GeoAxisRef,
+        adjust: String,
+    },
+    /// Two edges must be parallel: |dir_a · dir_b| = 1. Adjusts `adjust`.
+    ParallelEdges {
+        edge_a: EdgeRef,
+        edge_b: EdgeRef,
+        adjust: String,
+    },
+    /// Two edges must be perpendicular: |dir_a · dir_b| = 0. Adjusts `adjust`.
+    PerpendicularEdges {
+        edge_a: EdgeRef,
+        edge_b: EdgeRef,
+        adjust: String,
+    },
+    /// The signed distance from an edge's midpoint to a face's plane must equal
+    /// `distance`. Adjusts `adjust`.
+    DistanceEdgeFace {
+        edge: EdgeRef,
+        face: FaceRef,
+        distance: f64,
+        adjust: String,
+    },
+    /// Two points must coincide: |point_a − point_b| = 0. Adjusts `adjust`.
+    PointCoincident {
+        point_a: PointRef,
+        point_b: PointRef,
+        adjust: String,
+    },
 }
 
 /// Reference to a named face on a feature.
@@ -684,6 +723,93 @@ fn residual_distance_faces(f_a: &FaceGeo, f_b: &FaceGeo, target: f64) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
+// Batch 4 helpers and residuals
+// ---------------------------------------------------------------------------
+
+/// Returns the bounding-box radius for a feature referenced by an axis role.
+/// For a cylinder the natural radius is the cylinder's radius parameter.
+/// For a box the radius is taken as max(ex, ey) / 2 (widest half-extent in x/y).
+fn resolve_axis_radius(
+    feature: &Feature,
+    _role: &str,
+    params: &HashMap<String, f64>,
+) -> Result<f64, ConstraintError> {
+    let feat_id = feature.id().to_string();
+    match feature {
+        Feature::Cylinder { radius, .. } => {
+            radius.resolve(params).map_err(|_| ConstraintError::Unsupported {
+                feature: feat_id,
+                role: _role.to_string(),
+            })
+        }
+        Feature::Box { extents, .. } => {
+            let e = resolve_arr(extents, params).map_err(|_| ConstraintError::Unsupported {
+                feature: feat_id.clone(),
+                role: _role.to_string(),
+            })?;
+            Ok(f64::max(e[0], e[1]) / 2.0)
+        }
+        Feature::BoxAt { extents, .. } => {
+            let e = resolve_arr(extents, params).map_err(|_| ConstraintError::Unsupported {
+                feature: feat_id.clone(),
+                role: _role.to_string(),
+            })?;
+            Ok(f64::max(e[0], e[1]) / 2.0)
+        }
+        _ => Err(ConstraintError::Unsupported { feature: feat_id, role: _role.to_string() }),
+    }
+}
+
+/// Returns the unit direction vector for an edge given its role.
+fn edge_direction(role: &str, feat_id: &str) -> Result<[f64; 3], ConstraintError> {
+    match role {
+        "x" => Ok([1.0, 0.0, 0.0]),
+        "y" => Ok([0.0, 1.0, 0.0]),
+        "z" => Ok([0.0, 0.0, 1.0]),
+        _ => Err(ConstraintError::Unsupported {
+            feature: feat_id.to_string(),
+            role: role.to_string(),
+        }),
+    }
+}
+
+/// EqualRadius residual: |radius_a − radius_b|.
+fn residual_equal_radius(r_a: f64, r_b: f64) -> f64 {
+    (r_a - r_b).abs()
+}
+
+/// ParallelEdges residual: 1 − |dir_a · dir_b|. Zero when parallel.
+fn residual_parallel_edges(dir_a: [f64; 3], dir_b: [f64; 3]) -> f64 {
+    let da = normalize(dir_a);
+    let db = normalize(dir_b);
+    1.0 - dot(da, db).abs()
+}
+
+/// PerpendicularEdges residual: |dir_a · dir_b|. Zero when perpendicular.
+fn residual_perpendicular_edges(dir_a: [f64; 3], dir_b: [f64; 3]) -> f64 {
+    let da = normalize(dir_a);
+    let db = normalize(dir_b);
+    dot(da, db).abs()
+}
+
+/// DistanceEdgeFace residual: |signed_distance(edge_midpoint, plane(face)) − target|.
+fn residual_distance_edge_face(midpoint: [f64; 3], face: &FaceGeo, target: f64) -> f64 {
+    let n = normalize(face.normal);
+    let diff = [
+        midpoint[0] - face.point[0],
+        midpoint[1] - face.point[1],
+        midpoint[2] - face.point[2],
+    ];
+    let signed_dist = dot(diff, n);
+    (signed_dist - target).abs()
+}
+
+/// PointCoincident residual: Euclidean distance |point_a − point_b|.
+fn residual_point_coincident(pa: [f64; 3], pb: [f64; 3]) -> f64 {
+    vec_len([pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2]])
+}
+
+// ---------------------------------------------------------------------------
 // Tangent-face radius helper
 // ---------------------------------------------------------------------------
 
@@ -910,6 +1036,66 @@ fn eval_residual(
                 .ok_or_else(|| ConstraintError::UnknownFeature(face.feature_id.clone()))?;
             Ok(0.0)
         }
+
+        // -----------------------------------------------------------------------
+        // Batch 4 variants
+        // -----------------------------------------------------------------------
+        GeometricConstraint::EqualRadius { axis_a, axis_b, .. } => {
+            let feat_a = model
+                .feature(&axis_a.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(axis_a.feature_id.clone()))?;
+            let feat_b = model
+                .feature(&axis_b.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(axis_b.feature_id.clone()))?;
+            let r_a = resolve_axis_radius(feat_a, &axis_a.role, params)?;
+            let r_b = resolve_axis_radius(feat_b, &axis_b.role, params)?;
+            Ok(residual_equal_radius(r_a, r_b))
+        }
+        GeometricConstraint::ParallelEdges { edge_a, edge_b, .. } => {
+            // Validate features exist.
+            model
+                .feature(&edge_a.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(edge_a.feature_id.clone()))?;
+            model
+                .feature(&edge_b.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(edge_b.feature_id.clone()))?;
+            let dir_a = edge_direction(&edge_a.role, &edge_a.feature_id)?;
+            let dir_b = edge_direction(&edge_b.role, &edge_b.feature_id)?;
+            Ok(residual_parallel_edges(dir_a, dir_b))
+        }
+        GeometricConstraint::PerpendicularEdges { edge_a, edge_b, .. } => {
+            model
+                .feature(&edge_a.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(edge_a.feature_id.clone()))?;
+            model
+                .feature(&edge_b.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(edge_b.feature_id.clone()))?;
+            let dir_a = edge_direction(&edge_a.role, &edge_a.feature_id)?;
+            let dir_b = edge_direction(&edge_b.role, &edge_b.feature_id)?;
+            Ok(residual_perpendicular_edges(dir_a, dir_b))
+        }
+        GeometricConstraint::DistanceEdgeFace { edge, face, distance, .. } => {
+            let feat_edge = model
+                .feature(&edge.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(edge.feature_id.clone()))?;
+            let feat_face = model
+                .feature(&face.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(face.feature_id.clone()))?;
+            let midpt = resolve_edge_midpoint(feat_edge, &edge.role, params)?;
+            let f = resolve_face(feat_face, &face.role, params)?;
+            Ok(residual_distance_edge_face(midpt, &f, *distance))
+        }
+        GeometricConstraint::PointCoincident { point_a, point_b, .. } => {
+            let feat_a = model
+                .feature(&point_a.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(point_a.feature_id.clone()))?;
+            let feat_b = model
+                .feature(&point_b.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(point_b.feature_id.clone()))?;
+            let pa = resolve_point(feat_a, &point_a.role, params)?;
+            let pb = resolve_point(feat_b, &point_b.role, params)?;
+            Ok(residual_point_coincident(pa, pb))
+        }
     }
 }
 
@@ -930,6 +1116,12 @@ fn adjust_param_name(c: &GeometricConstraint) -> Option<&str> {
         GeometricConstraint::SymmetricAcrossPlane { adjust, .. } => Some(adjust),
         // FixedFace has no adjust parameter — the solver skips it.
         GeometricConstraint::FixedFace { .. } => None,
+        // Batch 4
+        GeometricConstraint::EqualRadius { adjust, .. } => Some(adjust),
+        GeometricConstraint::ParallelEdges { adjust, .. } => Some(adjust),
+        GeometricConstraint::PerpendicularEdges { adjust, .. } => Some(adjust),
+        GeometricConstraint::DistanceEdgeFace { adjust, .. } => Some(adjust),
+        GeometricConstraint::PointCoincident { adjust, .. } => Some(adjust),
     }
 }
 
@@ -1952,6 +2144,303 @@ mod tests {
         assert_eq!(restored.geometric_constraints.len(), 5, "wrong number of constraints after round-trip");
         for (orig, rest) in model.geometric_constraints.iter().zip(restored.geometric_constraints.iter()) {
             assert_eq!(orig, rest, "constraint did not survive round-trip: {orig:?}");
+        }
+    }
+
+    // =======================================================================
+    // Batch 4 tests — EqualRadius, ParallelEdges, PerpendicularEdges,
+    //                  DistanceEdgeFace, PointCoincident + JSON round-trip.
+    // =======================================================================
+
+    // -----------------------------------------------------------------------
+    // Test 22: EqualRadius — two cylinders with mismatched radii.
+    // cyl1 radius = param("r1") = 3.0, cyl2 radius = 5.0.
+    // Residual = |r1 - 5|. Solver adjusts r1 → 5.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn equal_radius_solver_adjusts_radius() {
+        let model = Model::new()
+            .with_parameter("r1", 3.0)
+            .add(Feature::Cylinder {
+                id: "cyl1".into(),
+                radius: param("r1"),
+                height: lit(10.0),
+                segments: 32,
+            })
+            .add(Feature::Cylinder {
+                id: "cyl2".into(),
+                radius: lit(5.0),
+                height: lit(8.0),
+                segments: 32,
+            });
+
+        let constraint = GeometricConstraint::EqualRadius {
+            axis_a: GeoAxisRef { feature_id: "cyl1".into(), role: "axis".into() },
+            axis_b: GeoAxisRef { feature_id: "cyl2".into(), role: "axis".into() },
+            adjust: "r1".into(),
+        };
+
+        let mut params = model.parameters.clone();
+        let r_before = eval_residual(&constraint, &model, &params).unwrap();
+        assert!((r_before - 2.0).abs() < 1e-10, "initial residual should be |3-5|=2, got {r_before}");
+
+        solve_constraints(&model, &[constraint], &mut params).unwrap();
+        assert!(
+            (params["r1"] - 5.0).abs() < 1e-5,
+            "expected r1≈5.0 after EqualRadius solve, got {}",
+            params["r1"]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 23: ParallelEdges — two edges already parallel → residual 0.
+    // x-edge and x-edge: dir_a=dir_b=[1,0,0] → |dot|=1 → residual=0.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn parallel_edges_same_dir_trivially_satisfied() {
+        let model = Model::new()
+            .with_parameter("w", 4.0)
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [param("w"), lit(2.0), lit(2.0)],
+            })
+            .add(Feature::Box {
+                id: "box2".into(),
+                extents: [lit(3.0), lit(3.0), lit(3.0)],
+            });
+
+        // x-edge || x-edge → already parallel → residual=0
+        let constraint = GeometricConstraint::ParallelEdges {
+            edge_a: EdgeRef { feature_id: "box1".into(), role: "x".into() },
+            edge_b: EdgeRef { feature_id: "box2".into(), role: "x".into() },
+            adjust: "w".into(),
+        };
+
+        let mut params = model.parameters.clone();
+        let r = eval_residual(&constraint, &model, &params).unwrap();
+        assert!(r < TOL, "x||x should be trivially parallel, residual={r}");
+
+        let before = params["w"];
+        solve_constraints(&model, &[constraint], &mut params).unwrap();
+        assert!((params["w"] - before).abs() < 1e-12, "w should not change");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 24: ParallelEdges — x-edge vs y-edge: not parallel.
+    // dir_a=[1,0,0], dir_b=[0,1,0] → |dot|=0 → residual=1.
+    // Adjusting w does not change axis directions → zero gradient → Unsatisfiable.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn parallel_edges_perpendicular_dirs_unsatisfiable() {
+        let model = Model::new()
+            .with_parameter("w", 2.0)
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [param("w"), lit(2.0), lit(2.0)],
+            })
+            .add(Feature::Box {
+                id: "box2".into(),
+                extents: [lit(3.0), lit(3.0), lit(3.0)],
+            });
+
+        let constraint = GeometricConstraint::ParallelEdges {
+            edge_a: EdgeRef { feature_id: "box1".into(), role: "x".into() },
+            edge_b: EdgeRef { feature_id: "box2".into(), role: "y".into() },
+            adjust: "w".into(),
+        };
+
+        let mut params = model.parameters.clone();
+        // Axis directions are fixed constants → zero gradient → Unsatisfiable
+        let result = solve_constraints(&model, &[constraint], &mut params);
+        assert!(
+            matches!(result, Err(ConstraintError::Unsatisfiable(_))),
+            "expected Unsatisfiable for non-parallel fixed dirs, got {result:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 25: PerpendicularEdges — x-edge and y-edge are already perpendicular.
+    // dot([1,0,0],[0,1,0])=0 → residual=0.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn perpendicular_edges_x_y_trivially_satisfied() {
+        let model = Model::new()
+            .with_parameter("h", 5.0)
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [lit(2.0), lit(3.0), param("h")],
+            })
+            .add(Feature::Box {
+                id: "box2".into(),
+                extents: [lit(3.0), lit(3.0), lit(3.0)],
+            });
+
+        let constraint = GeometricConstraint::PerpendicularEdges {
+            edge_a: EdgeRef { feature_id: "box1".into(), role: "x".into() },
+            edge_b: EdgeRef { feature_id: "box2".into(), role: "y".into() },
+            adjust: "h".into(),
+        };
+
+        let mut params = model.parameters.clone();
+        let r = eval_residual(&constraint, &model, &params).unwrap();
+        assert!(r < TOL, "x⊥y should be trivially perpendicular, residual={r}");
+
+        let before = params["h"];
+        solve_constraints(&model, &[constraint], &mut params).unwrap();
+        assert!((params["h"] - before).abs() < 1e-12, "h should not change");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 26: DistanceEdgeFace — maintain 5mm distance from edge midpoint to face.
+    // box1: Box (2,2,box_h). edge midpoint = center = (1, 1, box_h/2).
+    // box2.top: BoxAt (0,0,0) extents (4,4,8). top face: point=(2,2,8), normal=[0,0,1].
+    // signed_dist = dot((1-2, 1-2, box_h/2-8), [0,0,1]) = box_h/2 - 8.
+    // Want box_h/2 - 8 = 5 → box_h = 26. Start at box_h = 4.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn distance_edge_face_5mm_gap_maintained() {
+        let model = Model::new()
+            .with_parameter("box_h", 4.0)
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [lit(2.0), lit(2.0), param("box_h")],
+            })
+            .add(Feature::Box {
+                id: "box2".into(),
+                extents: [lit(4.0), lit(4.0), lit(8.0)],
+            });
+
+        // box1 x-edge midpoint = center = (1, 1, box_h/2).
+        // box2.top face: point=(2,2,8), normal=[0,0,1].
+        // signed_dist = box_h/2 - 8. Target = 5 → box_h = 26.
+        let constraint = GeometricConstraint::DistanceEdgeFace {
+            edge: EdgeRef { feature_id: "box1".into(), role: "x".into() },
+            face: FaceRef { feature_id: "box2".into(), role: "top".into() },
+            distance: 5.0,
+            adjust: "box_h".into(),
+        };
+
+        let mut params = model.parameters.clone();
+        solve_constraints(&model, &[constraint], &mut params).unwrap();
+        assert!(
+            (params["box_h"] - 26.0).abs() < 1e-4,
+            "expected box_h≈26.0 for 5mm DistanceEdgeFace, got {}",
+            params["box_h"]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 27: PointCoincident — two box corners (max points) coincide.
+    // box1: Box (2,2,box_h). max point = (2, 2, box_h).
+    // box2: Box (4,4,7). max point = (4, 4, 7).
+    // Residual = |(2,2,box_h) - (4,4,7)| = sqrt(4+4+(box_h-7)^2).
+    // Minimum at box_h=7 but dx=dy=2 remain. The solver drives the z-component
+    // to zero (box_h→7) since that's the only param-sensitive part, but
+    // x/y residual = sqrt(8) ≠ 0 — the solver won't converge.
+    //
+    // Better: use "center" points that share the same x/y.
+    // box1: Box (2,2,box_h). center = (1, 1, box_h/2).
+    // box2: BoxAt (0,0,10) extents (2,2,2). center = (1, 1, 11).
+    // Residual = |(1,1,box_h/2) - (1,1,11)| = |box_h/2 - 11|.
+    // Solver → box_h = 22.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn point_coincident_solver_aligns_centers() {
+        let model = Model::new()
+            .with_parameter("box_h", 6.0)
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [lit(2.0), lit(2.0), param("box_h")],
+            })
+            .add(Feature::BoxAt {
+                id: "box2".into(),
+                extents: [lit(2.0), lit(2.0), lit(2.0)],
+                origin: [lit(0.0), lit(0.0), lit(10.0)],
+            });
+
+        // box1.center = (1,1,box_h/2). box2.center = (1,1,11).
+        // Residual = |box_h/2 - 11|. Solver → box_h = 22.
+        let constraint = GeometricConstraint::PointCoincident {
+            point_a: PointRef { feature_id: "box1".into(), role: "center".into() },
+            point_b: PointRef { feature_id: "box2".into(), role: "center".into() },
+            adjust: "box_h".into(),
+        };
+
+        let mut params = model.parameters.clone();
+        solve_constraints(&model, &[constraint], &mut params).unwrap();
+        assert!(
+            (params["box_h"] - 22.0).abs() < 1e-4,
+            "expected box_h≈22.0 for PointCoincident, got {}",
+            params["box_h"]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 28: Round-trip JSON for all 5 batch-4 constraint kinds.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn batch4_constraints_json_round_trip() {
+        let mut model = Model::new()
+            .with_parameter("r", 3.0)
+            .add(Feature::Cylinder {
+                id: "cyl1".into(),
+                radius: param("r"),
+                height: lit(5.0),
+                segments: 16,
+            })
+            .add(Feature::Cylinder {
+                id: "cyl2".into(),
+                radius: lit(5.0),
+                height: lit(5.0),
+                segments: 16,
+            })
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [lit(2.0), lit(2.0), lit(2.0)],
+            })
+            .add(Feature::Box {
+                id: "box2".into(),
+                extents: [lit(4.0), lit(4.0), lit(6.0)],
+            });
+
+        model.geometric_constraints = vec![
+            GeometricConstraint::EqualRadius {
+                axis_a: GeoAxisRef { feature_id: "cyl1".into(), role: "axis".into() },
+                axis_b: GeoAxisRef { feature_id: "cyl2".into(), role: "axis".into() },
+                adjust: "r".into(),
+            },
+            GeometricConstraint::ParallelEdges {
+                edge_a: EdgeRef { feature_id: "box1".into(), role: "x".into() },
+                edge_b: EdgeRef { feature_id: "box2".into(), role: "x".into() },
+                adjust: "r".into(),
+            },
+            GeometricConstraint::PerpendicularEdges {
+                edge_a: EdgeRef { feature_id: "box1".into(), role: "x".into() },
+                edge_b: EdgeRef { feature_id: "box2".into(), role: "y".into() },
+                adjust: "r".into(),
+            },
+            GeometricConstraint::DistanceEdgeFace {
+                edge: EdgeRef { feature_id: "box1".into(), role: "z".into() },
+                face: FaceRef { feature_id: "box2".into(), role: "top".into() },
+                distance: 5.0,
+                adjust: "r".into(),
+            },
+            GeometricConstraint::PointCoincident {
+                point_a: PointRef { feature_id: "box1".into(), role: "center".into() },
+                point_b: PointRef { feature_id: "box2".into(), role: "center".into() },
+                adjust: "r".into(),
+            },
+        ];
+
+        let json = model.to_json_string().unwrap();
+        for kind in &["EqualRadius", "ParallelEdges", "PerpendicularEdges", "DistanceEdgeFace", "PointCoincident"] {
+            assert!(json.contains(kind), "JSON missing constraint kind: {kind}");
+        }
+
+        let restored = Model::from_json_str(&json).unwrap();
+        assert_eq!(restored.geometric_constraints.len(), 5, "wrong count after round-trip");
+        for (orig, rest) in model.geometric_constraints.iter().zip(restored.geometric_constraints.iter()) {
+            assert_eq!(orig, rest, "constraint did not survive JSON round-trip: {orig:?}");
         }
     }
 }
