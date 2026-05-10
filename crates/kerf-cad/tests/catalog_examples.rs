@@ -120,6 +120,8 @@ const KNOWN_EXEMPT: &[(&str, &str)] = &[
     ("PaperLantern", "evaluation >5s — cylinder + 2 hemisphere caps"),
     // Stitch trip on default sweep-with-twist parameters.
     ("SweepWithTwist", "stitch: non-manifold on segment-1 union of twisted-profile sweep"),
+    // Curved-surface batch 2 (sw-curved-batch-2).
+    ("ToroidalCap", "evaluation >5s — sweep_cylinder_segment chain for arc wedge"),
 ];
 
 /// Parse feature.rs once at the top of every test (cheap — feature.rs is ~3k

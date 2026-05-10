@@ -975,6 +975,38 @@ fn curated_override(variant: &str) -> Option<serde_json::Map<String, serde_json:
             m.insert("minor_segs".into(), json!(8));
             Some(m)
         }
+        "Donut2" => {
+            m.insert("major_radius".into(), num(5.0));
+            m.insert("minor_radius".into(), num(1.0));
+            m.insert("major_segs".into(), json!(24));
+            m.insert("minor_segs".into(), json!(12));
+            Some(m)
+        }
+        "ToroidalCap" => {
+            m.insert("major_radius".into(), num(5.0));
+            m.insert("minor_radius".into(), num(1.0));
+            m.insert("sweep_degrees".into(), num(180.0));
+            m.insert("major_segs".into(), json!(12));
+            m.insert("minor_segs".into(), json!(8));
+            Some(m)
+        }
+        "EllipticTube" => {
+            m.insert("semi_major".into(), num(4.0));
+            m.insert("semi_minor".into(), num(2.0));
+            m.insert("length".into(), num(10.0));
+            m.insert("axis".into(), Value::String("z".into()));
+            m.insert("segments".into(), json!(16));
+            Some(m)
+        }
+        "Goblet2" => {
+            m.insert("foot_radius".into(), num(4.0));
+            m.insert("stem_radius".into(), num(1.0));
+            m.insert("stem_height".into(), num(6.0));
+            m.insert("cup_radius".into(), num(3.0));
+            m.insert("cup_height".into(), num(4.0));
+            m.insert("segments".into(), json!(16));
+            Some(m)
+        }
         "Frustum" => {
             m.insert("top_radius".into(), num(3.0));
             m.insert("bottom_radius".into(), num(5.0));

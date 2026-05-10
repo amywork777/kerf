@@ -73,6 +73,57 @@ pub enum Feature {
         major_segs: usize,
         minor_segs: usize,
     },
+    /// Donut2: refined torus shape that preserves the exact analytic ring
+    /// geometry (vertex positions satisfy the torus equation exactly).
+    /// Unlike `Donut`, which uses best-fit planar quads, `Donut2` tags faces
+    /// with `SurfaceKind::Torus` so the analytic boolean path can exploit the
+    /// exact surface equation when available. Centered on the origin, axis
+    /// along +z. `major_radius` must exceed `minor_radius`.
+    Donut2 {
+        id: String,
+        major_radius: Scalar,
+        minor_radius: Scalar,
+        major_segs: usize,
+        minor_segs: usize,
+    },
+    /// ToroidalCap: a wedge of a torus — like `Donut` sliced by two half-
+    /// spaces to keep only `sweep_degrees` (0 < sweep ≤ 360) of the full
+    /// toroidal sweep. At 360° it is identical to `Donut`. At 180° it is a
+    /// half-torus (D-shaped cross-section in the xy plane). Centered on the
+    /// origin with the sweep starting at θ = 0 and going counter-clockwise.
+    ToroidalCap {
+        id: String,
+        major_radius: Scalar,
+        minor_radius: Scalar,
+        sweep_degrees: Scalar,
+        major_segs: usize,
+        minor_segs: usize,
+    },
+    /// EllipticTube: a solid tube whose cross-section is an ellipse with
+    /// semi-axes `semi_major` (along x by default) and `semi_minor` (along
+    /// y). The tube extends `length` units along the named `axis` ("x", "y",
+    /// or "z"). Built by scaling a faceted cylinder non-uniformly.
+    EllipticTube {
+        id: String,
+        semi_major: Scalar,
+        semi_minor: Scalar,
+        length: Scalar,
+        axis: String,
+        segments: usize,
+    },
+    /// Goblet2: chalice/wine-glass shape (revolved profile: flat disk foot +
+    /// narrow cylindrical stem + flared cup). Distinct from `Goblet` (which
+    /// has a frustum bowl) — `Goblet2` uses a cylindrical cup rim so the
+    /// silhouette is a classic straight-sided chalice.
+    Goblet2 {
+        id: String,
+        foot_radius: Scalar,
+        stem_radius: Scalar,
+        stem_height: Scalar,
+        cup_radius: Scalar,
+        cup_height: Scalar,
+        segments: usize,
+    },
     Cone {
         id: String,
         radius: Scalar,
@@ -3837,6 +3888,10 @@ impl Feature {
             | Feature::Sphere { id, .. }
             | Feature::Torus { id, .. }
             | Feature::Donut { id, .. }
+            | Feature::Donut2 { id, .. }
+            | Feature::ToroidalCap { id, .. }
+            | Feature::EllipticTube { id, .. }
+            | Feature::Goblet2 { id, .. }
             | Feature::Cone { id, .. }
             | Feature::Frustum { id, .. }
             | Feature::ExtrudePolygon { id, .. }
@@ -4157,6 +4212,10 @@ impl Feature {
             | Feature::Sphere { .. }
             | Feature::Torus { .. }
             | Feature::Donut { .. }
+            | Feature::Donut2 { .. }
+            | Feature::ToroidalCap { .. }
+            | Feature::EllipticTube { .. }
+            | Feature::Goblet2 { .. }
             | Feature::Cone { .. }
             | Feature::Frustum { .. }
             | Feature::ExtrudePolygon { .. }
