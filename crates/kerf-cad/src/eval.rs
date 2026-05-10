@@ -10265,200 +10265,249 @@ fn build(
             Ok(acc)
         }
 
-        Feature::PaperLanternStrips { axis_radius, minor_radius, strip_count, strip_width_deg, segments, .. } => {
-            let ar = resolve_one(id, axis_radius, params)?;
-            let mnr = resolve_one(id, minor_radius, params)?;
-            let swd = resolve_one(id, strip_width_deg, params)?;
-            let sc = *strip_count;
-            let segs = *segments;
-            if ar <= 0.0 || mnr <= 0.0 || sc < 1 || segs < 6 || swd <= 0.0 || swd >= 360.0 {
+        // ---------------------------------------------------------------
+        // Curved-surface batch 4
+        // ---------------------------------------------------------------
+
+        Feature::Bagel { major_radius, minor_radius, dome_height, segments, .. } => {
+            let r_maj = resolve_one(id, major_radius, params)?;
+            let r_min = resolve_one(id, minor_radius, params)?;
+            let dh = resolve_one(id, dome_height, params)?;
+            if r_maj <= r_min || r_min <= 0.0 {
                 return Err(EvalError::Invalid {
                     id: id.into(),
-                    reason: format!("PaperLanternStrips requires positive dims, strip_count>=1, 0<swd<360 (got ar={ar}, mnr={mnr}, sc={sc})"),
+                    reason: format!(
+                        "Bagel requires major > minor > 0 (got major={r_maj}, minor={r_min})"
+                    ),
                 });
             }
-            // Each strip: a cylinder of radius mnr and height 2*ar, placed at
-            // distance ar from the z-axis. Strip radius represents the strip
-            // width: r_strip = ar * sin(swd/2 * pi/180).  We use mnr directly
-            // as the cross-section tube radius (simpler, matches spec intent).
-            // Strip height is 2*ar so it spans the lantern body.
-            let strip_h = 2.0 * ar;
-            // Strips arranged equally around the z-axis. Each strip cylinder
-            // axis is parallel to z, centred at (ar*cos(theta), ar*sin(theta)).
-            let mut acc_opt: Option<Solid> = None;
-            for i in 0..sc {
-                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (sc as f64);
-                let cx = ar * theta.cos();
-                let cy = ar * theta.sin();
-                let strip = cylinder_along_axis(mnr, strip_h, segs, 2, -ar, cx, cy);
-                acc_opt = Some(match acc_opt {
-                    None => strip,
-                    Some(prev) => prev.try_union(&strip).map_err(|e| EvalError::Boolean {
-                        id: id.into(), op: "lanternstrips_union", message: e.message,
-                    })?,
-                });
-            }
-            Ok(acc_opt.unwrap())
-        }
-
-        Feature::Trefoil { scale, tube_radius, segments_along, segments_around, .. } => {
-            let sc = resolve_one(id, scale, params)?;
-            let tr = resolve_one(id, tube_radius, params)?;
-            let na = *segments_along;
-            let nr = *segments_around;
-            if sc <= 0.0 || tr <= 0.0 || na < 6 || nr < 4 {
+            if dh <= 0.0 || dh > r_min {
                 return Err(EvalError::Invalid {
                     id: id.into(),
-                    reason: format!("Trefoil requires positive dims, segments_along>=6, segments_around>=4 (got sc={sc}, tr={tr}, na={na})"),
+                    reason: format!(
+                        "Bagel dome_height must be in (0, minor_radius] (got {dh}, minor={r_min})"
+                    ),
                 });
             }
-            // Parametric trefoil knot: t in [0, 2π)
-            // x = (sin(t) + 2 sin(2t)) * scale
-            // y = (cos(t) - 2 cos(2t)) * scale
-            // z = -sin(3t) * scale
-            // Build tube by sweeping cylinders along path segments.
-            use std::f64::consts::PI;
-            let pts: Vec<[f64; 3]> = (0..=na).map(|i| {
-                let t = 2.0 * PI * (i as f64) / (na as f64);
-                [
-                    (t.sin() + 2.0 * (2.0 * t).sin()) * sc,
-                    (t.cos() - 2.0 * (2.0 * t).cos()) * sc,
-                    -(3.0 * t).sin() * sc,
-                ]
-            }).collect();
-            // Sweep: union of short cylinders between consecutive path points.
-            // Each segment: cylinder from pts[i] to pts[i+1].
-            // We orient the cylinder by rotating +z to the segment direction.
-            let n_segs = na; // pts has na+1 entries (0..=na), last == first for closed loop
-            let mut acc_opt: Option<Solid> = None;
-            for i in 0..n_segs {
-                let p0 = pts[i];
-                let p1 = pts[i + 1];
-                let dx = p1[0] - p0[0];
-                let dy = p1[1] - p0[1];
-                let dz = p1[2] - p0[2];
-                let seg_len = (dx*dx + dy*dy + dz*dz).sqrt();
-                if seg_len < 1e-12 { continue; }
-                // Build a cylinder of length seg_len along +z, then rotate to direction.
-                let seg_cyl = cylinder_faceted(tr, seg_len, nr);
-                // Rotation: align +z with (dx,dy,dz)/seg_len.
-                let dir = Vec3::new(dx / seg_len, dy / seg_len, dz / seg_len);
-                let z_axis = Vec3::new(0.0, 0.0, 1.0);
-                let cross = Vec3::new(
-                    z_axis.y * dir.z - z_axis.z * dir.y,
-                    z_axis.z * dir.x - z_axis.x * dir.z,
-                    z_axis.x * dir.y - z_axis.y * dir.x,
-                );
-                let cross_len = (cross.x*cross.x + cross.y*cross.y + cross.z*cross.z).sqrt();
-                let seg_oriented = if cross_len < 1e-9 {
-                    // already aligned or anti-aligned
-                    if dir.z < 0.0 {
-                        rotate_solid(&seg_cyl, Vec3::new(1.0, 0.0, 0.0), std::f64::consts::PI, Point3::new(0.0, 0.0, 0.0))
-                    } else {
-                        seg_cyl
-                    }
-                } else {
-                    let axis = Vec3::new(cross.x / cross_len, cross.y / cross_len, cross.z / cross_len);
-                    let dot = z_axis.x * dir.x + z_axis.y * dir.y + z_axis.z * dir.z;
-                    let angle = dot.acos();
-                    rotate_solid(&seg_cyl, axis, angle, Point3::new(0.0, 0.0, 0.0))
-                };
-                // Translate to p0.
-                let seg_t = translate_solid(&seg_oriented, Vec3::new(p0[0], p0[1], p0[2]));
-                acc_opt = Some(match acc_opt {
-                    None => seg_t,
-                    Some(prev) => {
-                        match prev.try_union(&seg_t) {
-                            Ok(u) => u,
-                            Err(_) => prev, // tolerate stitch failures on curved path
-                        }
-                    }
-                });
-            }
-            match acc_opt {
-                Some(s) => Ok(s),
-                None => Err(EvalError::Invalid { id: id.into(), reason: "Trefoil produced no segments".into() }),
-            }
-        }
-
-        Feature::DishCap { radius, depth, rim_width, segments, .. } => {
-            let r = resolve_one(id, radius, params)?;
-            let d = resolve_one(id, depth, params)?;
-            let rw = resolve_one(id, rim_width, params)?;
-            let segs = *segments;
-            if r <= 0.0 || d <= 0.0 || rw < 0.0 || segs < 6 || d > r {
+            if *segments < 3 {
                 return Err(EvalError::Invalid {
                     id: id.into(),
-                    reason: format!("DishCap requires positive dims, depth<=radius, rim_width>=0 (got r={r}, d={d}, rw={rw})"),
+                    reason: "Bagel segments must be >= 3".into(),
                 });
             }
-            // Dome: spherical cap of radius r and depth d.
-            // Sphere of radius r centered at z=0; clip to z >= (r - d).
-            // Cap lives z in [r-d, r].
-            let sph = sphere_faceted(r, segs, segs * 2);
-            let clip_z = r - d;
-            // Cut away z < clip_z by subtracting a box below.
-            let cut_h = clip_z + r; // big enough to remove everything below clip_z
-            let cutter = box_at(
-                Vec3::new(4.0 * r, 4.0 * r, cut_h.max(1e-3) + 1e-3),
-                Point3::new(-2.0 * r, -2.0 * r, -r - 1e-3),
-            );
-            let cap = sph
-                .try_difference(&cutter)
-                .map_err(|e| EvalError::Boolean { id: id.into(), op: "dishcap_clip", message: e.message })?;
-            // Translate so flat face is at z=0: cap now at z in [clip_z, r],
-            // shift down by clip_z.
-            let cap_t = translate_solid(&cap, Vec3::new(0.0, 0.0, -clip_z));
-            // Rim: flat annular disk of outer radius (r + rw), inner radius r,
-            // thickness d (flush with cap base at z=0, extending down to z=-d).
-            // Build as a cylinder disk and subtract an inner cylinder.
-            if rw < 1e-9 {
-                // No rim — just the dome.
-                return Ok(cap_t);
-            }
-            let outer_cyl = cylinder_along_axis(r + rw, d, segs, 2, -d + 1e-3, 0.0, 0.0);
-            let inner_hole = cylinder_along_axis(r - 1e-3, d + 2e-3, segs, 2, -d, 0.0, 0.0);
-            let rim = outer_cyl
-                .try_difference(&inner_hole)
-                .map_err(|e| EvalError::Boolean { id: id.into(), op: "dishcap_rim_hole", message: e.message })?;
-            cap_t.try_union(&rim)
-                .map_err(|e| EvalError::Boolean { id: id.into(), op: "dishcap_rim_join", message: e.message })
+            let n = *segments;
+            // Base torus using torus_faceted.
+            let base = torus_faceted(r_maj, r_min, n, n / 2 + 3);
+            // Dome: a thin flattened toroidal ridge on top.
+            // Modeled as a narrow torus of minor_radius = dh/2 sitting at
+            // z = r_min (top of base torus cross-section), major radius = r_maj.
+            // dome_minor = dh/2 ensures dome_minor < r_maj always (since dh <= r_min < r_maj).
+            let dome_minor = dh / 2.0;
+            let dome_offset = r_min - dome_minor; // shift center of dome minor circle
+            // The dome torus center is at z = dome_offset (upward shift so its
+            // top face aligns with top of bagel cross-section).
+            let dome_raw = torus_faceted(r_maj, dome_minor, n, (n / 2).max(3));
+            let dome = translate_solid(&dome_raw, Vec3::new(0.0, 0.0, dome_offset));
+            base.try_union(&dome).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "bagel_dome",
+                message: e.message,
+            })
         }
 
-        Feature::AcornShapeDome { base_radius, height, point_height, segments, .. } => {
-            let br = resolve_one(id, base_radius, params)?;
+        Feature::Pringle { side, dome_height, segments, .. } => {
+            let s = resolve_one(id, side, params)?;
+            let dh = resolve_one(id, dome_height, params)?;
+            if s <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Pringle side must be > 0 (got {s})"),
+                });
+            }
+            if dh <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Pringle dome_height must be > 0 (got {dh})"),
+                });
+            }
+            if *segments < 2 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "Pringle segments must be >= 2".into(),
+                });
+            }
+            let n = *segments;
+            // Build a grid of (n+1)^2 points on z = dh*(x^2 - y^2)/s^2
+            // over the square [-s/2, s/2]^2, then loft thin slabs.
+            // We stack two layers: top surface at z = f(x,y) and bottom
+            // at z = f(x,y) - thickness, where thickness = dh/4.
+            let thickness = (dh / 4.0).max(s * 0.02);
+            let half = s / 2.0;
+            let step = s / n as f64;
+            // Accumulate quads as lofted prisms (each quad is a near-planar slab).
+            let mut acc: Option<Solid> = None;
+            for i in 0..n {
+                for j in 0..n {
+                    // Four corners of this grid cell.
+                    let xs = [
+                        -half + i as f64 * step,
+                        -half + (i + 1) as f64 * step,
+                    ];
+                    let ys = [
+                        -half + j as f64 * step,
+                        -half + (j + 1) as f64 * step,
+                    ];
+                    let z = |x: f64, y: f64| dh * (x * x - y * y) / (s * s);
+                    // Top quad (CCW from above: (i,j), (i+1,j), (i+1,j+1), (i,j+1))
+                    let top: Vec<Point3> = vec![
+                        Point3::new(xs[0], ys[0], z(xs[0], ys[0])),
+                        Point3::new(xs[1], ys[0], z(xs[1], ys[0])),
+                        Point3::new(xs[1], ys[1], z(xs[1], ys[1])),
+                        Point3::new(xs[0], ys[1], z(xs[0], ys[1])),
+                    ];
+                    // Bottom quad shifted down by thickness.
+                    let bot: Vec<Point3> = top.iter()
+                        .map(|p| Point3::new(p.x, p.y, p.z - thickness))
+                        .collect();
+                    // extrude_lofted expects bottom first, top second.
+                    let cell = extrude_lofted(&bot, &top);
+                    acc = Some(match acc.take() {
+                        None => cell,
+                        Some(prev) => prev.try_union(&cell).map_err(|e| EvalError::Boolean {
+                            id: id.into(),
+                            op: "pringle_cell",
+                            message: format!("cell ({i},{j}): {}", e.message),
+                        })?,
+                    });
+                }
+            }
+            Ok(acc.expect("segments >= 2 guarantees at least one cell"))
+        }
+
+        Feature::Cone2 { base_radius, tip_radius, height, segments, .. } => {
+            let r_base = resolve_one(id, base_radius, params)?;
+            let r_tip = resolve_one(id, tip_radius, params)?;
             let h = resolve_one(id, height, params)?;
-            let ph = resolve_one(id, point_height, params)?;
-            let segs = *segments;
-            if br <= 0.0 || h <= 0.0 || ph <= 0.0 || segs < 6 {
+            if r_base <= 0.0 || r_tip < 0.0 || h <= 0.0 {
                 return Err(EvalError::Invalid {
                     id: id.into(),
-                    reason: format!("AcornShapeDome requires positive dims (got br={br}, h={h}, ph={ph})"),
+                    reason: format!(
+                        "Cone2 requires base_radius > 0, tip_radius >= 0, height > 0 (got {r_base}, {r_tip}, {h})"
+                    ),
                 });
             }
-            // Dome base: hemisphere of radius br (z >= 0). Build sphere, clip z < 0.
-            let sph = sphere_faceted(br, segs, segs * 2);
-            let bot_cutter = box_at(
-                Vec3::new(4.0 * br, 4.0 * br, 2.0 * br),
-                Point3::new(-2.0 * br, -2.0 * br, -2.0 * br),
-            );
-            let hemi = sph
-                .try_difference(&bot_cutter)
-                .map_err(|e| EvalError::Boolean { id: id.into(), op: "acorndome_hemi_clip", message: e.message })?;
-            // If height > br, add a cylinder from br to height to extend.
-            let hemi_top = if h > br {
-                let cyl = cylinder_along_axis(br, h - br + 1e-3, segs, 2, br - 1e-3, 0.0, 0.0);
-                hemi.try_union(&cyl)
-                    .map_err(|e| EvalError::Boolean { id: id.into(), op: "acorndome_ext_join", message: e.message })?
+            if r_tip >= r_base {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Cone2 requires base_radius > tip_radius (got base={r_base}, tip={r_tip})"
+                    ),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "Cone2 segments must be >= 3".into(),
+                });
+            }
+            let n = *segments;
+            // Body: frustum or cone from base at z=0 to tip at z=h.
+            let body = if r_tip < 1e-12 {
+                cone_faceted(r_base, h, n)
             } else {
-                hemi
+                frustum_faceted(r_base, r_tip, h, n)
             };
-            // Conical spire on top: cone with base_radius br (matches top cylinder)
-            // and height ph, placed at z=h.
-            let spire = cone_faceted(br, ph, segs);
-            let spire_t = translate_solid(&spire, Vec3::new(0.0, 0.0, h - 1e-3));
-            hemi_top.try_union(&spire_t)
-                .map_err(|e| EvalError::Boolean { id: id.into(), op: "acorndome_spire_join", message: e.message })
+            if r_tip < 1e-12 {
+                // Pure cone — no hemisphere cap needed.
+                return Ok(body);
+            }
+            // Cap: hemisphere of radius r_tip centered at (0, 0, h).
+            // Build hemisphere as sphere clipped to upper half.
+            let stacks = (n / 2).max(2);
+            let full_sphere = sphere_faceted(r_tip, stacks, n);
+            let sphere_top = translate_solid(&full_sphere, Vec3::new(0.0, 0.0, h));
+            // Clip off the lower hemisphere: difference with a slab below z=h.
+            let slab_margin = r_tip * 1.1;
+            let slab_half = slab_margin * 2.0;
+            let clip_box = box_at(
+                Vec3::new(slab_half, slab_half, slab_margin + 0.1),
+                Point3::new(-slab_margin, -slab_margin, h - slab_margin - 0.05),
+            );
+            let hemi = sphere_top.try_difference(&clip_box).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "cone2_hemisphere_clip",
+                message: e.message,
+            })?;
+            body.try_union(&hemi).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "cone2_cap_union",
+                message: e.message,
+            })
+        }
+
+        Feature::Lozenge { size, corner_radius, segments, .. } => {
+            let arr = resolve3(id, size, params)?;
+            let (sx, sy, sz) = (arr[0], arr[1], arr[2]);
+            let cr = resolve_one(id, corner_radius, params)?;
+            if sx <= 0.0 || sy <= 0.0 || sz <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Lozenge size components must be > 0 (got [{sx}, {sy}, {sz}])"),
+                });
+            }
+            if cr <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Lozenge corner_radius must be > 0 (got {cr})"),
+                });
+            }
+            if cr * 2.0 >= sx || cr * 2.0 >= sy {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Lozenge corner_radius ({cr}) must be < min(sx,sy)/2 = {}",
+                        sx.min(sy) / 2.0
+                    ),
+                });
+            }
+            if *segments < 2 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "Lozenge segments must be >= 2".into(),
+                });
+            }
+            let n = *segments;
+            // Build a rounded-corner profile in the xy plane (CCW from +z).
+            // The four corners of the box are at (±sx/2, ±sy/2); each corner
+            // is replaced with a quarter-circle arc of radius cr.
+            let mut profile: Vec<Point3> = Vec::new();
+            // Corner centres (inset by cr from each corner).
+            let cx = sx / 2.0 - cr;
+            let cy = sy / 2.0 - cr;
+            // Four arcs, one per corner, CCW from +x/+y quadrant:
+            //   Q1 (+x,+y): arc from π/2 → 0 (from top edge to right edge)
+            //   Q4 (+x,-y): arc from 0 → -π/2
+            //   Q3 (-x,-y): arc from -π/2 → -π
+            //   Q2 (-x,+y): arc from π → π/2 (equivalently 3π/2 → π)
+            // Iterate four quadrants in CCW order, each arc sweeping 90°.
+            // The profile goes: right edge → top-right arc → top edge →
+            //   top-left arc → left edge → bottom-left arc → bottom edge →
+            //   bottom-right arc → back.
+            profile.clear();
+            let quadrants: [(f64, f64, f64); 4] = [
+                // (center_x, center_y, start_angle) — arc sweeps +90° CCW
+                ( cx,  cy, 0.0),                              // Q1: right edge to top edge
+                (-cx,  cy, std::f64::consts::FRAC_PI_2),     // Q2: top edge to left edge
+                (-cx, -cy, std::f64::consts::PI),             // Q3: left edge to bottom edge
+                ( cx, -cy, std::f64::consts::PI + std::f64::consts::FRAC_PI_2), // Q4: bottom edge to right edge
+            ];
+            for (qcx, qcy, start) in quadrants {
+                for k in 0..n {
+                    let t = start + (std::f64::consts::FRAC_PI_2 * k as f64 / n as f64);
+                    profile.push(Point3::new(qcx + cr * t.cos(), qcy + cr * t.sin(), 0.0));
+                }
+            }
+            Ok(extrude_polygon(&profile, Vec3::new(0.0, 0.0, sz)))
         }
 }
 }

@@ -511,10 +511,10 @@ pub fn categorize(name: &str) -> Category {
             | "SphericalCap"
             | "CylinderAt"
             | "Diamond"
-            | "TruncatedSphere"
-            | "Lens2"
-            | "Capsule2"
-            | "OvoidShell"
+            | "Bagel"
+            | "Pringle"
+            | "Cone2"
+            | "Lozenge"
     ) {
         return Category::Primitives;
     }
@@ -1615,37 +1615,33 @@ fn curated_override(variant: &str) -> Option<serde_json::Map<String, serde_json:
             m.insert("back_height".into(), num(12.0));
             Some(m)
         }
-        "DishCap" => {
-            // depth must be <= radius.
-            m.insert("radius".into(), num(5.0));
-            m.insert("depth".into(), num(2.0));
-            m.insert("rim_width".into(), num(1.0));
-            m.insert("segments".into(), json!(16));
+        "Bagel" => {
+            // major > minor, dome_height <= minor.
+            m.insert("major_radius".into(), num(5.0));
+            m.insert("minor_radius".into(), num(1.2));
+            m.insert("dome_height".into(), num(0.6));
+            m.insert("segments".into(), json!(12));
             Some(m)
         }
-        "PaperLanternStrips" => {
-            // strip_count >= 1, swd in (0, 360).
-            m.insert("axis_radius".into(), num(3.0));
-            m.insert("minor_radius".into(), num(0.5));
-            m.insert("strip_count".into(), json!(6_u64));
-            m.insert("strip_width_deg".into(), num(30.0));
-            m.insert("segments".into(), json!(12_u64));
+        "Pringle" => {
+            m.insert("side".into(), num(8.0));
+            m.insert("dome_height".into(), num(2.0));
+            m.insert("segments".into(), json!(4));
             Some(m)
         }
-        "Trefoil" => {
-            // segments_along >= 6, segments_around >= 4.
-            m.insert("scale".into(), num(2.0));
-            m.insert("tube_radius".into(), num(0.3));
-            m.insert("segments_along".into(), json!(18_u64));
-            m.insert("segments_around".into(), json!(8_u64));
+        "Cone2" => {
+            // base_radius > tip_radius > 0 for frustum+cap variant.
+            m.insert("base_radius".into(), num(5.0));
+            m.insert("tip_radius".into(), num(1.5));
+            m.insert("height".into(), num(8.0));
+            m.insert("segments".into(), json!(12));
             Some(m)
         }
-        "AcornShapeDome" => {
-            // positive dims.
-            m.insert("base_radius".into(), num(3.0));
-            m.insert("height".into(), num(3.0));
-            m.insert("point_height".into(), num(2.0));
-            m.insert("segments".into(), json!(16_u64));
+        "Lozenge" => {
+            // corner_radius < min(size[0], size[1]) / 2.
+            m.insert("size".into(), json!([8.0, 6.0, 4.0]));
+            m.insert("corner_radius".into(), num(1.5));
+            m.insert("segments".into(), json!(4));
             Some(m)
         }
         _ => None,
