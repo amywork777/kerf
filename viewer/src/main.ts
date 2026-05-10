@@ -12,7 +12,7 @@ import init, {
 } from "./wasm/kerf_cad_wasm.js";
 import { exportThreeViewPng } from "./drawings.js";
 import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js";
-import { mountMassProperties, type MassPropertiesData } from "./mass-properties.js";
+import { mountViewCube } from "./view-cube.js";
 
 await init();
 
@@ -64,6 +64,10 @@ stage.appendChild(renderer.domElement);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
+
+// Camera toggle state — declared early so resize() can reference them.
+let isOrtho = false;
+let orthoCamera: THREE.OrthographicCamera | null = null;
 
 scene.add(new THREE.AmbientLight(0x404448, 1.0));
 const key = new THREE.DirectionalLight(0xffffff, 1.6);
@@ -450,6 +454,7 @@ function resize() {
   renderer.setSize(r.width, r.height, false);
   camera.aspect = r.width / Math.max(1, r.height);
   camera.updateProjectionMatrix();
+  if (orthoCamera) resizeOrthoCamera(orthoCamera, camera);
 }
 resize();
 window.addEventListener("resize", resize);
@@ -549,7 +554,7 @@ renderer.domElement.addEventListener("pointermove", (e) => {
 
 function tick() {
   controls.update();
-  renderer.render(scene, camera);
+  renderer.render(scene, isOrtho && orthoCamera ? orthoCamera : camera);
   requestAnimationFrame(tick);
 }
 tick();
@@ -1318,6 +1323,58 @@ document.querySelectorAll("[data-example]").forEach((a) => {
 });
 
 ok("waiting for a model — drop a JSON or click an example");
+
+// --- view cube ---
+mountViewCube(stage, camera, controls);
+
+// --- camera toggle (Persp / Ortho) ---
+const cameraToggleBtn = document.getElementById("camera-toggle") as HTMLButtonElement;
+
+function buildOrthoCamera(from: THREE.PerspectiveCamera): THREE.OrthographicCamera {
+  const r = stage.getBoundingClientRect();
+  const aspect = r.width / Math.max(1, r.height);
+  const dist = from.position.length() || 150;
+  const halfH = dist * Math.tan((from.fov * Math.PI) / 360);
+  const halfW = halfH * aspect;
+  const cam = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, from.near, from.far);
+  cam.position.copy(from.position);
+  cam.quaternion.copy(from.quaternion);
+  cam.updateProjectionMatrix();
+  return cam;
+}
+
+function resizeOrthoCamera(cam: THREE.OrthographicCamera, perspCam: THREE.PerspectiveCamera) {
+  const r = stage.getBoundingClientRect();
+  const aspect = r.width / Math.max(1, r.height);
+  const dist = perspCam.position.distanceTo(controls.target) || 150;
+  const halfH = dist * Math.tan((perspCam.fov * Math.PI) / 360);
+  const halfW = halfH * aspect;
+  cam.left = -halfW;
+  cam.right = halfW;
+  cam.top = halfH;
+  cam.bottom = -halfH;
+  cam.updateProjectionMatrix();
+}
+
+cameraToggleBtn.addEventListener("click", () => {
+  isOrtho = !isOrtho;
+  if (isOrtho) {
+    orthoCamera = buildOrthoCamera(camera);
+    controls.object = orthoCamera;
+    cameraToggleBtn.textContent = "Ortho";
+  } else {
+    // Sync persp camera back to wherever the ortho camera ended up.
+    if (orthoCamera) {
+      camera.position.copy(orthoCamera.position);
+      camera.quaternion.copy(orthoCamera.quaternion);
+      camera.updateProjectionMatrix();
+    }
+    controls.object = camera;
+    orthoCamera = null;
+    cameraToggleBtn.textContent = "Persp";
+  }
+  controls.update();
+});
 
 // --- 2D sketcher panel ---
 const sketcherPanel = document.getElementById("sketcher-panel")!;
