@@ -42,19 +42,25 @@ fn symbolic_6dof_solves_arbitrary_cycle() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(0.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(2.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "c".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(0.0, 2.0, 0.0),
-        })
+        
+
+            pinned: false,})
         // a's local origin → b's local origin.
         .with_mate(Mate::Coincident {
             instance_a: "a".into(),
@@ -121,13 +127,17 @@ fn touch_point_mate() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(5.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::TouchPoint {
             instance_a: "a".into(),
             point_a: lits([1.0, 1.0, 0.0]),
@@ -156,13 +166,17 @@ fn point_on_plane_mate() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(2.0, 3.0, 7.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::PointOnPlane {
             instance_a: "a".into(),
             plane_origin: lits([0.0, 0.0, 0.0]),
@@ -193,13 +207,17 @@ fn point_on_line_mate() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(0.0, 5.0, 7.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::PointOnLine {
             instance_a: "a".into(),
             axis_a: AxisRef {
@@ -233,13 +251,17 @@ fn gear_mate_2_to_1() {
                 rotation_axis: lits([0.0, 0.0, 1.0]),
                 rotation_angle: Scalar::lit(std::f64::consts::FRAC_PI_4),
             },
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "driven".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(2.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Gear {
             instance_a: "drive".into(),
             axis_a: AxisRef {
@@ -408,13 +430,17 @@ fn gear_mate_negative_ratio_reverses_rotation() {
                 rotation_axis: lits([0.0, 0.0, 1.0]),
                 rotation_angle: Scalar::lit(0.5),
             },
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "driven".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(2.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Gear {
             instance_a: "drive".into(),
             axis_a: AxisRef {
@@ -463,13 +489,17 @@ fn symbolic_solver_matches_sequential_for_simple_chain() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(5.0, 5.0, 5.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Coincident {
             instance_a: "a".into(),
             point_a: lits([1.0, 0.0, 0.0]),

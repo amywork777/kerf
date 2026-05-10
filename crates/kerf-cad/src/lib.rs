@@ -21,8 +21,8 @@ pub mod step_import;
 pub mod transform;
 
 pub use assembly::{
-    apply_pose_to_solid, Assembly, AssemblyError, AssemblyRef, AxisRef, Instance, Mate, MateError,
-    Pose, ResolvedPose, SurfaceRef,
+    apply_pose_to_solid, Assembly, AssemblyError, AssemblyRef, AxisRef, Instance, Interference,
+    Mate, MateError, Pose, ResolvedPose, SurfaceRef,
 };
 pub use bom::{assembly_bom, BomComponent, BomEntry, BomInput, BomInstance};
 pub use cache::{EvalCache, Fingerprint};

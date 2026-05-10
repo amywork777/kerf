@@ -44,13 +44,17 @@ fn assembly_two_boxes_coincident() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "lid".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(10.0, -3.0, 7.5),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Coincident {
             instance_a: "base".into(),
             point_a: lits([0.5, 0.5, 1.0]), // top center of base
@@ -86,7 +90,9 @@ fn assembly_concentric_cylinders() {
             model: AssemblyRef::Inline(Box::new(unit_cylinder_model(16))),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "lid".into(),
             model: AssemblyRef::Inline(Box::new(unit_cylinder_model(16))),
@@ -96,7 +102,9 @@ fn assembly_concentric_cylinders() {
                 rotation_axis: lits([0.0, 1.0, 0.0]),
                 rotation_angle: Scalar::lit(std::f64::consts::FRAC_PI_2),
             },
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Concentric {
             instance_a: "base".into(),
             axis_a: AxisRef {
@@ -139,14 +147,18 @@ fn assembly_distance_mate() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "satellite".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             // Initially placed 2.0 along +x of base's corner.
             default_pose: Pose::at(2.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Distance {
             instance_a: "base".into(),
             point_a: lits([0.0, 0.0, 0.0]),
@@ -178,7 +190,9 @@ fn assembly_round_trip_json() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "lid".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
@@ -188,7 +202,9 @@ fn assembly_round_trip_json() {
                 rotation_axis: lits([0.0, 0.0, 1.0]),
                 rotation_angle: Scalar::lit(0.0),
             },
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Coincident {
             instance_a: "base".into(),
             point_a: lits([0.5, 0.5, 1.0]),
@@ -240,13 +256,17 @@ fn assembly_overconstrained_rejects() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "lid".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(10.0, 10.0, 10.0),
-        })
+        
+
+            pinned: false,})
         // First mate: lid's local (0,0,0) should equal base's local (0,0,1).
         .with_mate(Mate::Coincident {
             instance_a: "base".into(),
@@ -283,13 +303,17 @@ fn assembly_evaluate_produces_posed_solids() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "lid".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(0.0, 0.0, 10.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Coincident {
             instance_a: "base".into(),
             point_a: lits([0.0, 0.0, 1.0]),
@@ -324,13 +348,17 @@ fn assembly_default_pose_only() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(1.0, 2.0, 3.0),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(-5.0, 0.0, 0.0),
-        });
+        
+
+            pinned: false,});
 
     let poses = asm.solve_poses().expect("solve");
     assert_eq!(poses.len(), 2);
@@ -350,19 +378,25 @@ fn assembly_three_instances_chained_coincident() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "mid".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(50.0, 50.0, 50.0),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "tip".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(-50.0, -50.0, -50.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Coincident {
             instance_a: "base".into(),
             point_a: lits([0.0, 0.0, 1.0]),
@@ -413,7 +447,9 @@ fn assembly_unknown_instance_in_mate_errors() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Coincident {
             instance_a: "base".into(),
             point_a: lits([0.0, 0.0, 0.0]),
@@ -441,13 +477,17 @@ fn assembly_distance_already_satisfied_passes() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(2.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Distance {
             instance_a: "a".into(),
             point_a: lits([0.0, 0.0, 0.0]),
