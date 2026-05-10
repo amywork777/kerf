@@ -285,8 +285,15 @@ pub fn categorize(name: &str) -> Category {
             | "BoltPattern"
             | "SquareDrive"
             | "RaisedBoss"
+            | "ShaftOilHole"
+            | "WoodruffKey"
+            | "DraftedHole"
+            | "Heatset"
     ) {
         return Category::Holes;
+    }
+    if matches!(name, "HexFlange") {
+        return Category::Fasteners;
     }
     if matches!(
         name,
@@ -1812,6 +1819,55 @@ fn curated_override(variant: &str) -> Option<serde_json::Map<String, serde_json:
             m.insert("axis_radius".into(), num(6.0));
             m.insert("axis".into(), serde_json::Value::String("z".into()));
             m.insert("segments_around".into(), serde_json::json!(4));
+            Some(m)
+        }
+        // -------------------------------------------------------------------
+        // Manufacturing batch 5 curated overrides.
+        // -------------------------------------------------------------------
+        "ShaftOilHole" => {
+            m.insert("input".into(), Value::String("body".into()));
+            m.insert("center".into(), json!([5.0, 5.0, 5.0]));
+            m.insert("axis".into(), Value::String("z".into()));
+            m.insert("radius".into(), num(0.5));
+            m.insert("depth".into(), num(6.0));
+            m.insert("segments".into(), json!(12));
+            Some(m)
+        }
+        "WoodruffKey" => {
+            m.insert("input".into(), Value::String("body".into()));
+            m.insert("center".into(), json!([5.0, 5.0, 5.0]));
+            m.insert("axis".into(), Value::String("z".into()));
+            m.insert("radius".into(), num(2.0));
+            m.insert("width".into(), num(2.0));
+            m.insert("depth".into(), num(1.5));
+            m.insert("segments".into(), json!(12));
+            Some(m)
+        }
+        "DraftedHole" => {
+            m.insert("input".into(), Value::String("body".into()));
+            m.insert("center".into(), json!([5.0, 5.0, 10.0]));
+            m.insert("axis".into(), Value::String("z".into()));
+            m.insert("top_radius".into(), num(2.5));
+            m.insert("bottom_radius".into(), num(1.5));
+            m.insert("depth".into(), num(8.0));
+            m.insert("segments".into(), json!(12));
+            Some(m)
+        }
+        "HexFlange" => {
+            m.insert("center".into(), json!([0.0, 0.0, 0.0]));
+            m.insert("axis".into(), Value::String("z".into()));
+            m.insert("across_flats".into(), num(8.0));
+            m.insert("height".into(), num(5.0));
+            Some(m)
+        }
+        "Heatset" => {
+            m.insert("input".into(), Value::String("body".into()));
+            m.insert("center".into(), json!([5.0, 5.0, 10.0]));
+            m.insert("axis".into(), Value::String("z".into()));
+            m.insert("insert_radius".into(), num(1.5));
+            m.insert("insert_depth".into(), num(6.0));
+            m.insert("lead_in_radius".into(), num(2.0));
+            m.insert("segments".into(), json!(12));
             Some(m)
         }
         _ => None,
