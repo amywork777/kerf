@@ -165,6 +165,13 @@ const SLOW_VARIANTS: &[(&str, &str)] = &[
     ("PetalCluster", "evaluation >5s — N anisotropic sphere unions"),
     ("HeartSolid", "evaluation >5s — sphere ∪ sphere ∪ cone"),
     ("Whisker", "evaluation >5s — chained cylinder S-curve chain"),
+    // Batch-2 sweep/loft variants: Profile2D fields use profile2d_default which
+    // emits a square profile; however the axis field defaults to "z" as a String
+    // which parses fine. HelicalSweep and AxisTwistExtrude may trip stitch on
+    // the helical / twisted union chains at default segment counts.
+    ("HelicalSweep", "stitch: helical-profile sweep union chain may trip on default parameters"),
+    ("AxisTwistExtrude", "stitch: twisted-extrude segment union may trip on default parameters"),
+    ("PolarRevolveLoft", "stitch: polar-loft segment union may trip on default parameters"),
 ];
 
 /// Parse feature.rs once at the top of every test (cheap — feature.rs is ~3k

@@ -294,7 +294,18 @@ pub fn categorize(name: &str) -> Category {
     ) {
         return Category::ExtrusionsAndProfiles;
     }
-    if matches!(name, "PipeRun" | "SweepPath" | "Coil" | "Spring" | "Helix") {
+    if matches!(
+        name,
+        "PipeRun"
+            | "SweepPath"
+            | "Coil"
+            | "Spring"
+            | "Helix"
+            | "HelicalSweep"
+            | "AxisTaperedTube"
+            | "AxisTwistExtrude"
+            | "PolarRevolveLoft"
+    ) {
         return Category::Sweeps;
     }
     if matches!(
@@ -1777,6 +1788,30 @@ fn curated_override(variant: &str) -> Option<serde_json::Map<String, serde_json:
             // arm_thickness < arm_length.
             m.insert("arm_length".into(), num(6.0));
             m.insert("arm_thickness".into(), num(1.5));
+            Some(m)
+        }
+        "AxisTaperedTube" => {
+            m.insert("start_radius".into(), num(6.0));
+            m.insert("end_radius".into(), num(4.0));
+            m.insert("length".into(), num(10.0));
+            m.insert("axis".into(), serde_json::Value::String("z".into()));
+            m.insert("segments".into(), serde_json::json!(16));
+            m.insert("wall_thickness".into(), num(1.0));
+            Some(m)
+        }
+        "PolarRevolveLoft" => {
+            // Vec<Profile2D> field needs a hand-crafted example.
+            // Four identical triangular sections arranged around a circle.
+            let tri = serde_json::json!({
+                "points": [[0.0, -1.0], [2.0, -1.0], [1.0, 1.0]]
+            });
+            m.insert(
+                "sections".into(),
+                serde_json::json!([tri, tri, tri, tri]),
+            );
+            m.insert("axis_radius".into(), num(6.0));
+            m.insert("axis".into(), serde_json::Value::String("z".into()));
+            m.insert("segments_around".into(), serde_json::json!(4));
             Some(m)
         }
         _ => None,
