@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
+import { mountTutorialOverlay, resetTutorial, showTutorial } from "./tutorial-overlay.js";
 import init, {
   evaluate_to_mesh,
   evaluate_with_params,
@@ -1681,55 +1682,13 @@ document.querySelectorAll<HTMLAnchorElement>("[data-sk-example]").forEach((a) =>
   });
 });
 
-// --- feature-insertion toolbar ---
-const toolbarHost = document.getElementById("toolbar")!;
-const toolbar = mountToolbar(toolbarHost, {
-  getModel: () => model ? { json: model.json, targetId: model.targetId } : null,
-  setModel: (json: string, newTargetId?: string) => {
-    try {
-      const ids = target_ids_of(json) as string[];
-      const params = (parameters_of(json) ?? {}) as Record<string, number>;
-      const targetId = newTargetId && ids.includes(newTargetId)
-        ? newTargetId
-        : ids.includes("out") ? "out" : ids[ids.length - 1]!;
-      model = {
-        json,
-        targetId,
-        parameters: model ? { ...model.parameters, ...params } : { ...params },
-        defaults: { ...params },
-      };
-      renderTargets(ids);
-      renderFeatureTree();
-      actionsEl.hidden = false;
-      actions2El.hidden = false;
-      viewsEl.hidden = false;
-      rebuild(false);
-    } catch (e) {
-      err(String(e));
-    }
-  },
-  openSketcher: () => {
-    sketcherToggle.click();
-  },
-  getSelection: () => {
-    if (highlightedEdge >= 0) return { edgeId: highlightedEdge };
-    if (highlightedFace >= 0) return { faceId: highlightedFace };
-    return null;
-  },
-  triggerFillet: () => {
-    // Edge picking → fillet is handled interactively; hint user.
-    ok("Click an axis-aligned edge on the model to add a fillet");
-  },
-  triggerChamfer: () => {
-    ok("Click an edge on the model to add a chamfer");
-  },
-});
+// --- first-run tutorial overlay ---
+mountTutorialOverlay();
 
-// Refresh toolbar disabled state whenever the model becomes available or
-// goes away. `actionsEl.hidden` flips with model presence in every code
-// path that mutates `model`, so observing it covers loadJson, file drops,
-// example clicks, and the toolbar's own setModel callback.
-new MutationObserver(() => toolbar.refresh()).observe(actionsEl, {
-  attributes: true,
-  attributeFilter: ["hidden"],
-});
+const tourToggle = document.getElementById("tour-toggle");
+if (tourToggle) {
+  tourToggle.addEventListener("click", () => {
+    resetTutorial();
+    showTutorial();
+  });
+}
