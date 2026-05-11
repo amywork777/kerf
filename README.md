@@ -2,6 +2,8 @@
 
 A minimal-but-real B-rep solid modeling kernel in Rust.
 
+New to the viewer? Follow the [Build a Parametric Mug tutorial](docs/TUTORIAL.md) — no CAD background needed.
+
 See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the parent
 `code/` workspace) for the design. Current progress toward Solidworks-tier: see [`PROGRESS.md`](./PROGRESS.md).
 

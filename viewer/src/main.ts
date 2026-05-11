@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
+import { mountTutorialOverlay, resetTutorial, showTutorial } from "./tutorial-overlay.js";
 import init, {
   evaluate_to_mesh,
   evaluate_with_params,
@@ -1731,3 +1732,13 @@ new MutationObserver(() => toolbar.refresh()).observe(actionsEl, {
   attributes: true,
   attributeFilter: ["hidden"],
 });
+// --- first-run tutorial overlay ---
+mountTutorialOverlay();
+
+const tourToggle = document.getElementById("tour-toggle");
+if (tourToggle) {
+  tourToggle.addEventListener("click", () => {
+    resetTutorial();
+    showTutorial();
+  });
+}
