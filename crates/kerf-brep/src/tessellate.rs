@@ -7,15 +7,178 @@
 //! For cylindrical lateral faces: emit a quad strip (2 triangles per segment).
 //!
 //! For other planar faces (polygon prisms etc.): fan-triangulate from vertex 0.
+//!
+//! ## Smooth-shading extension
+//!
+//! `tessellate_with_opts` accepts `TessellationOpts` and returns a
+//! `TriangleSoup` that may include per-vertex `smooth_normals`.  When
+//! `opts.smooth_edges` is `true`, vertices on the circular rim of a cylinder's
+//! side face (detected via an adjacent `AnalyticEdge::Circle`) receive the
+//! exact outward-radial normal from `Cylinder::normal_at(u, v)` rather than a
+//! flat per-triangle normal.  Cap faces stay flat.
+//!
+//! `tessellate_with_opts` with default opts produces the same triangles as
+//! `tessellate` (regression-safe).
 
 use std::f64::consts::TAU;
 
 use kerf_geom::{Curve as _, Surface as _};
 
+use crate::analytic_edge::AnalyticEdge;
 use crate::booleans::FaceSoup;
 use crate::geometry::{CurveKind, SurfaceKind};
 use crate::Solid;
 use kerf_topo::{EdgeId, FaceId};
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+/// Extended triangle output that carries optional per-vertex smooth normals.
+///
+/// `triangles[i]` is a triangle with three `Point3` vertices.
+/// `smooth_normals` is either empty (no smooth-normal data) or has exactly
+/// `3 * triangles.len()` entries — one `[f64; 3]` unit normal per vertex,
+/// stored in the same vertex order as the triangles.
+///
+/// When `smooth_normals` is empty, consumers should derive per-triangle flat
+/// normals from the cross product (the same as the old `FaceSoup` behaviour).
+#[derive(Clone, Debug, Default)]
+pub struct TriangleSoup {
+    pub triangles: Vec<[kerf_geom::Point3; 3]>,
+    /// Per-vertex smooth normals. Either empty or length == `3 * triangles.len()`.
+    pub smooth_normals: Vec<[f64; 3]>,
+}
+
+impl TriangleSoup {
+    /// Convert to a `FaceSoup` (drops smooth-normal data).
+    pub fn into_face_soup(self) -> FaceSoup {
+        FaceSoup { triangles: self.triangles }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Options
+// ---------------------------------------------------------------------------
+
+/// Options controlling the tessellator's smooth-shading and edge-subdivision
+/// behaviour for `tessellate_with_opts`.
+///
+/// Construct via `Default::default()` for the conservative baseline (all
+/// options off), then set individual flags as needed.
+#[derive(Clone, Debug)]
+pub struct TessellationOpts {
+    /// When `true`, vertices on the circular rim of a cylinder side face
+    /// receive a smooth outward-radial normal rather than a flat per-triangle
+    /// normal.  Only applied to `Cylinder` side faces whose adjacent cap has
+    /// an `AnalyticEdge::Circle`.  Cap faces themselves remain flat.
+    ///
+    /// Default: `false` (preserves original flat-shading behaviour).
+    pub smooth_edges: bool,
+
+    /// If `> 0`, subdivide cylinder side-face edges to this many segments
+    /// instead of the polyhedral `lateral_segments` count.  Only takes effect
+    /// when an adjacent cap has `AnalyticEdge::Circle`.
+    ///
+    /// `0` means "use `lateral_segments`" (same as the baseline).
+    /// Default: `0`.
+    pub edge_subdivision: usize,
+}
+
+impl Default for TessellationOpts {
+    fn default() -> Self {
+        TessellationOpts { smooth_edges: false, edge_subdivision: 0 }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public entry points
+// ---------------------------------------------------------------------------
+
+/// Tessellate a `Solid` with smooth normals and optional higher-density edge
+/// sampling, returning a `TriangleSoup`.
+///
+/// `lateral_segments` is the base polygon resolution (≥ 3).
+///
+/// When `opts` is `Default::default()`, the triangles are identical to those
+/// produced by `tessellate(solid, lateral_segments)`.  The `smooth_normals`
+/// field is populated only when `opts.smooth_edges == true` AND the solid
+/// contains at least one Cylinder side face adjacent to a circular cap.
+///
+/// When `smooth_normals` is non-empty it always satisfies
+/// `len(smooth_normals) == 3 * len(triangles)`: flat faces receive their
+/// computed per-triangle normal for each of their three vertices.
+pub fn tessellate_with_opts(
+    solid: &Solid,
+    lateral_segments: usize,
+    opts: TessellationOpts,
+) -> TriangleSoup {
+    debug_assert!(lateral_segments >= 3);
+
+    if !opts.smooth_edges && opts.edge_subdivision == 0 {
+        // Fast path: no opts active — identical to tessellate().
+        let soup = tessellate(solid, lateral_segments);
+        return TriangleSoup { triangles: soup.triangles, smooth_normals: vec![] };
+    }
+
+    // Collect per-face triangle patches first so we can backfill flat normals
+    // for faces that precede the first smooth face in iteration order.
+    struct FacePatch {
+        triangles: Vec<[kerf_geom::Point3; 3]>,
+        /// `Some(normals)` if this face emitted smooth normals (len == 3 * triangles.len()).
+        /// `None` if flat (normals will be computed on demand).
+        smooth_normals: Option<Vec<[f64; 3]>>,
+    }
+
+    let mut patches: Vec<FacePatch> = Vec::new();
+    let mut any_smooth = false;
+
+    for face_id in solid.topo.face_ids() {
+        let mut patch_soup = TriangleSoup::default();
+        tessellate_one_face_opts(&mut patch_soup, solid, face_id, lateral_segments, &opts);
+        let has_smooth = !patch_soup.smooth_normals.is_empty();
+        if has_smooth {
+            any_smooth = true;
+        }
+        patches.push(FacePatch {
+            triangles: patch_soup.triangles,
+            smooth_normals: if has_smooth { Some(patch_soup.smooth_normals) } else { None },
+        });
+    }
+
+    // Assemble final TriangleSoup.
+    let mut out = TriangleSoup::default();
+    for patch in patches {
+        if any_smooth {
+            // We need smooth normals for every triangle.
+            match patch.smooth_normals {
+                Some(normals) => {
+                    out.smooth_normals.extend(normals);
+                }
+                None => {
+                    // Compute flat normals for this patch.
+                    for tri in &patch.triangles {
+                        let [a, b, c] = tri;
+                        let ab = kerf_geom::Vec3::new(b.x - a.x, b.y - a.y, b.z - a.z);
+                        let ac = kerf_geom::Vec3::new(c.x - a.x, c.y - a.y, c.z - a.z);
+                        let n = ab.cross(&ac);
+                        let len = n.norm();
+                        let flat_n = if len > 1e-14 {
+                            [n.x / len, n.y / len, n.z / len]
+                        } else {
+                            [0.0, 0.0, 1.0]
+                        };
+                        out.smooth_normals.push(flat_n);
+                        out.smooth_normals.push(flat_n);
+                        out.smooth_normals.push(flat_n);
+                    }
+                }
+            }
+        }
+        out.triangles.extend(patch.triangles);
+    }
+    out
+}
 
 /// Tessellate a Solid into triangles. `lateral_segments` is the polygon
 /// resolution for cylindrical faces and circular cap faces (must be ≥ 3).
@@ -47,6 +210,141 @@ pub fn tessellate_with_face_index(solid: &Solid, lateral_segments: usize) -> (Fa
     }
     (soup, face_index)
 }
+
+// ---------------------------------------------------------------------------
+// Smooth-normal helpers
+// ---------------------------------------------------------------------------
+
+/// Check whether `face_id` (which must be a Cylinder face) is adjacent to at
+/// least one face that qualifies as an analytic circular cap.
+///
+/// A cap qualifies if it has an `AnalyticEdge::Circle` entry in
+/// `face_analytic_edges` (the post-boolean detection path), OR if its edges
+/// include a `CurveKind::Circle` segment (the native `cylinder()` primitive
+/// path where caps carry analytic circle geometry directly).
+///
+/// Returns `true` if such an adjacent cap is found.
+fn cylinder_face_has_analytic_cap(solid: &Solid, face_id: FaceId) -> bool {
+    // Only makes sense on cylinder surfaces.
+    if !matches!(solid.face_geom.get(face_id), Some(SurfaceKind::Cylinder(_))) {
+        return false;
+    }
+    let edges = collect_face_edges(solid, face_id);
+    for eid in &edges {
+        let Some(edge) = solid.topo.edge(*eid) else { continue };
+        for he_id in edge.half_edges() {
+            let Some(he) = solid.topo.half_edge(he_id) else { continue };
+            let Some(loop_) = solid.topo.loop_(he.loop_()) else { continue };
+            let adj_face_id = loop_.face();
+            if adj_face_id == face_id {
+                continue; // same face
+            }
+            // Path A: post-boolean detection attached a AnalyticEdge::Circle.
+            if matches!(
+                solid.face_analytic_edges.get(adj_face_id),
+                Some(AnalyticEdge::Circle { .. })
+            ) {
+                return true;
+            }
+            // Path B: native cylinder() primitive — cap face edges have
+            // CurveKind::Circle geometry directly.
+            let cap_edges = collect_face_edges(solid, adj_face_id);
+            let has_circle_edge = cap_edges.iter().any(|cap_eid| {
+                solid.edge_geom.get(*cap_eid)
+                    .map(|seg| matches!(&seg.curve, CurveKind::Circle(_)))
+                    .unwrap_or(false)
+            });
+            if has_circle_edge {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Opts-aware per-face tessellator
+// ---------------------------------------------------------------------------
+
+/// Tessellate a single face into `out` using the opts-aware path.
+///
+/// For Cylinder side faces adjacent to an analytic-circle cap:
+/// - when `opts.smooth_edges` is true, emit per-vertex smooth normals.
+/// - when `opts.edge_subdivision > 0`, use that segment count instead of
+///   `lateral_segments`.
+///
+/// All other cases fall back to the original flat tessellator.
+fn tessellate_one_face_opts(
+    out: &mut TriangleSoup,
+    solid: &Solid,
+    face_id: FaceId,
+    lateral_segments: usize,
+    opts: &TessellationOpts,
+) {
+    let surface = match solid.face_geom.get(face_id) {
+        Some(s) => s,
+        None => return,
+    };
+
+    // Smooth / higher-density path: only for Cylinder side faces with an
+    // analytic-circle cap neighbour.
+    if let SurfaceKind::Cylinder(cyl) = surface {
+        let do_smooth = opts.smooth_edges;
+        let do_subdivide = opts.edge_subdivision > 0;
+        if (do_smooth || do_subdivide) && cylinder_face_has_analytic_cap(solid, face_id) {
+            let segs = if do_subdivide { opts.edge_subdivision } else { lateral_segments };
+
+            // Resolve height from the solid's edge geometry.
+            let edges = collect_face_edges(solid, face_id);
+            let height = edges
+                .iter()
+                .filter_map(|eid| solid.edge_geom.get(*eid))
+                .find_map(|seg| match &seg.curve {
+                    CurveKind::Line(_) => Some(seg.range.1 - seg.range.0),
+                    _ => None,
+                })
+                .unwrap_or(1.0);
+
+            let dt = TAU / segs as f64;
+            for i in 0..segs {
+                let t0 = i as f64 * dt;
+                let t1 = (i + 1) as f64 * dt;
+                let p0_bot = cyl.point_at(t0, 0.0);
+                let p1_bot = cyl.point_at(t1, 0.0);
+                let p0_top = cyl.point_at(t0, height);
+                let p1_top = cyl.point_at(t1, height);
+                out.triangles.push([p0_bot, p1_bot, p1_top]);
+                out.triangles.push([p0_bot, p1_top, p0_top]);
+
+                if do_smooth {
+                    // Outward radial normals at the respective u angles.
+                    let n0 = cyl.normal_at(t0, 0.0);
+                    let n1 = cyl.normal_at(t1, 0.0);
+                    // Triangle 1: vertices p0_bot, p1_bot, p1_top
+                    out.smooth_normals.push([n0.x, n0.y, n0.z]);
+                    out.smooth_normals.push([n1.x, n1.y, n1.z]);
+                    out.smooth_normals.push([n1.x, n1.y, n1.z]);
+                    // Triangle 2: vertices p0_bot, p1_top, p0_top
+                    out.smooth_normals.push([n0.x, n0.y, n0.z]);
+                    out.smooth_normals.push([n1.x, n1.y, n1.z]);
+                    out.smooth_normals.push([n0.x, n0.y, n0.z]);
+                }
+            }
+            return;
+        }
+    }
+
+    // Fallback: delegate to the flat tessellator, wrapping its FaceSoup output.
+    let mut flat = FaceSoup::default();
+    tessellate_one_face_into(&mut flat, solid, face_id, lateral_segments);
+    out.triangles.extend(flat.triangles);
+    // smooth_normals stays empty; backfilling for mixed output is handled
+    // by the two-pass logic in tessellate_with_opts.
+}
+
+// ---------------------------------------------------------------------------
+// Original flat per-face tessellator (unchanged)
+// ---------------------------------------------------------------------------
 
 fn tessellate_one_face_into(
     soup: &mut FaceSoup,
@@ -369,5 +667,131 @@ mod tests {
         let s = torus(3.0, 1.0);
         let soup = tessellate(&s, 16);
         assert_eq!(soup.triangles.len(), 256);
+    }
+
+    // -----------------------------------------------------------------------
+    // New tests for tessellate_with_opts
+    // -----------------------------------------------------------------------
+
+    /// Test 1 (regression): tessellate_with_opts with default opts (smooth_edges=false,
+    /// edge_subdivision=0) produces the same triangle count as tessellate().
+    #[test]
+    fn with_opts_default_matches_tessellate() {
+        let s = cylinder(1.0, 2.0);
+        let n = 16;
+        let baseline = tessellate(&s, n);
+        let opts_out = tessellate_with_opts(&s, n, TessellationOpts::default());
+        assert_eq!(
+            baseline.triangles.len(),
+            opts_out.triangles.len(),
+            "default opts should match tessellate triangle count"
+        );
+        // No smooth normals when smooth_edges is false.
+        assert!(
+            opts_out.smooth_normals.is_empty(),
+            "smooth_normals must be empty when smooth_edges=false"
+        );
+    }
+
+    /// Test 2: smooth_edges=true on a cylinder with analytic caps produces
+    /// smooth normals (one per vertex, 3 per triangle) on the side faces and
+    /// the normals are unit-length outward radial vectors.
+    #[test]
+    fn smooth_edges_cylinder_has_smooth_normals() {
+        // cylinder() has CurveKind::Circle edges on its caps — the tessellator
+        // detects these via Path B in cylinder_face_has_analytic_cap.
+        let s = cylinder(1.0, 2.0);
+
+        let n = 16;
+        let opts = TessellationOpts { smooth_edges: true, edge_subdivision: 0 };
+        let out = tessellate_with_opts(&s, n, opts);
+
+        // Must have some smooth normals.
+        assert!(
+            !out.smooth_normals.is_empty(),
+            "expected smooth normals on cylinder with analytic caps"
+        );
+        // smooth_normals.len() must equal 3 * triangles.len() when non-empty.
+        assert_eq!(
+            out.smooth_normals.len(),
+            3 * out.triangles.len(),
+            "smooth_normals must have exactly 3 entries per triangle"
+        );
+        // Every smooth normal must be (approximately) unit length.
+        for (i, n) in out.smooth_normals.iter().enumerate() {
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            assert!(
+                (len - 1.0).abs() < 1e-10,
+                "normal[{i}] has length {len}, expected 1.0"
+            );
+        }
+        // Normals on the cylinder side face are radial (z component ≈ 0 for a
+        // z-axis cylinder).  Cap normals have z ≈ ±1.  We verify that at least
+        // some normals are radial (z ≈ 0), confirming that the smooth-normal
+        // emission path was exercised for the side face.
+        let radial_count = out.smooth_normals.iter().filter(|n| n[2].abs() < 1e-10).count();
+        assert!(
+            radial_count > 0,
+            "expected at least some z≈0 normals from the cylinder side face"
+        );
+        // Specifically, all radial normals must be exactly unit length in XY.
+        for n in out.smooth_normals.iter().filter(|n| n[2].abs() < 1e-10) {
+            let xy_len = (n[0] * n[0] + n[1] * n[1]).sqrt();
+            assert!(
+                (xy_len - 1.0).abs() < 1e-10,
+                "radial normal xy_len={xy_len}, expected 1.0"
+            );
+        }
+    }
+
+    /// Test 3: edge_subdivision=N produces more triangles on the side face than
+    /// the polyhedral segment count alone, when N > lateral_segments.
+    #[test]
+    fn edge_subdivision_produces_more_triangles() {
+        // cylinder() has CurveKind::Circle edges on its caps — no need for
+        // attach_analytic_circles.
+        let s = cylinder(1.0, 2.0);
+
+        let base_segs = 12usize;
+        let subdiv = 32usize;
+        assert!(subdiv > base_segs);
+
+        let baseline = tessellate_with_opts(&s, base_segs, TessellationOpts::default());
+        let subdivided = tessellate_with_opts(
+            &s,
+            base_segs,
+            TessellationOpts { smooth_edges: false, edge_subdivision: subdiv },
+        );
+
+        // The subdivided cylinder has more triangles overall because the side
+        // face uses `subdiv` segments instead of `base_segs`.
+        assert!(
+            subdivided.triangles.len() > baseline.triangles.len(),
+            "edge_subdivision={subdiv} should produce more triangles than base_segs={base_segs}: \
+             got {} vs {}",
+            subdivided.triangles.len(),
+            baseline.triangles.len()
+        );
+    }
+
+    /// Test 4: A face without an adjacent analytic edge gets unchanged (flat)
+    /// behaviour even when smooth_edges=true.
+    #[test]
+    fn face_without_analytic_edge_is_unchanged() {
+        // A plain box has no analytic edges — all faces must tessellate flat.
+        let s = crate::primitives::box_(kerf_geom::Vec3::new(2.0, 3.0, 4.0));
+        let opts = TessellationOpts { smooth_edges: true, edge_subdivision: 32 };
+        // Use a low segment count; box ignores lateral_segments entirely.
+        let out = tessellate_with_opts(&s, 8, opts);
+        let baseline = tessellate(&s, 8);
+        assert_eq!(
+            out.triangles.len(),
+            baseline.triangles.len(),
+            "box face count must be unchanged with opts"
+        );
+        assert!(
+            out.smooth_normals.is_empty(),
+            "box must not emit smooth normals (no analytic edges)"
+        );
     }
 }
