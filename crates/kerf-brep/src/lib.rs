@@ -18,7 +18,9 @@ pub mod stl;
 pub mod tessellate;
 
 pub use analytic_edge::AnalyticEdge;
-pub use analytic_edge_detect::{attach_analytic_circles, detect_circular_cap};
+pub use analytic_edge_detect::{
+    attach_analytic_circles, detect_circular_cap, detect_conic_cap, detect_elliptic_cap,
+};
 pub use dimension::{
     angle_at_vertex, angle_between_vectors, collect_snap_candidates, distance, project_to_plane,
     projected_silhouette, render_dimensioned_view, silhouette_loops, snap_pick, to_2d_view,
