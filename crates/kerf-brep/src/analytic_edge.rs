@@ -48,26 +48,6 @@ pub enum AnalyticEdge {
         /// (matches the convention used by STEP).
         is_clamped: bool,
     },
-    /// Viviani's curve — the closed intersection of two equal-radius
-    /// cylinders with perpendicular axes meeting at the origin. The
-    /// canonical parameterization (in cylinder-aligned local space) is:
-    ///
-    /// ```text
-    /// x(τ) = r · (1 + cos τ)
-    /// y(τ) = r · sin τ
-    /// z(τ) = 2r · sin(τ/2)
-    /// ```
-    ///
-    /// for τ ∈ [0, 4π]. The curve traces a closed figure-eight that
-    /// self-intersects at τ = 2π. `frame` is a 3×3 orthonormal matrix
-    /// (columns are the local x/y/z axes in world space) and `origin`
-    /// is the translation. The full normalized parameter t ∈ [0, 1]
-    /// maps to τ = 4π·t.
-    Viviani {
-        radius: f64,
-        frame: [[f64; 3]; 3],
-        origin: [f64; 3],
-    },
 }
 
 // ---------------------------------------------------------------------------
@@ -238,33 +218,6 @@ impl AnalyticEdge {
                 control_points,
                 is_clamped: _,
             } => de_boor(control_points, t),
-            AnalyticEdge::Viviani {
-                radius,
-                frame,
-                origin,
-            } => {
-                let tau = t * 4.0 * std::f64::consts::PI;
-                let local = [
-                    radius * (1.0 + tau.cos()),
-                    radius * tau.sin(),
-                    2.0 * radius * (tau / 2.0).sin(),
-                ];
-                // Apply frame (columns are local axes) + origin.
-                [
-                    origin[0]
-                        + frame[0][0] * local[0]
-                        + frame[0][1] * local[1]
-                        + frame[0][2] * local[2],
-                    origin[1]
-                        + frame[1][0] * local[0]
-                        + frame[1][1] * local[1]
-                        + frame[1][2] * local[2],
-                    origin[2]
-                        + frame[2][0] * local[0]
-                        + frame[2][1] * local[1]
-                        + frame[2][2] * local[2],
-                ]
-            }
         }
     }
 
@@ -466,116 +419,6 @@ mod tests {
                 [3.0, 0.0, 0.0],
             ],
             is_clamped: true,
-        };
-        let json = serde_json::to_string(&edge).unwrap();
-        let back: AnalyticEdge = serde_json::from_str(&json).unwrap();
-        assert_eq!(edge, back);
-    }
-
-    // ----- Viviani's curve: the intersection of two equal-radius
-    // perpendicular cylinders. First concrete step toward cyl × cyl
-    // curved booleans (see ROADMAP.md).
-
-    fn identity_frame() -> [[f64; 3]; 3] {
-        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-    }
-
-    #[test]
-    fn viviani_at_t0_is_2r_x_origin() {
-        // τ=0: (r·(1+1), 0, 0) = (2r, 0, 0) in local space.
-        let edge = AnalyticEdge::Viviani {
-            radius: 5.0,
-            frame: identity_frame(),
-            origin: [0.0, 0.0, 0.0],
-        };
-        let p = edge.point_at(0.0);
-        assert!((p[0] - 10.0).abs() < EPS, "x = 2r at t=0");
-        assert!(p[1].abs() < EPS, "y = 0 at t=0");
-        assert!(p[2].abs() < EPS, "z = 0 at t=0");
-    }
-
-    #[test]
-    fn viviani_at_t_half_is_self_intersection() {
-        // t=0.5 → τ=2π, which lands back at the self-intersection point
-        // (the figure-eight crossing) which equals the t=0 point in local
-        // space: (r·(1 + cos 2π), r·sin 2π, 2r·sin π) = (2r, 0, 0).
-        let edge = AnalyticEdge::Viviani {
-            radius: 3.0,
-            frame: identity_frame(),
-            origin: [10.0, -5.0, 2.0],
-        };
-        let p0 = edge.point_at(0.0);
-        let p_half = edge.point_at(0.5);
-        for i in 0..3 {
-            assert!(
-                (p0[i] - p_half[i]).abs() < 1e-9,
-                "self-intersection: p(0)[{}] = {} vs p(0.5)[{}] = {}",
-                i, p0[i], i, p_half[i]
-            );
-        }
-    }
-
-    #[test]
-    fn viviani_endpoints_match_at_t0_and_t1() {
-        // The curve is closed: point_at(0) = point_at(1) (both correspond
-        // to τ=0 and τ=4π, which yield the same point in the canonical
-        // parameterization).
-        let edge = AnalyticEdge::Viviani {
-            radius: 7.5,
-            frame: identity_frame(),
-            origin: [0.0, 0.0, 0.0],
-        };
-        let p0 = edge.point_at(0.0);
-        let p1 = edge.point_at(1.0);
-        for i in 0..3 {
-            assert!((p0[i] - p1[i]).abs() < 1e-9, "closed curve: p(0) = p(1)");
-        }
-    }
-
-    #[test]
-    fn viviani_frame_rotates_curve() {
-        // A 90° rotation of the frame (swap x ↔ y) should move the
-        // canonical (2r, 0, 0) starting point to (0, 2r, 0).
-        let frame_swap = [
-            [0.0, 1.0, 0.0], // world x = local y
-            [1.0, 0.0, 0.0], // world y = local x
-            [0.0, 0.0, 1.0],
-        ];
-        let edge = AnalyticEdge::Viviani {
-            radius: 4.0,
-            frame: frame_swap,
-            origin: [0.0, 0.0, 0.0],
-        };
-        let p = edge.point_at(0.0);
-        // Local (2r, 0, 0) = (8, 0, 0) → world (0, 8, 0) under the swap.
-        assert!(p[0].abs() < EPS);
-        assert!((p[1] - 8.0).abs() < EPS);
-        assert!(p[2].abs() < EPS);
-    }
-
-    #[test]
-    fn viviani_tessellate_returns_valid_3d_points() {
-        let edge = AnalyticEdge::Viviani {
-            radius: 2.0,
-            frame: identity_frame(),
-            origin: [0.0, 0.0, 0.0],
-        };
-        let pts = edge.tessellate(64);
-        assert_eq!(pts.len(), 65, "65 = 64 segments + 1");
-        // All points should lie within the bounding box [0, 2r] × [-r, r] × [-2r, 2r].
-        for p in &pts {
-            assert!(p[0] >= -EPS && p[0] <= 4.0 + EPS, "x in [0, 2r]: {}", p[0]);
-            assert!(p[1] >= -2.0 - EPS && p[1] <= 2.0 + EPS, "y in [-r, r]: {}", p[1]);
-            assert!(p[2] >= -4.0 - EPS && p[2] <= 4.0 + EPS, "z in [-2r, 2r]: {}", p[2]);
-        }
-    }
-
-    #[test]
-    fn round_trip_json_viviani() {
-        let edge = AnalyticEdge::Viviani {
-            radius: 1.5,
-            frame: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            origin: [10.0, 20.0, 30.0],
         };
         let json = serde_json::to_string(&edge).unwrap();
         let back: AnalyticEdge = serde_json::from_str(&json).unwrap();
