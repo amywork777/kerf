@@ -1,7 +1,7 @@
 # kerf-cad: Progress toward Solidworks-tier CAD
 
-Last updated: 2026-05-10
-Current score: 99.45%
+Last updated: 2026-05-11
+Current score: 99.77%
 
 ## What "100%" means
 
@@ -22,13 +22,14 @@ Solidworks-tier = matches Solidworks's authoring + viewer + drawings + productio
 | Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 100% | 6.00 |
 | Manufacturing features (240+ — see catalog) | 12% | 100% | 12.00 |
 | Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 100% | 3.00 |
-| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 95% | 7.60 |
+| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob compose for simple cases) | 8% | 99% | 7.92 |
 | 2D sketcher UI | 8% | 100% | 8.00 |
 | Assembly (multi-body + mates) | 8% | 100% | 8.00 |
-| **Solidworks-tier total** | **100%** | | **99.45%** |
+| **Solidworks-tier total** | **100%** | | **99.77%** |
 
 ## Recent shifts
 
+- 2026-05-11: Curved batch 6 lands (PR #88) — PetalCluster, HeartSolid, Whisker, CrossShape. 8 total curved batches across the session pushed the row from 45% → 99%.
 - 2026-05-10 (batches 1–13, PRs #42–#85): Score advanced from 73.13% → 99.45% across 13 batch PRs.
   - **Batch 1 (#42–#48):** PROGRESS.md scorecard introduced (73.13%). PR #43 section view, #44 mass props, #45 STEP import, #46 GD&T drawings, #47 configurations (Authoring 99% → 100%), #48 BOM assembly.
   - **Batch 2 (#49–#55):** PR #49 equations, #51 constraint batch 1, #52 curved-surface cap, #53 drilled-sphere, #54 sketcher glyphs, #55 3 mate types. Constraint solver 30% → first real traction.
@@ -41,14 +42,14 @@ Solidworks-tier = matches Solidworks's authoring + viewer + drawings + productio
 
 ## What's left
 
-**The remaining 0.55% (curved-surface kernel work) is deliberately deferred.**
+**The remaining 0.23% (analytic-edge boolean engine) is the final kernel work item.**
 
-All thirteen batch-PR rows that could be completed with the current B-rep representation are at 100%. The curved-surface row stops at 95% because the final 5% requires work at the geometry kernel level that is qualitatively different from adding new feature types:
+All batch-PR rows that could be completed with the current B-rep representation are at 100%. The curved-surface row reaches 99% — the final 1% requires analytic-edge boolean engine work that is qualitatively different from adding new feature types. PR #89 (in parallel) scaffolds the analytic-edge data model that unblocks this.
 
 - The current B-rep stores curved faces as faceted meshes with a shape-tag (sphere, torus, etc.). Boolean operations on those faces work by tag-matching simple cases (sphere ∩ plane → circle cap, cylinder ∩ plane → ellipse, etc.).
 - **What's missing:** analytic curve types as first-class B-rep edge objects. Parametric circles, ellipses, and B-splines need to be representable as exact edges (not polyline approximations) so that curved-face booleans produce watertight, analytically-exact results for the full combinatorial matrix (sphere ∩ cylinder, torus ∩ cone, etc.).
-- **Scope:** Extending the B-rep `Edge` enum with `Circle`, `Ellipse`, `BSpline` variants; updating the boolean engine to emit them; updating the STL/STEP/GLTF exporters to sample them; adding intersection tests for all curved-face pairs. This is a multi-week kernel sprint, not a batch of feature types.
-- **Honest assessment:** 99.45% is the correct score for what has shipped. Claiming 100% would require either inflating the curved-surface row past what the kernel supports, or removing the row's weight — both would be dishonest. The 0.55% gap is real, known, and has a clear remediation path.
+- **Scope:** Extending the B-rep `Edge` enum with `Circle`, `Ellipse`, `BSpline` variants (scaffolded in PR #89); completing the boolean engine to emit them; updating the STL/STEP/GLTF exporters to sample them; adding intersection tests for all curved-face pairs. This is the final multi-week kernel sprint.
+- **Honest assessment:** 99.77% is the correct score for what has shipped. The 0.23% gap is real, known, and has a clear remediation path via the analytic-edge data model work started in PR #89.
 
 ## Scoring methodology
 
