@@ -10,9 +10,37 @@
 //! GLB byte layout (per spec §4.7):
 //!   12-byte file header | 8-byte JSON chunk header + JSON bytes (4-aligned)
 //!   | 8-byte BIN chunk header + binary bytes (4-aligned)
+//!
+//! # kerf_analytic_edges extras
+//!
+//! When analytic-edge data is provided (see [`write_gltf_with_analytics`]),
+//! a `kerf_analytic_edges` key is injected into the primitive's `extras`
+//! object. The value is a JSON array of objects, one per analytic edge:
+//!
+//! ```json
+//! "extras": {
+//!   "kerf_analytic_edges": [
+//!     { "face_index": 12, "kind": "circle",
+//!       "center": [0,0,10], "radius": 10, "normal": [0,0,1],
+//!       "start_angle": 0.0, "sweep_angle": 6.283185307 },
+//!     { "face_index": 18, "kind": "ellipse", ... }
+//!   ]
+//! }
+//! ```
+//!
+//! `face_index` is the sequential index into the solid's face list (as
+//! returned by `tessellate_with_face_index`). Vanilla GLTF viewers silently
+//! ignore unknown `extras`. Future kerf tooling (viewer integration,
+//! CAD-aware GLTF inspector) can consume this payload.
+//!
+//! Note on KHR_geometry_curves: the `KHR_geometry_curves` extension is not
+//! yet ratified in the Khronos ecosystem (as of 2026). Until it achieves
+//! official status, `extras` is the appropriate extensibility mechanism.
+//! Migration to `KHR_geometry_curves` is a future task.
 
 use kerf_geom::{Point3, Tolerance};
 
+use crate::analytic_edge::AnalyticEdge;
 use crate::booleans::FaceSoup;
 
 /// Error type for GLTF export failures.
@@ -29,7 +57,55 @@ impl std::error::Error for ExportGltfError {}
 
 /// Write `soup` as a binary GLB file. Returns the raw bytes.
 /// `_name` is currently unused in the GLB but reserved for future mesh naming.
+///
+/// No analytic-edge extras are emitted. See [`write_gltf_with_analytics`] for
+/// that capability.
 pub fn write_gltf(soup: &FaceSoup, _name: &str) -> Result<Vec<u8>, ExportGltfError> {
+    write_gltf_with_analytics(soup, _name, &[])
+}
+
+/// Serialize one AnalyticEdge as a JSON object fragment for the
+/// `kerf_analytic_edges` extras array. The face_index field is the
+/// sequential face number from `tessellate_with_face_index`.
+fn analytic_edge_to_json(face_idx: u32, ae: &AnalyticEdge) -> String {
+    match ae {
+        AnalyticEdge::Line { start, end } => format!(
+            r#"{{"face_index":{face_idx},"kind":"line","start":[{},{},{}],"end":[{},{},{}]}}"#,
+            start[0], start[1], start[2], end[0], end[1], end[2]
+        ),
+        AnalyticEdge::Circle { center, radius, normal, start_angle, sweep_angle } => format!(
+            r#"{{"face_index":{face_idx},"kind":"circle","center":[{},{},{}],"radius":{radius},"normal":[{},{},{}],"start_angle":{start_angle},"sweep_angle":{sweep_angle}}}"#,
+            center[0], center[1], center[2], normal[0], normal[1], normal[2]
+        ),
+        AnalyticEdge::Ellipse { center, major_axis, minor_axis, start_angle, sweep_angle } => format!(
+            r#"{{"face_index":{face_idx},"kind":"ellipse","center":[{},{},{}],"major_axis":[{},{},{}],"minor_axis":[{},{},{}],"start_angle":{start_angle},"sweep_angle":{sweep_angle}}}"#,
+            center[0], center[1], center[2],
+            major_axis[0], major_axis[1], major_axis[2],
+            minor_axis[0], minor_axis[1], minor_axis[2]
+        ),
+        AnalyticEdge::BSpline { control_points, is_clamped } => {
+            let pts: Vec<String> = control_points.iter()
+                .map(|p| format!("[{},{},{}]", p[0], p[1], p[2]))
+                .collect();
+            format!(
+                r#"{{"face_index":{face_idx},"kind":"bspline","control_points":[{}],"is_clamped":{is_clamped}}}"#,
+                pts.join(",")
+            )
+        }
+    }
+}
+
+/// Write `soup` as a binary GLB file with `kerf_analytic_edges` extras.
+///
+/// `analytic_edges` is a slice of `(face_index, edge)` pairs where
+/// `face_index` matches the sequential face numbering from
+/// [`tessellate_with_face_index`](crate::tessellate::tessellate_with_face_index).
+/// When the slice is empty the output is identical to [`write_gltf`].
+pub fn write_gltf_with_analytics(
+    soup: &FaceSoup,
+    _name: &str,
+    analytic_edges: &[(u32, &AnalyticEdge)],
+) -> Result<Vec<u8>, ExportGltfError> {
     let tol = Tolerance::default();
 
     // Deduplicate vertices → unique positions list + per-triangle indices.
@@ -93,6 +169,20 @@ pub fn write_gltf(soup: &FaceSoup, _name: &str) -> Result<Vec<u8>, ExportGltfErr
     }
     let bin_chunk_padded_len = bin_buf.len();
 
+    // --- Build analytic-edges extras JSON fragment (empty if none provided) ---
+    let extras_fragment = if analytic_edges.is_empty() {
+        String::new()
+    } else {
+        let entries: Vec<String> = analytic_edges
+            .iter()
+            .map(|(face_idx, ae)| analytic_edge_to_json(*face_idx, ae))
+            .collect();
+        format!(
+            r#","extras": {{"kerf_analytic_edges": [{items}]}}"#,
+            items = entries.join(",")
+        )
+    };
+
     // --- Build JSON descriptor ---
     // bufferView 0 → vertex positions
     // bufferView 1 → indices
@@ -107,7 +197,7 @@ pub fn write_gltf(soup: &FaceSoup, _name: &str) -> Result<Vec<u8>, ExportGltfErr
   "meshes": [{{
     "primitives": [{{
       "attributes": {{"POSITION": 0}},
-      "indices": 1
+      "indices": 1{extras}
     }}]
   }}],
   "accessors": [
@@ -142,6 +232,7 @@ pub fn write_gltf(soup: &FaceSoup, _name: &str) -> Result<Vec<u8>, ExportGltfErr
   ],
   "buffers": [{{"byteLength": {bin_len}}}]
 }}"#,
+        extras = extras_fragment,
         vcount = positions.len(),
         min_x = min_x, min_y = min_y, min_z = min_z,
         max_x = max_x, max_y = max_y, max_z = max_z,
