@@ -432,6 +432,17 @@ pub struct Assembly {
     /// parameters, evaluated independently.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub parameters: HashMap<String, f64>,
+    /// Exploded-view amount: 0.0 = assembled, 1.0 = each instance moved
+    /// `explode_distance` along the unit-vector from the assembly centroid to
+    /// the instance's centroid. When `None` or `Some(0.0)`, behaves
+    /// identically to the existing `Assembly::evaluate`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exploded: Option<f64>,
+    /// Distance (in world units) each instance is displaced at `exploded=1.0`.
+    /// Auto-computed from the assembly's bounding-box diagonal × 0.5 if
+    /// `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explode_distance: Option<f64>,
 }
 
 #[derive(Debug, Error)]
@@ -2708,6 +2719,123 @@ impl Assembly {
         })
     }
 
+    /// Evaluate the assembly in exploded view.
+    ///
+    /// When `self.exploded` is `None` or `Some(0.0)` this is identical to
+    /// [`Assembly::evaluate`].  Otherwise each instance solid is displaced
+    /// radially away from the assembly's volume-weighted centroid by
+    /// `exploded * explode_distance` units, where `explode_distance` is taken
+    /// from `self.explode_distance` or auto-computed as half the assembly's
+    /// bounding-box diagonal when that field is `None`.
+    ///
+    /// Steps:
+    /// 1. Solve mates (existing logic via `evaluate`).
+    /// 2. Compute assembly centroid (mean of instance AABB centres, weighted
+    ///    by AABB volume as a proxy for part volume).
+    /// 3. Determine `explode_distance` (field or auto).
+    /// 4. For each instance shift its solid along the unit vector from the
+    ///    assembly centroid to the instance AABB centre, scaled by
+    ///    `exploded * explode_distance`.
+    /// 5. Return the displaced solids in declaration order.
+    pub fn evaluate_exploded(&self) -> Result<Vec<(String, Solid)>, AssemblyError> {
+        // Step 1: evaluate using the existing path (mates + poses).
+        let solids = self.evaluate()?;
+
+        // If there is nothing to explode, return as-is.
+        let amount = match self.exploded {
+            None | Some(0.0) => return Ok(solids),
+            Some(a) => a,
+        };
+
+        // Step 2: compute per-instance AABB centres and volumes.
+        // We use AABB centre as a proxy for the part centroid, and AABB
+        // volume as a proxy for part volume (consistent with solid_aabb).
+        let mut centres: Vec<Vec3> = Vec::with_capacity(solids.len());
+        let mut weights: Vec<f64> = Vec::with_capacity(solids.len());
+
+        for (_, solid) in &solids {
+            if let Some((min, max)) = solid_aabb(solid) {
+                let c = Vec3::new(
+                    (min[0] + max[0]) * 0.5,
+                    (min[1] + max[1]) * 0.5,
+                    (min[2] + max[2]) * 0.5,
+                );
+                let vol = ((max[0] - min[0]) * (max[1] - min[1]) * (max[2] - min[2])).max(0.0);
+                centres.push(c);
+                weights.push(vol);
+            } else {
+                // Empty solid: use origin with zero weight.
+                centres.push(Vec3::zeros());
+                weights.push(0.0);
+            }
+        }
+
+        // Weighted mean centroid. Fall back to unweighted if all weights are zero.
+        let total_weight: f64 = weights.iter().sum();
+        let assembly_centroid = if total_weight > 0.0 {
+            let mut acc = Vec3::zeros();
+            for (c, w) in centres.iter().zip(weights.iter()) {
+                acc += *c * *w;
+            }
+            acc / total_weight
+        } else {
+            // All empty — just average unweighted.
+            let n = centres.len() as f64;
+            if n == 0.0 {
+                Vec3::zeros()
+            } else {
+                centres.iter().fold(Vec3::zeros(), |a, c| a + *c) / n
+            }
+        };
+
+        // Step 3: determine explode_distance.
+        let dist = match self.explode_distance {
+            Some(d) => d,
+            None => {
+                // Auto: half the assembly bounding-box diagonal.
+                let mut min_all = [f64::INFINITY; 3];
+                let mut max_all = [f64::NEG_INFINITY; 3];
+                let mut any = false;
+                for (_, solid) in &solids {
+                    if let Some((mn, mx)) = solid_aabb(solid) {
+                        any = true;
+                        for i in 0..3 {
+                            min_all[i] = min_all[i].min(mn[i]);
+                            max_all[i] = max_all[i].max(mx[i]);
+                        }
+                    }
+                }
+                if any {
+                    let dx = max_all[0] - min_all[0];
+                    let dy = max_all[1] - min_all[1];
+                    let dz = max_all[2] - min_all[2];
+                    (dx * dx + dy * dy + dz * dz).sqrt() * 0.5
+                } else {
+                    0.0
+                }
+            }
+        };
+
+        // Step 4: displace each solid radially.
+        let mut out = Vec::with_capacity(solids.len());
+        for ((id, solid), centre) in solids.into_iter().zip(centres.iter()) {
+            let radial = *centre - assembly_centroid;
+            let radial_norm = radial.norm();
+            let displaced = if radial_norm > 1e-15 {
+                let unit = radial / radial_norm;
+                let shift = unit * (amount * dist);
+                translate_solid(&solid, shift)
+            } else {
+                // Instance is exactly at the assembly centroid — no direction
+                // to explode along, leave in place.
+                solid
+            };
+            out.push((id, displaced));
+        }
+
+        Ok(out)
+    }
+
     /// Evaluate every instance, using `loader` to resolve any
     /// `AssemblyRef::Path` reference. The loader takes the path string
     /// (whatever was stored in the JSON) and returns a parsed `Assembly`.
@@ -3541,5 +3669,217 @@ mod unit_tests {
         let p = pick_perpendicular(v);
         assert!(v.dot(&p).abs() < 1e-12);
         assert!((p.norm() - 1.0).abs() < 1e-12);
+    }
+
+    // -----------------------------------------------------------------------
+    // Exploded-view tests
+    // -----------------------------------------------------------------------
+
+    /// Build a minimal inline model containing a 1×1×1 box centred at the
+    /// local origin. Returns an `Instance` at `pose` with id `id`.
+    fn unit_box_instance(id: &str, pose: Pose) -> Instance {
+        use crate::feature::Feature;
+        use crate::model::Model;
+        use crate::scalar::lits;
+        Instance {
+            id: id.into(),
+            model: AssemblyRef::Inline(Box::new(
+                Model::new().add(Feature::Box {
+                    id: "body".into(),
+                    extents: lits([1.0, 1.0, 1.0]),
+                }),
+            )),
+            target: None,
+            default_pose: pose,
+        }
+    }
+
+    /// Test 1: `exploded = None` → identical to `evaluate`.
+    ///
+    /// Two instances at different positions. `evaluate_exploded` with no
+    /// exploded field must return the same translations as plain `evaluate`.
+    #[test]
+    fn exploded_none_identical_to_evaluate() {
+        let asm = Assembly {
+            instances: vec![
+                unit_box_instance("a", Pose::at(0.0, 0.0, 0.0)),
+                unit_box_instance("b", Pose::at(10.0, 0.0, 0.0)),
+            ],
+            exploded: None,
+            ..Assembly::default()
+        };
+
+        let base = asm.evaluate().expect("evaluate");
+        let expl = asm.evaluate_exploded().expect("evaluate_exploded");
+
+        assert_eq!(base.len(), expl.len());
+        for ((id_b, s_b), (id_e, s_e)) in base.iter().zip(expl.iter()) {
+            assert_eq!(id_b, id_e);
+            // Same vertex count — no displacement happened.
+            assert_eq!(s_b.vertex_count(), s_e.vertex_count());
+            // Verify bounding-box centroids match to floating-point precision.
+            if let (Some((mn_b, mx_b)), Some((mn_e, mx_e))) =
+                (solid_aabb(s_b), solid_aabb(s_e))
+            {
+                for i in 0..3 {
+                    assert!(
+                        ((mn_b[i] + mx_b[i]) - (mn_e[i] + mx_e[i])).abs() < 1e-10,
+                        "centroid mismatch on axis {i} for instance {id_b}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Test 2: two instances at (0,0,0) and (10,0,0), exploded=1.0,
+    /// explode_distance=20 → they move apart by 20 along ±x.
+    ///
+    /// Assembly centroid (equal AABB volumes, both cubes): x = 5.0.
+    /// Instance A centroid = 0.5 (box 0..1 → centre 0.5); direction = −x.
+    /// Instance B centroid = 10.5; direction = +x.
+    /// Expected shift = ±20 along x.
+    #[test]
+    fn exploded_radial_displacement() {
+        let asm = Assembly {
+            instances: vec![
+                unit_box_instance("a", Pose::at(0.0, 0.0, 0.0)),
+                unit_box_instance("b", Pose::at(10.0, 0.0, 0.0)),
+            ],
+            exploded: Some(1.0),
+            explode_distance: Some(20.0),
+            ..Assembly::default()
+        };
+
+        let result = asm.evaluate_exploded().expect("evaluate_exploded");
+        assert_eq!(result.len(), 2);
+
+        let (id_a, solid_a) = &result[0];
+        let (id_b, solid_b) = &result[1];
+        assert_eq!(id_a, "a");
+        assert_eq!(id_b, "b");
+
+        let (mn_a, mx_a) = solid_aabb(solid_a).expect("solid_a aabb");
+        let (mn_b, mx_b) = solid_aabb(solid_b).expect("solid_b aabb");
+
+        let cx_a = (mn_a[0] + mx_a[0]) * 0.5;
+        let cx_b = (mn_b[0] + mx_b[0]) * 0.5;
+
+        // A moved in the −x direction, B in the +x direction.
+        assert!(cx_a < 0.0, "instance A should have moved in −x; cx_a = {cx_a}");
+        assert!(cx_b > 11.0, "instance B should have moved in +x; cx_b = {cx_b}");
+
+        // y and z centroids must be unchanged (both at 0.5 from the unit cube).
+        let cy_a = (mn_a[1] + mx_a[1]) * 0.5;
+        let cy_b = (mn_b[1] + mx_b[1]) * 0.5;
+        assert!((cy_a - 0.5).abs() < 1e-10, "cy_a = {cy_a}");
+        assert!((cy_b - 0.5).abs() < 1e-10, "cy_b = {cy_b}");
+    }
+
+    /// Test 3: round-trip JSON with `exploded` and `explode_distance` preserved.
+    #[test]
+    fn exploded_json_round_trip() {
+        let asm = Assembly {
+            instances: vec![unit_box_instance("x", Pose::identity())],
+            exploded: Some(0.75),
+            explode_distance: Some(42.0),
+            ..Assembly::default()
+        };
+
+        let json = asm.to_json_string().expect("to_json_string");
+        assert!(json.contains("\"exploded\""), "json should contain exploded field");
+        assert!(
+            json.contains("\"explode_distance\""),
+            "json should contain explode_distance field"
+        );
+
+        let restored = Assembly::from_json_str(&json).expect("from_json_str");
+        assert_eq!(
+            restored.exploded,
+            Some(0.75),
+            "exploded field should survive JSON round-trip"
+        );
+        assert_eq!(
+            restored.explode_distance,
+            Some(42.0),
+            "explode_distance field should survive JSON round-trip"
+        );
+    }
+
+    /// Test 4: `exploded = Some(0.0)` is identical to `exploded = None`.
+    ///
+    /// Both return the assembled (non-displaced) solids.
+    #[test]
+    fn exploded_zero_equals_none() {
+        let make_asm = |exploded: Option<f64>| Assembly {
+            instances: vec![
+                unit_box_instance("p", Pose::at(0.0, 0.0, 0.0)),
+                unit_box_instance("q", Pose::at(5.0, 3.0, 1.0)),
+            ],
+            exploded,
+            explode_distance: Some(10.0),
+            ..Assembly::default()
+        };
+
+        let none_result = make_asm(None).evaluate_exploded().expect("none");
+        let zero_result = make_asm(Some(0.0)).evaluate_exploded().expect("zero");
+
+        assert_eq!(none_result.len(), zero_result.len());
+        for ((_, s_n), (_, s_z)) in none_result.iter().zip(zero_result.iter()) {
+            if let (Some((mn_n, mx_n)), Some((mn_z, mx_z))) =
+                (solid_aabb(s_n), solid_aabb(s_z))
+            {
+                for i in 0..3 {
+                    assert!(
+                        ((mn_n[i] + mx_n[i]) - (mn_z[i] + mx_z[i])).abs() < 1e-10,
+                        "centroids must match on axis {i}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Test 5: auto-computed `explode_distance` when `explode_distance` is
+    /// `None`. Two unit cubes at x=0 and x=10 → assembly AABB spans 0..11
+    /// on x and 0..1 on y,z → diagonal ≈ sqrt(11²+1+1) ≈ 11.09 → auto dist
+    /// ≈ 5.54. With `exploded=1.0` both instances must move away from the
+    /// centroid (x≈5.5) by that amount.
+    #[test]
+    fn exploded_auto_distance() {
+        let asm = Assembly {
+            instances: vec![
+                unit_box_instance("left", Pose::at(0.0, 0.0, 0.0)),
+                unit_box_instance("right", Pose::at(10.0, 0.0, 0.0)),
+            ],
+            exploded: Some(1.0),
+            explode_distance: None, // auto
+            ..Assembly::default()
+        };
+
+        let result = asm.evaluate_exploded().expect("evaluate_exploded");
+        let (_, s_left) = &result[0];
+        let (_, s_right) = &result[1];
+
+        let (mn_l, mx_l) = solid_aabb(s_left).expect("left aabb");
+        let (mn_r, mx_r) = solid_aabb(s_right).expect("right aabb");
+
+        let cx_l = (mn_l[0] + mx_l[0]) * 0.5;
+        let cx_r = (mn_r[0] + mx_r[0]) * 0.5;
+
+        // With auto distance ≈ 5.54 the left cube (centred near 0.5) should
+        // have moved left of the assembly centroid (~5.5), and the right cube
+        // (centred near 10.5) should be further right.
+        assert!(cx_l < 0.5, "left cube should have moved left; cx_l = {cx_l}");
+        assert!(cx_r > 10.5, "right cube should have moved right; cx_r = {cx_r}");
+
+        // Compute expected auto distance and verify the displacement magnitude.
+        // Assembly AABB: x ∈ [0, 11], y ∈ [0, 1], z ∈ [0, 1].
+        let expected_dist = ((11.0f64).powi(2) + 1.0 + 1.0).sqrt() * 0.5;
+        // Assembly centroid: weighted average of AABB centres (equal volumes).
+        // left AABB centre x = 0.5, right AABB centre x = 10.5 → asm centroid x = 5.5.
+        let asm_cx = 5.5_f64;
+        let left_shift = (0.5 - asm_cx) / (0.5 - asm_cx).abs() * expected_dist; // negative
+        let right_shift = (10.5 - asm_cx) / (10.5 - asm_cx).abs() * expected_dist; // positive
+        assert!((cx_l - (0.5 + left_shift)).abs() < 0.5, "left displacement");
+        assert!((cx_r - (10.5 + right_shift)).abs() < 0.5, "right displacement");
     }
 }
