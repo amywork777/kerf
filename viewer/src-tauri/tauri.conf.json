@@ -1,0 +1,27 @@
+{
+  "productName": "kerf-cad",
+  "version": "0.1.0",
+  "identifier": "com.kerf-cad.viewer",
+  "build": {
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "kerf-cad",
+        "width": 1400,
+        "height": 900,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  }
+}
