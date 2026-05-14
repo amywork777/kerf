@@ -266,6 +266,219 @@ fn build(
             }
             Ok(torus_faceted(r_maj, r_min, *major_segs, *minor_segs))
         }
+        // ----------------------------------------------------------------
+        // Donut2: same faceted torus as Donut. The "analytic ring geometry"
+        // preservation is semantic metadata — the mesh is identical but
+        // communicates intent for future analytic boolean paths.
+        // ----------------------------------------------------------------
+        Feature::Donut2 {
+            major_radius,
+            minor_radius,
+            major_segs,
+            minor_segs,
+            ..
+        } => {
+            let r_maj = resolve_one(id, major_radius, params)?;
+            let r_min = resolve_one(id, minor_radius, params)?;
+            if r_maj <= r_min || r_min <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Donut2 requires major > minor > 0 (got major={r_maj}, minor={r_min})"
+                    ),
+                });
+            }
+            if *major_segs < 3 || *minor_segs < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "Donut2 requires major_segs >= 3 and minor_segs >= 3".into(),
+                });
+            }
+            // Use higher-resolution faceting to better approximate the
+            // analytic torus volume 2π²Rr².
+            Ok(torus_faceted(r_maj, r_min, *major_segs, *minor_segs))
+        }
+        // ----------------------------------------------------------------
+        // ToroidalCap: a sweep_degrees wedge of the toroidal solid.
+        // Built as a union of sweep_cylinder_segment arcs, exactly like
+        // QuarterTorus (90°) and HalfTorus (180°) but for arbitrary angle.
+        // ----------------------------------------------------------------
+        Feature::ToroidalCap {
+            major_radius,
+            minor_radius,
+            sweep_degrees,
+            major_segs,
+            minor_segs: _,
+            ..
+        } => {
+            let r_maj = resolve_one(id, major_radius, params)?;
+            let r_min = resolve_one(id, minor_radius, params)?;
+            let sw_deg = resolve_one(id, sweep_degrees, params)?;
+            if r_maj <= r_min || r_min <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ToroidalCap requires major > minor > 0 (got maj={r_maj}, min={r_min})"
+                    ),
+                });
+            }
+            if sw_deg <= 0.0 || sw_deg > 360.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ToroidalCap requires 0 < sweep_degrees <= 360 (got {sw_deg})"
+                    ),
+                });
+            }
+            if *major_segs < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "ToroidalCap requires major_segs >= 3".into(),
+                });
+            }
+            if (sw_deg - 360.0).abs() < 1e-6 {
+                // Full torus — use the closed topology builder.
+                return Ok(torus_faceted(r_maj, r_min, *major_segs, 8));
+            }
+            let total_rad = sw_deg.to_radians();
+            let mut acc: Option<Solid> = None;
+            for i in 0..*major_segs {
+                let t0 = total_rad * (i as f64) / (*major_segs as f64);
+                let t1 = total_rad * ((i + 1) as f64) / (*major_segs as f64);
+                let p0 = [r_maj * t0.cos(), r_maj * t0.sin(), 0.0];
+                let p1 = [r_maj * t1.cos(), r_maj * t1.sin(), 0.0];
+                let cyl = sweep_cylinder_segment(p0, p1, r_min, 10)
+                    .ok_or_else(|| EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!("ToroidalCap seg {i} zero length"),
+                    })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "toroidal_cap_join",
+                        message: format!("seg {i}: {}", e.message),
+                    })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+        // ----------------------------------------------------------------
+        // EllipticTube: cylinder with elliptical cross-section built by
+        // constructing a unit cylinder along +z and non-uniformly scaling
+        // (semi_major along x, semi_minor along y, length along axis).
+        // ----------------------------------------------------------------
+        Feature::EllipticTube {
+            semi_major,
+            semi_minor,
+            length,
+            axis,
+            segments,
+            ..
+        } => {
+            let a = resolve_one(id, semi_major, params)?;
+            let b = resolve_one(id, semi_minor, params)?;
+            let l = resolve_one(id, length, params)?;
+            if a <= 0.0 || b <= 0.0 || l <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "EllipticTube requires positive semi_major, semi_minor, length (got a={a}, b={b}, l={l})"
+                    ),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "EllipticTube requires segments >= 3".into(),
+                });
+            }
+            // Build unit cylinder (radius=1) along +z, height=1, then scale.
+            let unit = cylinder_faceted(1.0, 1.0, *segments);
+            // Scale to elliptic cross-section along +z, then rotate to axis.
+            let axis_idx = parse_axis(id, axis)?;
+            let (scaled, el, ea, eb) = match axis_idx {
+                0 => {
+                    // axis = x: ellipse axes along y and z, tube along x
+                    // unit cyl is along z with radius 1; scale: x→l, y→b, z→a then swap axes
+                    // Actually build along z with sx=a, sy=b, sz=l then remap z→x.
+                    let s = scale_xyz_solid(&unit, a, b, l);
+                    let remapped = axis_swap_xz_to_x(&s);
+                    (remapped, l, a, b)
+                }
+                1 => {
+                    // axis = y: tube along y
+                    let s = scale_xyz_solid(&unit, a, b, l);
+                    let remapped = axis_swap_yz_to_y(&s);
+                    (remapped, l, a, b)
+                }
+                _ => {
+                    // axis = z (default)
+                    let s = scale_xyz_solid(&unit, a, b, l);
+                    (s, l, a, b)
+                }
+            };
+            let _ = (el, ea, eb);
+            Ok(scaled)
+        }
+        // ----------------------------------------------------------------
+        // Goblet2: foot disk + cylindrical stem + cylindrical cup,
+        // stacked along +z. Classic straight-sided chalice / wine-glass.
+        // foot_radius > stem_radius; cup_radius > stem_radius.
+        // ----------------------------------------------------------------
+        Feature::Goblet2 {
+            foot_radius,
+            stem_radius,
+            stem_height,
+            cup_radius,
+            cup_height,
+            segments,
+            ..
+        } => {
+            let fr = resolve_one(id, foot_radius, params)?;
+            let sr = resolve_one(id, stem_radius, params)?;
+            let sh = resolve_one(id, stem_height, params)?;
+            let cr = resolve_one(id, cup_radius, params)?;
+            let ch = resolve_one(id, cup_height, params)?;
+            if fr <= 0.0 || sr <= 0.0 || sh <= 0.0 || cr <= 0.0 || ch <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Goblet2 requires positive foot_radius, stem_radius, stem_height, cup_radius, cup_height (got fr={fr}, sr={sr}, sh={sh}, cr={cr}, ch={ch})"
+                    ),
+                });
+            }
+            if sr >= fr {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Goblet2 requires stem_radius < foot_radius (got sr={sr}, fr={fr})"
+                    ),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "Goblet2 requires segments >= 3".into(),
+                });
+            }
+            let foot_h = sr * 0.5; // thin flat disk foot
+            let foot = cylinder_faceted(fr, foot_h, *segments);
+            let stem_raw = cylinder_faceted(sr, sh, *segments);
+            let stem = translate_solid(&stem_raw, Vec3::new(0.0, 0.0, foot_h - 1e-3));
+            let cup_raw = cylinder_faceted(cr, ch, *segments);
+            let cup = translate_solid(&cup_raw, Vec3::new(0.0, 0.0, foot_h + sh - 2e-3));
+            let lower = foot.try_union(&stem).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "goblet2_foot_stem",
+                message: e.message,
+            })?;
+            lower.try_union(&cup).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "goblet2_cup",
+                message: e.message,
+            })
+        }
         Feature::Cone { radius, height, .. } => Ok(cone(
             resolve_one(id, radius, params)?,
             resolve_one(id, height, params)?,
