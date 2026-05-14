@@ -3123,25 +3123,22 @@ fn build(
             }
             let total_samples = (*segments as f64 * t).ceil() as usize + 1;
             let total_angle = 2.0 * std::f64::consts::PI * t;
-            // Build helix sample points. For axis="z" (default): x=R cosθ, y=R sinθ, z=p*θ/(2π).
-            // For axis="x": rotate so the helix wraps around X — coords become (p*θ/(2π), R cosθ, R sinθ).
-            // For axis="y": coords become (R cosθ, p*θ/(2π), R sinθ) (helix wraps around Y).
-            let helix_point = |theta: f64| -> [f64; 3] {
+            // Build helix sample points always in z-axis orientation:
+            //   x = R cosθ,  y = R sinθ,  z = p*θ/(2π)
+            // After accumulating all segments we apply an axis remap for x/y axes.
+            // This keeps ALL boolean union operations in z-axis space where the
+            // stitch engine has well-exercised code paths, avoiding the stitch
+            // panic (booleans/stitch.rs:389) triggered by x/y-axis segment chains.
+            let helix_point_z = |theta: f64| -> [f64; 3] {
                 let rise = p * theta / (2.0 * std::f64::consts::PI);
-                let cos_t = theta.cos();
-                let sin_t = theta.sin();
-                match axis.as_str() {
-                    "x" => [rise, r_axis * cos_t, r_axis * sin_t],
-                    "y" => [r_axis * cos_t, rise, r_axis * sin_t],
-                    _ => [r_axis * cos_t, r_axis * sin_t, rise], // "z" and default
-                }
+                [r_axis * theta.cos(), r_axis * theta.sin(), rise]
             };
             let mut acc: Option<Solid> = None;
             for i in 0..total_samples - 1 {
                 let theta_a = total_angle * i as f64 / (total_samples - 1) as f64;
                 let theta_b = total_angle * (i + 1) as f64 / (total_samples - 1) as f64;
-                let p0 = helix_point(theta_a);
-                let p1 = helix_point(theta_b);
+                let p0 = helix_point_z(theta_a);
+                let p1 = helix_point_z(theta_b);
                 let cyl = sweep_cylinder_segment(p0, p1, r_wire, 8).ok_or_else(|| EvalError::Invalid {
                     id: id.into(),
                     reason: format!("Helix segment {i} has zero length"),
@@ -3155,7 +3152,16 @@ fn build(
                     })?,
                 });
             }
-            Ok(acc.unwrap())
+            // Apply final axis remap: the accumulated solid is in z-axis space.
+            // For x-axis: cyclic permutation (x,y,z) -> (z,x,y) maps +z to +x.
+            // For y-axis: cyclic permutation (x,y,z) -> (y,z,x) maps +z to +y.
+            // For z-axis (default): no transform needed.
+            let solid_z = acc.unwrap();
+            Ok(match axis.as_str() {
+                "x" => axis_swap_xz_to_x(&solid_z),
+                "y" => axis_swap_yz_to_y(&solid_z),
+                _ => solid_z,
+            })
         }
         Feature::TwistedExtrude {
             profile,
