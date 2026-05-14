@@ -1,0 +1,13 @@
+{
+  "parameters": {},
+  "features": [
+    {
+      "kind": "Donut",
+      "id": "handle",
+      "major_radius": 22.0,
+      "minor_radius": 5.0,
+      "major_segs": 16,
+      "minor_segs": 8
+    }
+  ]
+}

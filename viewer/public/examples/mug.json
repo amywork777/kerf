@@ -1,0 +1,20 @@
+{
+  "parameters": {},
+  "features": [
+    {
+      "kind": "Cylinder",
+      "id": "body",
+      "radius": 35.0,
+      "height": 80.0,
+      "segments": 24
+    },
+    {
+      "kind": "Donut",
+      "id": "mug",
+      "major_radius": 22.0,
+      "minor_radius": 5.0,
+      "major_segs": 16,
+      "minor_segs": 8
+    }
+  ]
+}
