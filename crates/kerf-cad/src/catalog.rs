@@ -310,6 +310,14 @@ pub fn categorize(name: &str) -> Category {
             | "Marker3D"
             | "VectorArrow"
             | "Arrow"
+            | "MidPlaneRef"
+            | "PerpRefPlane"
+            | "OffsetRefPlane"
+            | "CoordinateAxes"
+            | "OriginPoint"
+            | "CenterMarker"
+            | "AxisLabel"
+            | "DistanceMarker"
     ) {
         return Category::Reference;
     }

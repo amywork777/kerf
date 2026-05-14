@@ -8551,6 +8551,299 @@ fn build(
         }
 
         // ---------------------------------------------------------------
+        // Reference geometry batch 2 (3 features) — ship 2026-05-10.
+        // ---------------------------------------------------------------
+
+        Feature::CenterMarker {
+            position,
+            size,
+            rod_radius,
+            segments,
+            ..
+        } => {
+            let pos = resolve3(id, position, params)?;
+            let sz = resolve_one(id, size, params)?;
+            let rr = resolve_one(id, rod_radius, params)?;
+            if sz <= 0.0 || rr <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "CenterMarker requires positive size and rod_radius (got size={sz}, r={rr})"
+                    ),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("CenterMarker segments must be >= 3 (got {segments})"),
+                });
+            }
+            // Three rods centred on `pos`, one along each axis.
+            // Use stagger (ε = rr) so end-caps never sit coplanar with a
+            // neighbour bar's lateral surface — same pattern as CoordinateAxes.
+            let half = sz / 2.0;
+            let bar_x = cylinder_along_axis(rr, sz, *segments, 0, pos[0] - half, pos[1], pos[2]);
+            let bar_y = cylinder_along_axis(
+                rr,
+                sz + 2.0 * rr,
+                *segments,
+                1,
+                pos[1] - half - rr,
+                pos[0],
+                pos[2],
+            );
+            let bar_z = cylinder_along_axis(
+                rr,
+                sz + 4.0 * rr,
+                *segments,
+                2,
+                pos[2] - half - 2.0 * rr,
+                pos[0],
+                pos[1],
+            );
+            let xy = bar_x.try_union(&bar_y).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "center_marker_xy",
+                message: e.message,
+            })?;
+            xy.try_union(&bar_z).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "center_marker_xyz",
+                message: e.message,
+            })
+        }
+
+        Feature::AxisLabel {
+            origin,
+            direction,
+            length,
+            head_radius,
+            shaft_radius,
+            segments,
+            ..
+        } => {
+            let orig = resolve3(id, origin, params)?;
+            let dir_raw = resolve3(id, direction, params)?;
+            let len = resolve_one(id, length, params)?;
+            let hr = resolve_one(id, head_radius, params)?;
+            let sr = resolve_one(id, shaft_radius, params)?;
+            let dir_mag = (dir_raw[0] * dir_raw[0]
+                + dir_raw[1] * dir_raw[1]
+                + dir_raw[2] * dir_raw[2])
+                .sqrt();
+            if dir_mag < 1e-9 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "AxisLabel direction must be non-zero".into(),
+                });
+            }
+            if len <= 0.0 || hr <= 0.0 || sr <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "AxisLabel requires positive length, head_radius, shaft_radius (got len={len}, hr={hr}, sr={sr})"
+                    ),
+                });
+            }
+            if hr <= sr {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "AxisLabel head_radius ({hr}) must be > shaft_radius ({sr})"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("AxisLabel segments must be >= 6 (got {segments})"),
+                });
+            }
+            // Normalise direction.
+            let dir = [
+                dir_raw[0] / dir_mag,
+                dir_raw[1] / dir_mag,
+                dir_raw[2] / dir_mag,
+            ];
+            // Shaft tip (where cone base sits).
+            let tip = [
+                orig[0] + dir[0] * len,
+                orig[1] + dir[1] * len,
+                orig[2] + dir[2] * len,
+            ];
+            // Shaft: sweep from origin to tip.
+            let shaft = sweep_cylinder_segment(orig, tip, sr, *segments).ok_or_else(|| {
+                EvalError::Invalid {
+                    id: id.into(),
+                    reason: "AxisLabel shaft has zero length".into(),
+                }
+            })?;
+            // Head: cone (base at tip, apex further along dir by head_radius).
+            // Use extrude_lofted from a circle at `tip` to a tiny circle
+            // (apex_sz * hr) at `tip + dir * head_radius` — same pattern as
+            // VectorArrow.
+            let head_len = hr; // cone length == head_radius for visual proportion
+            let apex = [
+                tip[0] + dir[0] * head_len,
+                tip[1] + dir[1] * head_len,
+                tip[2] + dir[2] * head_len,
+            ];
+            // Build orthonormal frame around `dir` (robust: works for any
+            // unit-vector direction including axis-aligned ones).
+            let (perp, perp2) = perp_frame(dir);
+            let n = *segments;
+            let mut base_circle = Vec::with_capacity(n);
+            let mut apex_circle = Vec::with_capacity(n);
+            let apex_sz = hr * 1e-3;
+            for k in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (k as f64) / (n as f64);
+                let cs = theta.cos();
+                let sn = theta.sin();
+                base_circle.push(Point3::new(
+                    tip[0] + hr * (cs * perp[0] + sn * perp2[0]),
+                    tip[1] + hr * (cs * perp[1] + sn * perp2[1]),
+                    tip[2] + hr * (cs * perp[2] + sn * perp2[2]),
+                ));
+                apex_circle.push(Point3::new(
+                    apex[0] + apex_sz * (cs * perp[0] + sn * perp2[0]),
+                    apex[1] + apex_sz * (cs * perp[1] + sn * perp2[1]),
+                    apex[2] + apex_sz * (cs * perp[2] + sn * perp2[2]),
+                ));
+            }
+            let head = extrude_lofted(&base_circle, &apex_circle);
+            shaft.try_union(&head).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "axis_label_join",
+                message: e.message,
+            })
+        }
+
+        Feature::DistanceMarker {
+            from,
+            to,
+            shaft_radius,
+            head_radius,
+            segments,
+            ..
+        } => {
+            let f = resolve3(id, from, params)?;
+            let t = resolve3(id, to, params)?;
+            let sr = resolve_one(id, shaft_radius, params)?;
+            let hr = resolve_one(id, head_radius, params)?;
+            if sr <= 0.0 || hr <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "DistanceMarker requires positive shaft_radius and head_radius (got sr={sr}, hr={hr})"
+                    ),
+                });
+            }
+            if hr <= sr {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "DistanceMarker head_radius ({hr}) must be > shaft_radius ({sr})"
+                    ),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("DistanceMarker segments must be >= 3 (got {segments})"),
+                });
+            }
+            let dx = t[0] - f[0];
+            let dy = t[1] - f[1];
+            let dz = t[2] - f[2];
+            let len = (dx * dx + dy * dy + dz * dz).sqrt();
+            if len < 1e-9 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "DistanceMarker from and to must not coincide".into(),
+                });
+            }
+            // Shaft between from and to.
+            let shaft = sweep_cylinder_segment(f, t, sr, *segments).ok_or_else(|| {
+                EvalError::Invalid {
+                    id: id.into(),
+                    reason: "DistanceMarker shaft has zero length".into(),
+                }
+            })?;
+            // Direction unit vector (from → to).
+            let dir = [dx / len, dy / len, dz / len];
+            // Build orthonormal frame for cone-circle construction (robust).
+            let (perp, perp2) = perp_frame(dir);
+            let n = *segments;
+            let apex_sz = hr * 1e-3;
+            let head_len = hr; // cone length proportional to head_radius
+
+            // Head at `from` — cone pointing away from shaft (toward −dir).
+            let from_apex = [
+                f[0] - dir[0] * head_len,
+                f[1] - dir[1] * head_len,
+                f[2] - dir[2] * head_len,
+            ];
+            let mut from_base = Vec::with_capacity(n);
+            let mut from_apex_circle = Vec::with_capacity(n);
+            for k in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (k as f64) / (n as f64);
+                let cs = theta.cos();
+                let sn = theta.sin();
+                from_base.push(Point3::new(
+                    f[0] + hr * (cs * perp[0] + sn * perp2[0]),
+                    f[1] + hr * (cs * perp[1] + sn * perp2[1]),
+                    f[2] + hr * (cs * perp[2] + sn * perp2[2]),
+                ));
+                from_apex_circle.push(Point3::new(
+                    from_apex[0] + apex_sz * (cs * perp[0] + sn * perp2[0]),
+                    from_apex[1] + apex_sz * (cs * perp[1] + sn * perp2[1]),
+                    from_apex[2] + apex_sz * (cs * perp[2] + sn * perp2[2]),
+                ));
+            }
+            let head_from = extrude_lofted(&from_base, &from_apex_circle);
+
+            // Head at `to` — cone pointing away from shaft (toward +dir).
+            let to_apex = [
+                t[0] + dir[0] * head_len,
+                t[1] + dir[1] * head_len,
+                t[2] + dir[2] * head_len,
+            ];
+            let mut to_base = Vec::with_capacity(n);
+            let mut to_apex_circle = Vec::with_capacity(n);
+            for k in 0..n {
+                let theta = 2.0 * std::f64::consts::PI * (k as f64) / (n as f64);
+                let cs = theta.cos();
+                let sn = theta.sin();
+                to_base.push(Point3::new(
+                    t[0] + hr * (cs * perp[0] + sn * perp2[0]),
+                    t[1] + hr * (cs * perp[1] + sn * perp2[1]),
+                    t[2] + hr * (cs * perp[2] + sn * perp2[2]),
+                ));
+                to_apex_circle.push(Point3::new(
+                    to_apex[0] + apex_sz * (cs * perp[0] + sn * perp2[0]),
+                    to_apex[1] + apex_sz * (cs * perp[1] + sn * perp2[1]),
+                    to_apex[2] + apex_sz * (cs * perp[2] + sn * perp2[2]),
+                ));
+            }
+            let head_to = extrude_lofted(&to_base, &to_apex_circle);
+
+            let with_from = shaft
+                .try_union(&head_from)
+                .map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "dist_marker_from",
+                    message: e.message,
+                })?;
+            with_from
+                .try_union(&head_to)
+                .map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "dist_marker_to",
+                    message: e.message,
+                })
+        }
+
+        // ---------------------------------------------------------------
         // Manufacturing batch 4 (5 features) — ship 2026-05-08.
         // ---------------------------------------------------------------
 
@@ -10294,6 +10587,38 @@ fn axis_swap_yz_to_y(s: &Solid) -> Solid {
     apply_orthonormal_remap(s, |p| Point3::new(p.y, p.z, p.x), |v| {
         Vec3::new(v.y, v.z, v.x)
     })
+}
+
+/// Compute a pair of unit vectors `(perp, perp2)` that are mutually
+/// perpendicular and both perpendicular to `dir` (which must be a unit vector).
+///
+/// Uses a robust Gram-Schmidt approach: choose the world-axis least aligned to
+/// `dir` as the seed, project out the `dir` component, normalise. This never
+/// degenerates for any unit-vector input.
+fn perp_frame(dir: [f64; 3]) -> ([f64; 3], [f64; 3]) {
+    // Pick seed: the axis whose absolute dot product with `dir` is smallest.
+    let abs_x = dir[0].abs();
+    let abs_y = dir[1].abs();
+    let abs_z = dir[2].abs();
+    let seed: [f64; 3] = if abs_x <= abs_y && abs_x <= abs_z {
+        [1.0, 0.0, 0.0]
+    } else if abs_y <= abs_z {
+        [0.0, 1.0, 0.0]
+    } else {
+        [0.0, 0.0, 1.0]
+    };
+    // Gram-Schmidt: perp = seed - (seed·dir)*dir, then normalise.
+    let dot = seed[0] * dir[0] + seed[1] * dir[1] + seed[2] * dir[2];
+    let p0 = [seed[0] - dot * dir[0], seed[1] - dot * dir[1], seed[2] - dot * dir[2]];
+    let pn = (p0[0] * p0[0] + p0[1] * p0[1] + p0[2] * p0[2]).sqrt();
+    let perp = [p0[0] / pn, p0[1] / pn, p0[2] / pn];
+    // perp2 = dir × perp (already unit — dir and perp are orthonormal).
+    let perp2 = [
+        dir[1] * perp[2] - dir[2] * perp[1],
+        dir[2] * perp[0] - dir[0] * perp[2],
+        dir[0] * perp[1] - dir[1] * perp[0],
+    ];
+    (perp, perp2)
 }
 
 fn apply_orthonormal_remap(
