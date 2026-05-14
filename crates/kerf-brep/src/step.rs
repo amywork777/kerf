@@ -25,6 +25,7 @@ use kerf_geom::{Frame, Point3, Vec3};
 use kerf_topo::{EdgeId, FaceId, HalfEdgeId, VertexId};
 
 use crate::Solid;
+use crate::analytic_edge::AnalyticEdge;
 use crate::geometry::{CurveKind, SurfaceKind};
 
 /// Write `solid` as an ISO 10303-21 (AP214) STEP file to `w`. `name` is
@@ -370,7 +371,38 @@ impl StepWriter {
             let mut bound_refs: Vec<u32> = Vec::new();
 
             if let Some(start_he) = lp.half_edge() {
-                let edge_loop_id = self.emit_loop_bounds(w, solid, start_he)?;
+                // If this face has an analytic circle or ellipse, emit the
+                // corresponding STEP analytic curve entity as a single closed
+                // EDGE_LOOP instead of the N-segment polyline. This produces
+                // true CIRCLE/ELLIPSE entities in the output rather than
+                // POLYLINE approximations.
+                let analytic_loop_id =
+                    match solid.face_analytic_edge(fid) {
+                        Some(AnalyticEdge::Circle {
+                            center,
+                            radius,
+                            normal,
+                            ..
+                        }) => Some(self.emit_analytic_circle_loop(
+                            w, *center, *radius, *normal,
+                        )?),
+                        Some(AnalyticEdge::Ellipse {
+                            center,
+                            major_axis,
+                            minor_axis,
+                            ..
+                        }) => Some(self.emit_analytic_ellipse_loop(
+                            w, *center, *major_axis, *minor_axis,
+                        )?),
+                        // Line and BSpline: fall through to polyline emission.
+                        _ => None,
+                    };
+
+                let edge_loop_id = if let Some(id) = analytic_loop_id {
+                    id
+                } else {
+                    self.emit_loop_bounds(w, solid, start_he)?
+                };
                 let outer_bound = self.emit(
                     w,
                     &format!("FACE_OUTER_BOUND('',#{edge_loop_id},.T.)"),
@@ -487,6 +519,124 @@ impl StepWriter {
             &format!("EDGE_LOOP('',({}))", fmt_id_list(&oriented_refs)),
         )?;
         Ok(edge_loop)
+    }
+
+    /// Build an orthonormal reference direction perpendicular to `normal`.
+    /// Used to construct AXIS2_PLACEMENT_3D for synthetic analytic curves.
+    fn ref_dir_for_normal(normal: [f64; 3]) -> Vec3 {
+        let n = Vec3::new(normal[0], normal[1], normal[2])
+            .try_normalize(0.0)
+            .unwrap_or(Vec3::z());
+        // Pick an arbitrary vector not parallel to n.
+        let arbitrary = if n.x.abs() < 0.9 { Vec3::x() } else { Vec3::y() };
+        // Project out the component along n, then normalize.
+        let perp = arbitrary - n * n.dot(&arbitrary);
+        perp.try_normalize(0.0).unwrap_or(Vec3::x())
+    }
+
+    /// Emit a closed EDGE_LOOP for an `AnalyticEdge::Circle`. The loop has a
+    /// single ORIENTED_EDGE referencing a new CIRCLE EDGE_CURVE that closes
+    /// on itself (start == end == a point on the circle at angle 0).
+    ///
+    /// Returns the EDGE_LOOP id.
+    fn emit_analytic_circle_loop(
+        &mut self,
+        w: &mut impl Write,
+        center: [f64; 3],
+        radius: f64,
+        normal: [f64; 3],
+    ) -> io::Result<u32> {
+        // Build the AXIS2_PLACEMENT_3D frame: origin = center, z = normal, x = ref_dir.
+        let origin = Point3::new(center[0], center[1], center[2]);
+        let z_dir = Vec3::new(normal[0], normal[1], normal[2])
+            .try_normalize(0.0)
+            .unwrap_or(Vec3::z());
+        let x_dir = Self::ref_dir_for_normal(normal);
+        let frame = Frame {
+            origin,
+            x: x_dir,
+            y: z_dir.cross(&x_dir),
+            z: z_dir,
+        };
+        let placement = self.emit_frame(w, frame)?;
+        let circle_id = self.emit(w, &format!("CIRCLE('',#{placement},{})", fmt_f(radius)))?;
+
+        // A single VERTEX_POINT on the circle at t=0: origin + radius * x_dir.
+        let pt_on_circle = Point3::from(origin.coords + x_dir * radius);
+        let pt_id = self.emit_point(w, pt_on_circle)?;
+        let vp_id = self.emit(w, &format!("VERTEX_POINT('',#{pt_id})"))?;
+
+        // EDGE_CURVE: start == end (closed loop), references the CIRCLE.
+        let edge_curve_id = self.emit(
+            w,
+            &format!("EDGE_CURVE('',#{vp_id},#{vp_id},#{circle_id},.T.)"),
+        )?;
+
+        // Single ORIENTED_EDGE + EDGE_LOOP.
+        let oe_id = self.emit(
+            w,
+            &format!("ORIENTED_EDGE('',*,*,#{edge_curve_id},.T.)"),
+        )?;
+        let edge_loop_id = self.emit(w, &format!("EDGE_LOOP('',({}))", fmt_id_list(&[oe_id])))?;
+        Ok(edge_loop_id)
+    }
+
+    /// Emit a closed EDGE_LOOP for an `AnalyticEdge::Ellipse`. The loop has a
+    /// single ORIENTED_EDGE referencing a new ELLIPSE EDGE_CURVE that closes
+    /// on itself.
+    ///
+    /// STEP ELLIPSE: semi_axis_1 (along x) = magnitude of major_axis,
+    ///               semi_axis_2 (along y) = magnitude of minor_axis.
+    /// Frame z = normal (major × minor), x = major_axis direction.
+    ///
+    /// Returns the EDGE_LOOP id.
+    fn emit_analytic_ellipse_loop(
+        &mut self,
+        w: &mut impl Write,
+        center: [f64; 3],
+        major_axis: [f64; 3],
+        minor_axis: [f64; 3],
+    ) -> io::Result<u32> {
+        let origin = Point3::new(center[0], center[1], center[2]);
+        let maj = Vec3::new(major_axis[0], major_axis[1], major_axis[2]);
+        let min = Vec3::new(minor_axis[0], minor_axis[1], minor_axis[2]);
+        let semi_major = maj.norm();
+        let semi_minor = min.norm();
+
+        let x_dir = maj.try_normalize(0.0).unwrap_or(Vec3::x());
+        let y_dir = min.try_normalize(0.0).unwrap_or(Vec3::y());
+        let z_dir = x_dir.cross(&y_dir).try_normalize(0.0).unwrap_or(Vec3::z());
+        let frame = Frame {
+            origin,
+            x: x_dir,
+            y: y_dir,
+            z: z_dir,
+        };
+        let placement = self.emit_frame(w, frame)?;
+        let ellipse_id = self.emit(
+            w,
+            &format!(
+                "ELLIPSE('',#{placement},{},{})",
+                fmt_f(semi_major),
+                fmt_f(semi_minor)
+            ),
+        )?;
+
+        // VERTEX_POINT on ellipse at t=0: origin + semi_major * x_dir.
+        let pt_on_ellipse = Point3::from(origin.coords + x_dir * semi_major);
+        let pt_id = self.emit_point(w, pt_on_ellipse)?;
+        let vp_id = self.emit(w, &format!("VERTEX_POINT('',#{pt_id})"))?;
+
+        let edge_curve_id = self.emit(
+            w,
+            &format!("EDGE_CURVE('',#{vp_id},#{vp_id},#{ellipse_id},.T.)"),
+        )?;
+        let oe_id = self.emit(
+            w,
+            &format!("ORIENTED_EDGE('',*,*,#{edge_curve_id},.T.)"),
+        )?;
+        let edge_loop_id = self.emit(w, &format!("EDGE_LOOP('',({}))", fmt_id_list(&[oe_id])))?;
+        Ok(edge_loop_id)
     }
 
     fn emit_footer(&mut self, w: &mut impl Write, solid_brep_ref: u32) -> io::Result<()> {
@@ -700,5 +850,164 @@ mod tests {
         assert_eq!(fmt_id_list(&[1, 2, 3]), "#1,#2,#3");
         assert_eq!(fmt_id_list(&[]), "");
         assert_eq!(fmt_id_list(&[42]), "#42");
+    }
+
+    // -----------------------------------------------------------------------
+    // Analytic-edge STEP export tests (Step 5 of curved-surface kernel sprint)
+    // -----------------------------------------------------------------------
+
+    /// Test 1 — Cylinder − Box (perpendicular cut): the STEP output for a
+    /// faceted cylinder minus an axis-perpendicular box must contain a CIRCLE
+    /// entity for the cut cap.
+    #[test]
+    fn step_analytic_cylinder_box_emits_circle() {
+        use crate::analytic_edge_detect::attach_analytic_circles;
+        use crate::primitives::{box_at, cylinder_faceted};
+        use kerf_geom::Point3;
+
+        // Cylinder: r=10, h=20, 32 segments; cut off z > 10.
+        let cyl = cylinder_faceted(10.0, 20.0, 32);
+        let cutter = box_at(
+            Vec3::new(40.0, 40.0, 20.0),
+            Point3::new(-20.0, -20.0, 10.0),
+        );
+        let mut result = cyl.try_difference(&cutter).expect("difference failed");
+        attach_analytic_circles(&mut result);
+
+        let mut buf = Vec::new();
+        write_step(&result, "cyl_box", &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+
+        // The output must contain a CIRCLE entity (not just polyline segments).
+        assert!(
+            out.contains("CIRCLE"),
+            "expected CIRCLE entity in STEP output for cylinder-box cap"
+        );
+        // And AXIS2_PLACEMENT_3D (frame for the circle).
+        assert!(out.contains("AXIS2_PLACEMENT_3D"));
+        // The file must still be valid STEP: check framing.
+        assert!(out.starts_with("ISO-10303-21;"));
+        assert!(out.ends_with("END-ISO-10303-21;\n"));
+    }
+
+    /// Test 2 — Ellipse emission via direct solid manipulation: set an
+    /// `AnalyticEdge::Ellipse` on a box face, export, verify ELLIPSE entity.
+    /// (Oblique-cut ellipse detection is tracked in a future PR; here we test
+    /// the STEP emission path directly.)
+    #[test]
+    fn step_analytic_direct_ellipse_emits_ellipse_entity() {
+        use crate::analytic_edge::AnalyticEdge;
+        use std::f64::consts::TAU;
+
+        // A plain box; we'll manually attach an Ellipse analytic edge to one
+        // of its faces to exercise the STEP emission path.
+        let mut s = box_(Vec3::new(4.0, 6.0, 2.0));
+
+        // Pick the first face in iteration order.
+        let first_face = s.topo.face_ids().next().expect("box has faces");
+        s.set_face_analytic_edge(
+            first_face,
+            AnalyticEdge::Ellipse {
+                center: [2.0, 3.0, 0.0],
+                major_axis: [2.0, 0.0, 0.0],   // semi_major = 2
+                minor_axis: [0.0, 1.5, 0.0],   // semi_minor = 1.5
+                start_angle: 0.0,
+                sweep_angle: TAU,
+            },
+        );
+
+        let mut buf = Vec::new();
+        write_step(&s, "box_ellipse", &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+
+        assert!(
+            out.contains("ELLIPSE"),
+            "expected ELLIPSE entity in STEP output when face has AnalyticEdge::Ellipse"
+        );
+        // Sanity: still a valid STEP file.
+        assert!(out.starts_with("ISO-10303-21;"));
+        assert!(out.ends_with("END-ISO-10303-21;\n"));
+    }
+
+    /// Test 3 — Plain box regression: exporting a plain box (no analytic edges)
+    /// must NOT produce CIRCLE or ELLIPSE entities.
+    #[test]
+    fn step_plain_box_emits_no_circle_or_ellipse() {
+        let s = box_(Vec3::new(3.0, 4.0, 5.0));
+        let mut buf = Vec::new();
+        write_step(&s, "plain_box", &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+
+        assert!(
+            !out.contains("CIRCLE"),
+            "plain box must not emit CIRCLE entities"
+        );
+        assert!(
+            !out.contains("ELLIPSE"),
+            "plain box must not emit ELLIPSE entities"
+        );
+        // Still a well-formed STEP file.
+        assert!(out.contains("MANIFOLD_SOLID_BREP"));
+    }
+
+    /// Test 4 — Round-trip validity: export a cylinder-minus-box with analytic
+    /// circle, then verify the STEP output is re-parseable as valid AP214 STEP
+    /// (structure check: mandatory entities present, entity count sane, CIRCLE
+    /// entity references a valid AXIS2_PLACEMENT_3D).
+    #[test]
+    fn step_analytic_circle_export_is_structurally_valid() {
+        use crate::analytic_edge_detect::attach_analytic_circles;
+        use crate::primitives::{box_at, cylinder_faceted};
+        use kerf_geom::Point3;
+
+        let cyl = cylinder_faceted(5.0, 10.0, 24);
+        let cutter = box_at(
+            Vec3::new(20.0, 20.0, 10.0),
+            Point3::new(-10.0, -10.0, 5.0),
+        );
+        let mut result = cyl.try_difference(&cutter).expect("difference failed");
+        attach_analytic_circles(&mut result);
+
+        let mut buf = Vec::new();
+        write_step(&result, "roundtrip", &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+
+        // 1. File header / footer valid.
+        assert!(out.starts_with("ISO-10303-21;"));
+        assert!(out.ends_with("END-ISO-10303-21;\n"));
+        assert!(out.contains("DATA;"));
+        assert!(out.contains("ENDSEC;"));
+
+        // 2. Analytic circle was emitted.
+        assert!(out.contains("CIRCLE"), "must contain CIRCLE entity");
+
+        // 3. Every CIRCLE line references a valid AXIS2_PLACEMENT_3D entity.
+        //    E.g.: "#42 = CIRCLE('',#43,10.);"  — the #43 must appear as an
+        //    AXIS2_PLACEMENT_3D definition line.
+        for line in out.lines() {
+            if line.contains("= CIRCLE(") {
+                // Extract the placement reference: CIRCLE('',#<N>,...)
+                if let Some(rest) = line.split("= CIRCLE('',#").nth(1) {
+                    let placement_num: u32 = rest
+                        .split(',')
+                        .next()
+                        .unwrap_or("0")
+                        .trim()
+                        .parse()
+                        .unwrap_or(0);
+                    assert!(placement_num > 0, "CIRCLE placement ref is 0");
+                    let expected_def = format!("#{placement_num} = AXIS2_PLACEMENT_3D");
+                    assert!(
+                        out.contains(&expected_def),
+                        "CIRCLE references #{placement_num} but no AXIS2_PLACEMENT_3D found for it"
+                    );
+                }
+            }
+        }
+
+        // 4. EDGE_CURVE must still be present (the circle uses it).
+        assert!(out.contains("EDGE_CURVE"));
+        // 5. The file must contain MANIFOLD_SOLID_BREP.
+        assert!(out.contains("MANIFOLD_SOLID_BREP"));
     }
 }
