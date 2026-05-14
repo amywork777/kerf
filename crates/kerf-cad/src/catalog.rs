@@ -289,7 +289,7 @@ pub fn categorize(name: &str) -> Category {
     ) {
         return Category::ExtrusionsAndProfiles;
     }
-    if matches!(name, "PipeRun" | "SweepPath" | "Coil" | "Spring") {
+    if matches!(name, "PipeRun" | "SweepPath" | "Coil" | "Spring" | "Helix") {
         return Category::Sweeps;
     }
     if matches!(
@@ -1279,6 +1279,15 @@ fn curated_override(variant: &str) -> Option<serde_json::Map<String, serde_json:
             m.insert("turns".into(), num(4.0));
             m.insert("segments_per_turn".into(), json!(12));
             m.insert("wire_segments".into(), json!(8));
+            Some(m)
+        }
+        "Helix" => {
+            m.insert("axis_radius".into(), num(5.0));
+            m.insert("pitch".into(), num(2.0));
+            m.insert("turns".into(), num(2.0));
+            m.insert("wire_radius".into(), num(0.5));
+            m.insert("axis".into(), json!("z"));
+            m.insert("segments".into(), json!(16));
             Some(m)
         }
         "Bolt" => {

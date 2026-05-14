@@ -2867,6 +2867,83 @@ fn build(
             }
             Ok(acc.unwrap())
         }
+        Feature::Helix {
+            axis_radius,
+            pitch,
+            turns,
+            wire_radius,
+            axis,
+            segments,
+            ..
+        } => {
+            let r_axis = resolve_one(id, axis_radius, params)?;
+            let p = resolve_one(id, pitch, params)?;
+            let t = resolve_one(id, turns, params)?;
+            let r_wire = resolve_one(id, wire_radius, params)?;
+            if r_axis <= 0.0 || p <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Helix requires positive axis_radius, pitch, turns (got radius={r_axis}, pitch={p}, turns={t})"
+                    ),
+                });
+            }
+            if r_wire <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "Helix wire_radius must be > 0 (path-only helix not yet supported; set wire_radius > 0 to materialize the wire)".into(),
+                });
+            }
+            if r_wire >= r_axis {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Helix wire_radius ({r_wire}) must be less than axis_radius ({r_axis}) — otherwise the helix self-overlaps"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Helix segments per turn must be >= 6 (got {segments})"),
+                });
+            }
+            let total_samples = (*segments as f64 * t).ceil() as usize + 1;
+            let total_angle = 2.0 * std::f64::consts::PI * t;
+            // Build helix sample points. For axis="z" (default): x=R cosθ, y=R sinθ, z=p*θ/(2π).
+            // For axis="x": rotate so the helix wraps around X — coords become (p*θ/(2π), R cosθ, R sinθ).
+            // For axis="y": coords become (R cosθ, p*θ/(2π), R sinθ) (helix wraps around Y).
+            let helix_point = |theta: f64| -> [f64; 3] {
+                let rise = p * theta / (2.0 * std::f64::consts::PI);
+                let cos_t = theta.cos();
+                let sin_t = theta.sin();
+                match axis.as_str() {
+                    "x" => [rise, r_axis * cos_t, r_axis * sin_t],
+                    "y" => [r_axis * cos_t, rise, r_axis * sin_t],
+                    _ => [r_axis * cos_t, r_axis * sin_t, rise], // "z" and default
+                }
+            };
+            let mut acc: Option<Solid> = None;
+            for i in 0..total_samples - 1 {
+                let theta_a = total_angle * i as f64 / (total_samples - 1) as f64;
+                let theta_b = total_angle * (i + 1) as f64 / (total_samples - 1) as f64;
+                let p0 = helix_point(theta_a);
+                let p1 = helix_point(theta_b);
+                let cyl = sweep_cylinder_segment(p0, p1, r_wire, 8).ok_or_else(|| EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Helix segment {i} has zero length"),
+                })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "helix_segment_union",
+                        message: format!("segment {i}: {}", e.message),
+                    })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
         Feature::TwistedExtrude {
             profile,
             height,

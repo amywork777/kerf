@@ -3826,6 +3826,30 @@ pub enum Feature {
         tip_width: Scalar,
         tooth_height: Scalar,
         thickness: Scalar,
+    },
+
+    /// Helix: a helical curve or tubular wire sweep. `axis_radius` is the
+    /// distance from the central axis to the curve. `pitch` is the rise per
+    /// full turn. `turns` is the number of full turns (must be > 0).
+    /// `axis` selects the central axis: "x", "y", or "z" (default "z").
+    ///
+    /// When `wire_radius` > 0 the helix is materialized as a tubular wire
+    /// (like Coil/Spring) built by chaining short cylinder segments along the
+    /// helical path. `segments` controls the number of straight-line segments
+    /// per turn (minimum 6). When `wire_radius` == 0 the evaluator returns an
+    /// error — path-only use is reserved for a future SweepPathHelix feature.
+    ///
+    /// Unlike Coil, the wire-overlap constraint (`wire_radius < axis_radius`)
+    /// is enforced; the axis field enables non-z orientations without a
+    /// separate Rotate step.
+    Helix {
+        id: String,
+        axis_radius: Scalar,
+        pitch: Scalar,
+        turns: Scalar,
+        wire_radius: Scalar,
+        axis: String,
+        segments: usize,
     },}
 
 impl Feature {
@@ -4111,6 +4135,7 @@ impl Feature {
             | Feature::GearBlank2 { id, .. }
             | Feature::PaperClipShape { id, .. }
             | Feature::Caltrops { id, .. }
+            | Feature::Helix { id, .. }
             | Feature::Translate { id, .. }
             | Feature::Scale { id, .. }
             | Feature::ScaleXYZ { id, .. }
@@ -4409,7 +4434,8 @@ impl Feature {
             | Feature::AnchorChain { .. }
             | Feature::GearBlank2 { .. }
             | Feature::PaperClipShape { .. }
-            | Feature::Caltrops { .. } => Vec::new(),
+            | Feature::Caltrops { .. }
+            | Feature::Helix { .. } => Vec::new(),
             Feature::HoleArray { input, .. }
             | Feature::BoltCircle { input, .. }
             | Feature::HexHole { input, .. }
