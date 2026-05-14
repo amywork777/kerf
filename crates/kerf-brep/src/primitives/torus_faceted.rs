@@ -24,6 +24,7 @@ use std::f64::consts::PI;
 use kerf_geom::{Frame, Line, Plane, Point3, Vec3};
 use kerf_topo::{HalfEdgeId, VertexId};
 
+use crate::analytic_edge::AnalyticEdge;
 use crate::geometry::{CurveSegment, SurfaceKind};
 use crate::Solid;
 
@@ -209,6 +210,40 @@ pub fn torus_faceted(
         s.face_geom.insert(*fid, SurfaceKind::Plane(Plane::new(frame)));
     }
 
+    // ---- 7. Analytic circle annotations for toroidal rings. ----
+    //
+    // Each quad face (i, j) lies between toroidal strip j and j+1. We attach
+    // an `AnalyticEdge::Circle` whose parameters describe the toroidal ring at
+    // the midpoint poloidal angle v_mid = π*(2j+1)/N. This circle:
+    //   - lives in the z = r_minor * sin(v_mid) plane
+    //   - has radius  R + r_minor * cos(v_mid)
+    //   - has normal  +z
+    //
+    // This is a full 2π circle (the complete toroidal ring at that poloidal
+    // slice). The STEP exporter uses this annotation to emit a CIRCLE entity
+    // instead of a polyline approximation for each face.
+    //
+    // Faces are ordered exactly as `face_walks` was built: face at linear index
+    // `i * n + j` is the quad for toroidal index i, poloidal index j.
+    for (face_idx, fid) in face_ids.iter().enumerate() {
+        let j = face_idx % n;                       // poloidal strip index
+        let v_mid = PI * (2 * j + 1) as f64 / n as f64; // midpoint poloidal angle
+        let z_mid = r_minor * v_mid.sin();
+        let radius_mid = r_major + r_minor * v_mid.cos();
+
+        // Guard against degenerate radius (should not happen for valid torus).
+        if radius_mid > 1e-12 {
+            let circle = AnalyticEdge::Circle {
+                center: [0.0, 0.0, z_mid],
+                radius: radius_mid,
+                normal: [0.0, 0.0, 1.0],
+                start_angle: 0.0,
+                sweep_angle: 2.0 * PI,
+            };
+            s.set_face_analytic_edge(*fid, circle);
+        }
+    }
+
     // Note: we deliberately skip `validate(&s.topo)` here. validate's Euler
     // check assumes genus 0 (V - E + F = 2 per shell), but a torus has
     // genus 1 (V - E + F = 0). The other invariants — manifold edge pairing
@@ -219,7 +254,123 @@ pub fn torus_faceted(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analytic_edge::AnalyticEdge;
     use crate::solid_volume;
+    use crate::step::write_step;
+
+    // -----------------------------------------------------------------------
+    // Test 1 (analytic circles): Torus(R=10, r=2, 16, 8) — every face has an
+    // attached AnalyticEdge::Circle and the circle parameters are sensible.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn torus_faces_have_analytic_circles() {
+        let r_maj = 10.0_f64;
+        let r_min = 2.0_f64;
+        let m = 16_usize; // major_segs
+        let n = 8_usize;  // minor_segs
+        let t = torus_faceted(r_maj, r_min, m, n);
+        let total_faces = m * n;
+        assert_eq!(t.face_count(), total_faces);
+
+        // All faces must have an analytic circle.
+        let circle_count = t.face_analytic_edges.len();
+        assert_eq!(
+            circle_count, total_faces,
+            "expected {total_faces} analytic circles, got {circle_count}"
+        );
+
+        // Each circle: normal = +z, radius in (R-r, R+r), center z in [-r, r].
+        for (_fid, ae) in &t.face_analytic_edges {
+            match ae {
+                AnalyticEdge::Circle { center, radius, normal, sweep_angle, .. } => {
+                    // Normal must be +z.
+                    assert!((normal[2] - 1.0).abs() < 1e-12, "normal z must be 1.0");
+                    assert!(normal[0].abs() < 1e-12, "normal x must be 0.0");
+                    assert!(normal[1].abs() < 1e-12, "normal y must be 0.0");
+                    // Radius must be in (R-r, R+r).
+                    assert!(
+                        *radius > r_maj - r_min - 1e-9 && *radius < r_maj + r_min + 1e-9,
+                        "radius {radius} out of range ({}, {})", r_maj - r_min, r_maj + r_min
+                    );
+                    // Center z must be in (-r, r).
+                    assert!(
+                        center[2].abs() <= r_min + 1e-9,
+                        "center z {} out of range (-{r_min}, {r_min})", center[2]
+                    );
+                    // Center x and y must be 0 (torus axis is z).
+                    assert!(center[0].abs() < 1e-12, "center x must be 0.0");
+                    assert!(center[1].abs() < 1e-12, "center y must be 0.0");
+                    // Full circle sweep.
+                    assert!(
+                        (*sweep_angle - 2.0 * PI).abs() < 1e-12,
+                        "sweep_angle must be 2π"
+                    );
+                }
+                other => panic!("expected Circle, got {other:?}"),
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 2 (STEP export): STEP output of a Torus contains M*N CIRCLE entities
+    // (one per toroidal-ring face).
+    // -----------------------------------------------------------------------
+    #[test]
+    fn torus_step_export_emits_circles() {
+        let m = 8_usize;  // major_segs
+        let n = 6_usize;  // minor_segs
+        let t = torus_faceted(5.0, 1.0, m, n);
+        let mut buf = Vec::new();
+        write_step(&t, "torus_test", &mut buf).expect("step export must succeed");
+        let out = String::from_utf8(buf).expect("valid utf-8");
+
+        // Count CIRCLE entity lines (lines matching "#NNN= CIRCLE").
+        let circle_count = out
+            .lines()
+            .filter(|l| {
+                // Match lines like "#123= CIRCLE(...)"
+                let trimmed = l.trim_start_matches('#');
+                let after_num: &str = trimmed
+                    .find('=')
+                    .map(|i| &trimmed[i + 1..])
+                    .unwrap_or("")
+                    .trim();
+                after_num.starts_with("CIRCLE(")
+            })
+            .count();
+
+        let expected = m * n; // one per face
+        assert!(
+            circle_count >= expected,
+            "expected at least {expected} CIRCLE entities, got {circle_count}\n\
+             (first 2000 chars of STEP output):\n{}",
+            &out[..out.len().min(2000)]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 3 (Donut variant): donut_faceted (alias via Feature::Donut) also
+    // has analytic circles.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn donut_faces_have_analytic_circles() {
+        // Donut uses torus_faceted under the hood; verify via direct call.
+        let r_maj = 4.0;
+        let r_min = 1.0;
+        let m = 12_usize;
+        let n = 8_usize;
+        let t = torus_faceted(r_maj, r_min, m, n);
+        let expected_faces = m * n;
+        let circle_count = t.face_analytic_edges.len();
+        assert_eq!(
+            circle_count, expected_faces,
+            "Donut: expected {expected_faces} analytic circles, got {circle_count}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Existing tests (unchanged).
+    // -----------------------------------------------------------------------
 
     #[test]
     fn small_torus_topology() {
