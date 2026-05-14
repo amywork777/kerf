@@ -93,15 +93,8 @@ fn helix_round_trips_via_json() {
 }
 
 // ── Test 4: axis="x" works the same as axis="z" (different orientation, same volume) ──
-//
-// IGNORED: the x-axis chained-cylinder path hits a stitch panic in the
-// boolean engine (booleans/stitch.rs:389) that the retry tiers don't
-// recover from. The z-axis path works correctly. Tracked as a kernel
-// fix in ROADMAP.md — the chained-cylinder union along a non-z axis
-// produces a stitch configuration the engine rejects.
 
 #[test]
-#[ignore = "x-axis helix stitch panic — kernel fix tracked in ROADMAP.md"]
 fn helix_x_axis_produces_same_volume_as_z_axis() {
     let make = |axis: &str| {
         Model::new()
@@ -124,6 +117,34 @@ fn helix_x_axis_produces_same_volume_as_z_axis() {
     assert!(
         rel_err < 0.01,
         "axis=x and axis=z should produce the same volume (rel_err={rel_err:.4}, vz={v_z:.4}, vx={v_x:.4})"
+    );
+}
+
+// ── Test 7: axis="y" works the same as axis="z" (locks in y-axis symmetry) ──
+
+#[test]
+fn helix_y_axis_produces_same_volume_as_z_axis() {
+    let make = |axis: &str| {
+        Model::new()
+            .add(Feature::Helix {
+                id: "h".into(),
+                axis_radius: Scalar::lit(6.0),
+                pitch: Scalar::lit(2.5),
+                turns: Scalar::lit(1.0),
+                wire_radius: Scalar::lit(0.4),
+                axis: axis.into(),
+                segments: 24,
+            })
+            .evaluate("h")
+            .unwrap()
+    };
+    let v_z = solid_volume(&make("z"));
+    let v_y = solid_volume(&make("y"));
+    // Volumes should match within 1% — only the orientation differs.
+    let rel_err = (v_z - v_y).abs() / v_z.max(v_y);
+    assert!(
+        rel_err < 0.01,
+        "axis=y and axis=z should produce the same volume (rel_err={rel_err:.4}, vz={v_z:.4}, vy={v_y:.4})"
     );
 }
 
