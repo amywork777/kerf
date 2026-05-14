@@ -234,7 +234,18 @@ pub fn boolean_solid(a: &Solid, b: &Solid, op: BooleanOp, tol: &Tolerance) -> So
     // edge with exactly one half-edge. Without this, multi-edge fillets
     // (sequential subtract chains) panic on the second wedge that shares a
     // body face with the first.
-    stitch_with_rescue(&kept, &dropped, tol)
+    let mut result = stitch_with_rescue(&kept, &dropped, tol);
+
+    // Curved-surface kernel sprint, step 2: detect cap faces (planar faces
+    // whose outer-loop polygon is a regular N-gon inscribed in a circle)
+    // and attach `AnalyticEdge::Circle` to them as a side-table. Additive —
+    // does not modify the polyline outer loop.
+    //
+    // This catches the cleanest curved-face-intersection case: a faceted
+    // cylinder cut by an axis-perpendicular plane. Oblique cuts (ellipse)
+    // and cylinder × cylinder intersections are deferred to follow-up PRs.
+    crate::analytic_edge_detect::attach_analytic_circles(&mut result);
+    result
 }
 
 #[cfg(test)]

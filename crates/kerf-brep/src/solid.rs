@@ -5,6 +5,7 @@ use slotmap::SecondaryMap;
 use kerf_geom::Point3;
 use kerf_topo::{EdgeId, FaceId, Solid as TopoSolid, VertexId};
 
+use crate::analytic_edge::AnalyticEdge;
 use crate::geometry::{CurveSegment, SurfaceKind};
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +29,27 @@ pub struct Solid {
     /// Faces with no entry have no recorded owner.
     #[serde(default)]
     pub face_owner_tag: SecondaryMap<FaceId, String>,
+    /// Side-table of analytic-edge descriptions for faces whose outer-loop
+    /// boundary is a closed analytic curve (currently: circles produced when
+    /// a faceted cylinder is cut by an axis-perpendicular plane).
+    ///
+    /// **Why keyed by `FaceId`, not `EdgeId`:** the kerf B-rep represents a
+    /// cap as a single planar face whose outer loop is an N-segment polyline
+    /// (the regular N-gon inscribed in the analytic circle). The analytic
+    /// circle describes the **closed loop** as a whole, not any individual
+    /// chord. Attaching one `AnalyticEdge::Circle` per cap face is the natural
+    /// 1:1 mapping; tagging each of the N chord-edges separately would either
+    /// duplicate the same circle N times or require splitting the circle into
+    /// N arcs (which would lose the "this is a real circle" signal that
+    /// downstream STEP/IGES exporters care about). The accessor
+    /// `analytic_edge(EdgeId)` is provided as a convenience: it returns the
+    /// circle associated with whichever face owns that edge's half-edges.
+    ///
+    /// This side-table is purely **additive**: every face still has its full
+    /// polyline outer loop. Downstream code that ignores this map continues
+    /// to work byte-for-byte as before.
+    #[serde(default)]
+    pub face_analytic_edges: SecondaryMap<FaceId, AnalyticEdge>,
 }
 
 impl Solid {
@@ -60,6 +82,40 @@ impl Solid {
     /// split (or were never tagged) return themselves.
     pub fn face_ancestor(&self, f: FaceId) -> FaceId {
         self.face_provenance.get(f).copied().unwrap_or(f)
+    }
+
+    /// Attach an `AnalyticEdge` description to the **face** whose outer-loop
+    /// boundary it describes. Currently used by the boolean engine to record
+    /// `AnalyticEdge::Circle` on faces produced by axis-perpendicular cuts of
+    /// a faceted cylinder (the "cap" case).
+    ///
+    /// Additive — does not change the polyline edges stored in `edge_geom`.
+    pub fn set_face_analytic_edge(&mut self, face_id: FaceId, edge: AnalyticEdge) {
+        self.face_analytic_edges.insert(face_id, edge);
+    }
+
+    /// Look up the analytic-edge description for a face. `None` if the face's
+    /// boundary has no analytic representation (i.e. is just polyline).
+    pub fn face_analytic_edge(&self, face_id: FaceId) -> Option<&AnalyticEdge> {
+        self.face_analytic_edges.get(face_id)
+    }
+
+    /// Convenience: look up the analytic edge associated with an `EdgeId` by
+    /// resolving which face it bounds. Returns `Some(&AnalyticEdge)` iff one
+    /// of the edge's two half-edge faces has an analytic-edge entry, else
+    /// `None`. Designed to keep the future possibility of edge-keyed storage
+    /// open without committing the kernel to it today.
+    pub fn analytic_edge(&self, edge_id: EdgeId) -> Option<&AnalyticEdge> {
+        let edge = self.topo.edge(edge_id)?;
+        for he_id in edge.half_edges() {
+            let he = self.topo.half_edge(he_id)?;
+            let loop_ = self.topo.loop_(he.loop_())?;
+            let face_id = loop_.face();
+            if let Some(ae) = self.face_analytic_edges.get(face_id) {
+                return Some(ae);
+            }
+        }
+        None
     }
 
     /// Compute the union of `self` and `other` using the default tolerance.

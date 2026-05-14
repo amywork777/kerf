@@ -1,6 +1,7 @@
 //! The Kerf B-rep kernel: topology + geometry + constructors.
 
 pub mod analytic_edge;
+pub mod analytic_edge_detect;
 pub mod booleans;
 pub mod dimension;
 pub mod export_3mf;
@@ -17,6 +18,7 @@ pub mod stl;
 pub mod tessellate;
 
 pub use analytic_edge::AnalyticEdge;
+pub use analytic_edge_detect::{attach_analytic_circles, detect_circular_cap};
 pub use dimension::{
     angle_at_vertex, angle_between_vectors, collect_snap_candidates, distance, project_to_plane,
     projected_silhouette, render_dimensioned_view, silhouette_loops, snap_pick, to_2d_view,
