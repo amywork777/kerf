@@ -4,15 +4,18 @@
 //!   .stl  → binary STL  (mesh)
 //!   .obj  → Wavefront OBJ  (mesh)
 //!   .step → STEP AP203/214 (B-rep)
+//!   .3mf  → 3D Manufacturing Format (ZIP/XML mesh)
+//!   .gltf → binary GLB (GL Transmission Format mesh)
+//!   .glb  → binary GLB (alias for .gltf)
 //!
-//! Usage: kerf-cad <model.json> <target_id> <output.{stl,obj,step}> [--segments N]
+//! Usage: kerf-cad <model.json> <target_id> <output.{stl,obj,step,3mf,gltf,glb}> [--segments N]
 
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use kerf_brep::{obj::write_obj, step::write_step, stl::write_binary, tessellate::tessellate, Solid};
+use kerf_brep::{obj::write_obj, step::write_step, stl::write_binary, tessellate::tessellate, write_3mf, write_gltf, Solid};
 use kerf_cad::Model;
 
 const DEFAULT_SEGMENTS: usize = 24;
@@ -39,6 +42,8 @@ enum Format {
     Stl,
     Obj,
     Step,
+    ThreeMf,
+    Gltf,
 }
 
 fn format_for(path: &std::path::Path) -> Result<Format, String> {
@@ -50,10 +55,12 @@ fn format_for(path: &std::path::Path) -> Result<Format, String> {
         Some("stl") => Ok(Format::Stl),
         Some("obj") => Ok(Format::Obj),
         Some("step") | Some("stp") => Ok(Format::Step),
+        Some("3mf") => Ok(Format::ThreeMf),
+        Some("gltf") | Some("glb") => Ok(Format::Gltf),
         Some(other) => Err(format!(
-            "unrecognised output extension '.{other}' — use .stl, .obj, .step, or .stp"
+            "unrecognised output extension '.{other}' — use .stl, .obj, .step, .stp, .3mf, .gltf, or .glb"
         )),
-        None => Err("output path needs a .stl/.obj/.step/.stp extension".into()),
+        None => Err("output path needs a .stl/.obj/.step/.stp/.3mf/.gltf/.glb extension".into()),
     }
 }
 
@@ -90,7 +97,7 @@ fn parse_args() -> Result<Args, String> {
 }
 
 fn usage() -> String {
-    "usage: kerf-cad <model.json> <target_id> <output.{stl,obj,step}> [--segments N]".into()
+    "usage: kerf-cad <model.json> <target_id> <output.{stl,obj,step,3mf,gltf,glb}> [--segments N]".into()
 }
 
 fn run() -> Result<(), String> {
@@ -111,17 +118,34 @@ fn write_output(
     segments: usize,
     format: Format,
 ) -> Result<(), String> {
-    let f = File::create(path).map_err(|e| format!("creating {}: {e}", path.display()))?;
-    let mut w = BufWriter::new(f);
     match format {
-        Format::Stl => {
+        Format::ThreeMf => {
             let soup = tessellate(solid, segments);
-            write_binary(&soup, name, &mut w).map_err(|e| format!("writing STL: {e}"))
+            let bytes = write_3mf(&soup, name).map_err(|e| format!("writing 3MF: {e}"))?;
+            std::fs::write(path, bytes).map_err(|e| format!("writing {}: {e}", path.display()))
         }
-        Format::Obj => {
+        Format::Gltf => {
             let soup = tessellate(solid, segments);
-            write_obj(&soup, name, &mut w).map_err(|e| format!("writing OBJ: {e}"))
+            let bytes = write_gltf(&soup, name).map_err(|e| format!("writing GLTF: {e}"))?;
+            std::fs::write(path, bytes).map_err(|e| format!("writing {}: {e}", path.display()))
         }
-        Format::Step => write_step(solid, name, &mut w).map_err(|e| format!("writing STEP: {e}")),
+        _ => {
+            let f = File::create(path).map_err(|e| format!("creating {}: {e}", path.display()))?;
+            let mut w = BufWriter::new(f);
+            match format {
+                Format::Stl => {
+                    let soup = tessellate(solid, segments);
+                    write_binary(&soup, name, &mut w).map_err(|e| format!("writing STL: {e}"))
+                }
+                Format::Obj => {
+                    let soup = tessellate(solid, segments);
+                    write_obj(&soup, name, &mut w).map_err(|e| format!("writing OBJ: {e}"))
+                }
+                Format::Step => {
+                    write_step(solid, name, &mut w).map_err(|e| format!("writing STEP: {e}"))
+                }
+                Format::ThreeMf | Format::Gltf => unreachable!(),
+            }
+        }
     }
 }
