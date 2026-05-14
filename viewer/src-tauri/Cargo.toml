@@ -1,11 +1,9 @@
+[workspace]
+
 [package]
 name = "kerf-cad-viewer"
 version = "0.1.0"
 edition = "2021"
-
-[lib]
-name = "kerf_cad_viewer_lib"
-crate-type = ["staticlib", "cdylib"]
 
 [[bin]]
 name = "kerf-cad-viewer"
