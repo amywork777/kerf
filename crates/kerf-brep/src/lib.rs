@@ -28,7 +28,7 @@ pub use dimension::{
 pub use geometry::{CurveKind, CurveSegment, Sense, SurfaceKind};
 pub use measure::{shell_volume, solid_volume};
 pub use mesh_import::{from_triangles, read_ascii, read_stl_auto, read_stl_binary_to_solid, read_stl_to_solid, MeshImportError};
-pub use export_3mf::{write_3mf, Export3mfError};
+pub use export_3mf::{write_3mf, write_3mf_with_analytics, Export3mfError};
 pub use export_gltf::{write_gltf, ExportGltfError};
 pub use obj::{read_obj, read_obj_to_solid, write_obj};
 pub use primitives::{
