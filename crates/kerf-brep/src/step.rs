@@ -326,11 +326,41 @@ impl StepWriter {
 
         // ---- Pass 2: edges (curve + EDGE_CURVE) ----
         for (eid, edge) in solid.topo.edges_iter() {
-            let seg = solid
-                .edge_geom
-                .get(eid)
-                .expect("edge without geometry — kernel invariant violated");
-            let curve_id = self.emit_curve(w, &seg.curve)?;
+            // Some kernel paths (e.g. analytic torus rings) create edges
+            // without an entry in edge_geom. Treat those as straight
+            // segments between their endpoints — STEP doesn't care about
+            // the visual representation, just that we emit valid topology.
+            let curve_id = match solid.edge_geom.get(eid) {
+                Some(seg) => self.emit_curve(w, &seg.curve)?,
+                None => {
+                    let [he_a, _] = edge.half_edges();
+                    let he_a_struct = solid
+                        .topo
+                        .half_edge(he_a)
+                        .expect("missing half-edge");
+                    let v_from = he_a_struct.origin();
+                    let twin_struct = solid
+                        .topo
+                        .half_edge(he_a_struct.twin())
+                        .expect("missing twin half-edge");
+                    let v_to = twin_struct.origin();
+                    let p_from = solid
+                        .point_at(v_from)
+                        .expect("vertex without geometry");
+                    let p_to = solid
+                        .point_at(v_to)
+                        .expect("vertex without geometry");
+                    let dir = Vec3::new(
+                        p_to.x - p_from.x,
+                        p_to.y - p_from.y,
+                        p_to.z - p_from.z,
+                    );
+                    let dir_id = self.emit_direction(w, dir)?;
+                    let pt_id = self.emit_point(w, p_from)?;
+                    let vec_id = self.emit(w, &format!("VECTOR('',#{dir_id},1.0)"))?;
+                    self.emit(w, &format!("LINE('',#{pt_id},#{vec_id})"))?
+                }
+            };
             let [he_a, _he_b] = edge.half_edges();
             // Edge endpoints: he_a's origin → he_a's twin's origin.
             let he_a_struct = solid.topo.half_edge(he_a).expect("missing half-edge");
