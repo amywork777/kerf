@@ -5,6 +5,8 @@ A minimal-but-real B-rep solid modeling kernel in Rust.
 See `docs/superpowers/specs/2026-04-28-kerf-brep-kernel-design.md` (in the parent
 `code/` workspace) for the design. Current progress toward Solidworks-tier: see [`PROGRESS.md`](./PROGRESS.md).
 
+**New to kerf-cad?** Follow the [mug walkthrough](docs/WALKTHROUGH_MUG.md) — build a parametric mug in the browser viewer in under 5 minutes.
+
 ## Status
 
 **Current readiness: 168/168 (100%)** of primitive × primitive × op
