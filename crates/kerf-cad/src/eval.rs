@@ -26,6 +26,8 @@ pub enum EvalError {
     UnknownId(String),
     #[error("cycle detected involving id: {0}")]
     Cycle(String),
+    #[error("equation error: {0}")]
+    Equation(String),
     #[error("boolean op '{op}' on '{id}' failed: {message}")]
     Boolean { id: String, op: &'static str, message: String },
     #[error("invalid feature '{id}': {reason}")]
@@ -42,9 +44,14 @@ impl Model {
         if self.feature(target_id).is_none() {
             return Err(EvalError::UnknownId(target_id.to_string()));
         }
+        // Resolve equations before feature evaluation. If there are no
+        // equations this is just a clone of self.parameters.
+        let resolved_params = self
+            .resolve_params()
+            .map_err(|e| EvalError::Equation(e.to_string()))?;
         let mut cache: HashMap<String, Solid> = HashMap::new();
         let mut stack: Vec<String> = Vec::new();
-        self.eval_into(target_id, &mut cache, &mut stack)?;
+        self.eval_into(target_id, &resolved_params, &mut cache, &mut stack)?;
         Ok(cache.remove(target_id).expect("just computed"))
     }
 
@@ -79,6 +86,11 @@ impl Model {
         if self.feature(target_id).is_none() {
             return Err(EvalError::UnknownId(target_id.to_string()));
         }
+        // Resolve equations before feature evaluation. If there are no
+        // equations this is just a clone of self.parameters.
+        let resolved_params = self
+            .resolve_params()
+            .map_err(|e| EvalError::Equation(e.to_string()))?;
         // Fingerprints computed during this walk, by feature id. Local to
         // one evaluate_cached call so the same DAG produces consistent
         // upstream fingerprints regardless of caller's previous state.
@@ -88,7 +100,7 @@ impl Model {
         // here as clones from the long-lived cache.
         let mut local: HashMap<String, Solid> = HashMap::new();
         let mut stack: Vec<String> = Vec::new();
-        self.eval_into_cached(target_id, &mut local, &mut fps, cache, &mut stack)?;
+        self.eval_into_cached(target_id, &resolved_params, &mut local, &mut fps, cache, &mut stack)?;
         let fp = *fps.get(target_id).expect("just computed");
         Ok((local.remove(target_id).expect("just computed"), fp))
     }
@@ -96,6 +108,7 @@ impl Model {
     fn eval_into_cached(
         &self,
         id: &str,
+        params: &HashMap<String, f64>,
         local: &mut HashMap<String, Solid>,
         fps: &mut HashMap<String, Fingerprint>,
         cache: &mut EvalCache,
@@ -113,17 +126,18 @@ impl Model {
 
         stack.push(id.to_string());
         for dep in feature.inputs() {
-            self.eval_into_cached(dep, local, fps, cache, stack)?;
+            self.eval_into_cached(dep, params, local, fps, cache, stack)?;
         }
         stack.pop();
 
         // Compute this feature's fingerprint from its inputs'.
+        // Use the resolved params so equations affect cache keys.
         let input_fps: Vec<Fingerprint> = feature
             .inputs()
             .iter()
             .map(|dep| *fps.get(*dep).expect("dep evaluated"))
             .collect();
-        let fp = feature_fingerprint(feature, &self.parameters, &input_fps);
+        let fp = feature_fingerprint(feature, params, &input_fps);
         fps.insert(id.to_string(), fp);
 
         // Cache hit: clone the stored solid into local. Cloning a Solid
@@ -133,7 +147,7 @@ impl Model {
             return Ok(());
         }
 
-        let mut result = build(feature, &self.parameters, local, self)?;
+        let mut result = build(feature, params, local, self)?;
         // Picking provenance: tag any face in this feature's result that
         // doesn't already carry an owner tag with this feature's id.
         let owner = id.to_string();
@@ -151,6 +165,7 @@ impl Model {
     fn eval_into(
         &self,
         id: &str,
+        params: &HashMap<String, f64>,
         cache: &mut HashMap<String, Solid>,
         stack: &mut Vec<String>,
     ) -> Result<(), EvalError> {
@@ -166,11 +181,11 @@ impl Model {
 
         stack.push(id.to_string());
         for dep in feature.inputs() {
-            self.eval_into(dep, cache, stack)?;
+            self.eval_into(dep, params, cache, stack)?;
         }
         stack.pop();
 
-        let mut result = build(feature, &self.parameters, cache, self)?;
+        let mut result = build(feature, params, cache, self)?;
         // Picking provenance: tag any face in this feature's result that
         // doesn't already carry an owner tag with this feature's id. Boolean
         // operations propagate inputs' owner tags through stitch, so they
