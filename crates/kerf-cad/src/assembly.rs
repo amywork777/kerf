@@ -362,6 +362,63 @@ pub enum Mate {
         axis_b: AxisRef,
         ratio: Scalar,
     },
+    /// SW-style Width mate: center `instance_a` between `face_left` and
+    /// `face_right` of `instance_b`. Both faces are described as planes
+    /// (origin + outward normal) in `instance_b`'s local frame. The solver
+    /// translates `instance_a` so that its world origin lies on the mid-plane
+    /// between the two faces (equidistant from both).
+    ///
+    /// Returns `MateError::Invalid` if the two face normals are not
+    /// anti-parallel (not a well-formed "slot") or if the width is zero.
+    WidthCenter {
+        instance_a: String,
+        instance_b: String,
+        /// Origin of the left bounding face in `instance_b`'s local frame.
+        face_left_origin: [Scalar; 3],
+        /// Outward normal of the left bounding face (points *toward* the
+        /// interior of the slot, i.e., toward the right face).
+        face_left_normal: [Scalar; 3],
+        /// Origin of the right bounding face in `instance_b`'s local frame.
+        face_right_origin: [Scalar; 3],
+        /// Outward normal of the right bounding face (points *toward* the
+        /// interior of the slot, i.e., toward the left face).
+        face_right_normal: [Scalar; 3],
+    },
+    /// Two instances symmetric about a plane owned by a third "plane instance".
+    /// `instance_a`'s pose is left unchanged; `instance_b`'s pose is set so
+    /// it mirrors `instance_a` across the given plane. The symmetry plane is
+    /// resolved in world space through `plane_instance`'s pose.
+    Symmetric {
+        instance_a: String,
+        instance_b: String,
+        /// The instance that owns the symmetry plane.
+        plane_instance: String,
+        /// Origin of the symmetry plane in `plane_instance`'s local frame.
+        plane_origin: [Scalar; 3],
+        /// Normal of the symmetry plane in `plane_instance`'s local frame.
+        plane_normal: [Scalar; 3],
+    },
+    /// Cylindrical-rails tangent mate: two cylindrical instances rolling along
+    /// each other without a gear ratio. The solver positions `instance_b` so
+    /// that its named axis is externally tangent to `instance_a`'s named axis
+    /// — center-to-center distance equals `radius_a + radius_b`. The
+    /// component along the shared contact direction is free (the parts can
+    /// slide axially).
+    ///
+    /// Radii are estimated from the bounding box of each instance's default
+    /// pose: the half-extent perpendicular to the named axis.
+    RailsTangent {
+        instance_a: String,
+        /// Axis of instance_a's cylinder, in its local frame.
+        axis_a: AxisRef,
+        /// Radius of instance_a's cylinder.
+        radius_a: Scalar,
+        instance_b: String,
+        /// Axis of instance_b's cylinder, in its local frame.
+        axis_b: AxisRef,
+        /// Radius of instance_b's cylinder.
+        radius_b: Scalar,
+    },
 }
 
 /// Top-level container.
@@ -375,6 +432,17 @@ pub struct Assembly {
     /// parameters, evaluated independently.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub parameters: HashMap<String, f64>,
+    /// Exploded-view amount: 0.0 = assembled, 1.0 = each instance moved
+    /// `explode_distance` along the unit-vector from the assembly centroid to
+    /// the instance's centroid. When `None` or `Some(0.0)`, behaves
+    /// identically to the existing `Assembly::evaluate`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exploded: Option<f64>,
+    /// Distance (in world units) each instance is displaced at `exploded=1.0`.
+    /// Auto-computed from the assembly's bounding-box diagonal × 0.5 if
+    /// `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explode_distance: Option<f64>,
 }
 
 #[derive(Debug, Error)]
@@ -1175,6 +1243,58 @@ impl Assembly {
                 poses,
                 frozen.as_deref_mut(),
             ),
+            Mate::WidthCenter {
+                instance_a,
+                instance_b,
+                face_left_origin,
+                face_left_normal,
+                face_right_origin,
+                face_right_normal,
+            } => self.apply_width_center_mate(
+                mi,
+                instance_a,
+                instance_b,
+                face_left_origin,
+                face_left_normal,
+                face_right_origin,
+                face_right_normal,
+                poses,
+                frozen.as_deref_mut(),
+            ),
+            Mate::Symmetric {
+                instance_a,
+                instance_b,
+                plane_instance,
+                plane_origin,
+                plane_normal,
+            } => self.apply_symmetric_mate(
+                mi,
+                instance_a,
+                instance_b,
+                plane_instance,
+                plane_origin,
+                plane_normal,
+                poses,
+                frozen.as_deref_mut(),
+            ),
+            Mate::RailsTangent {
+                instance_a,
+                axis_a,
+                radius_a,
+                instance_b,
+                axis_b,
+                radius_b,
+            } => self.apply_rails_tangent_mate(
+                mi,
+                instance_a,
+                axis_a,
+                radius_a,
+                instance_b,
+                axis_b,
+                radius_b,
+                poses,
+                frozen.as_deref_mut(),
+            ),
         }
     }
 
@@ -1706,6 +1826,221 @@ impl Assembly {
         Ok(())
     }
 
+    /// SW-style Width-center mate solver.
+    ///
+    /// Translates `instance_a` along the slot's normal direction so its world
+    /// origin is equidistant from the left and right faces of `instance_b`.
+    /// The "normal direction" of the slot is the shared normal axis of the two
+    /// face planes (they must be parallel, i.e., their normals anti-parallel
+    /// within tolerance, else `MateError::Invalid`).
+    #[allow(clippy::too_many_arguments)]
+    fn apply_width_center_mate(
+        &self,
+        mi: usize,
+        instance_a: &str,
+        instance_b: &str,
+        face_left_origin: &[Scalar; 3],
+        face_left_normal: &[Scalar; 3],
+        face_right_origin: &[Scalar; 3],
+        face_right_normal: &[Scalar; 3],
+        poses: &mut HashMap<String, ResolvedPose>,
+        mut frozen: Option<&mut std::collections::HashSet<String>>,
+    ) -> Result<(), MateError> {
+        let ol = self.resolve_pt_in_world(mi, instance_b, face_left_origin, poses)?;
+        let nl = self.resolve_dir_in_world(mi, instance_b, face_left_normal, poses)?;
+        let or_ = self.resolve_pt_in_world(mi, instance_b, face_right_origin, poses)?;
+        let nr = self.resolve_dir_in_world(mi, instance_b, face_right_normal, poses)?;
+
+        // The two face normals must be anti-parallel (they face each other).
+        let dot = nl.dot(&nr);
+        if dot > -0.5 {
+            return Err(MateError::Invalid(
+                mi,
+                format!(
+                    "WidthCenter: face normals are not anti-parallel (dot = {dot:.4}); \
+                     the slot must have two opposing faces"
+                ),
+            ));
+        }
+
+        // Slot axis: direction from left face toward right face, normalized.
+        // Use nl as the "inward" direction (nl points from left toward right).
+        let slot_axis = nl; // nl already points into the slot (toward the right face).
+
+        // Midplane: compute signed distances from A's current centroid to each face.
+        let ca = poses.get(instance_a).expect("checked").translation;
+        let d_left = slot_axis.dot(&(ca - ol));   // positive = inside slot from left
+        let d_right = (-slot_axis).dot(&(ca - or_)); // positive = inside slot from right
+
+        // The midplane is at d_left == d_right. Move A by (d_right - d_left)/2 along slot_axis.
+        let correction = (d_right - d_left) / 2.0;
+
+        if let Some(f) = frozen.as_deref() {
+            if f.contains(instance_a) {
+                if correction.abs() > MATE_TOL {
+                    return Err(MateError::OverConstrained(
+                        mi,
+                        format!(
+                            "WidthCenter: '{instance_a}' is already positioned; \
+                             needs correction {correction} along slot axis"
+                        ),
+                    ));
+                }
+                return Ok(());
+            }
+        }
+
+        let pose_a = poses.get_mut(instance_a).expect("checked");
+        pose_a.translation += slot_axis * correction;
+        if let Some(f) = frozen.as_deref_mut() {
+            f.insert(instance_a.to_string());
+        }
+        Ok(())
+    }
+
+    /// Symmetric mate: B mirrors A across a plane that is resolved through
+    /// `plane_instance`'s current pose. This is distinct from `Symmetry`
+    /// which takes a world-space plane directly.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_symmetric_mate(
+        &self,
+        mi: usize,
+        instance_a: &str,
+        instance_b: &str,
+        plane_instance: &str,
+        plane_origin: &[Scalar; 3],
+        plane_normal: &[Scalar; 3],
+        poses: &mut HashMap<String, ResolvedPose>,
+        mut frozen: Option<&mut std::collections::HashSet<String>>,
+    ) -> Result<(), MateError> {
+        // Validate plane_instance exists.
+        if !poses.contains_key(plane_instance) {
+            return Err(MateError::UnknownInstance(plane_instance.to_string(), mi));
+        }
+        // Resolve plane in world through plane_instance's pose.
+        let po = self.resolve_pt_in_world(mi, plane_instance, plane_origin, poses)?;
+        let pn_world = self.resolve_dir_in_world(mi, plane_instance, plane_normal, poses)?;
+        let pn = pn_world; // already normalized
+
+        let pose_a = *poses.get(instance_a).expect("checked");
+
+        // Reflect A's translation across the plane: p' = p - 2*((p-o)·n)*n
+        let ta = pose_a.translation;
+        let target_translation = ta - pn * (2.0 * (ta - po).dot(&pn));
+
+        // Reflect A's rotation axis; negate angle.
+        let axis_a = pose_a.rotation_axis;
+        let target_axis = axis_a - pn * (2.0 * axis_a.dot(&pn));
+        let target_angle = -pose_a.rotation_angle;
+
+        if let Some(f) = frozen.as_deref() {
+            if f.contains(instance_b) {
+                let pose_b = poses.get(instance_b).expect("checked");
+                let trans_err = (pose_b.translation - target_translation).norm();
+                if trans_err > MATE_TOL {
+                    return Err(MateError::OverConstrained(
+                        mi,
+                        format!(
+                            "Symmetric: '{instance_b}' is already positioned and translation \
+                             differs from mirror by {trans_err}"
+                        ),
+                    ));
+                }
+                return Ok(());
+            }
+        }
+
+        let pose_b = poses.get_mut(instance_b).expect("checked");
+        pose_b.translation = target_translation;
+        pose_b.rotation_axis = target_axis;
+        pose_b.rotation_angle = target_angle;
+        if let Some(f) = frozen.as_deref_mut() {
+            f.insert(instance_b.to_string());
+        }
+        Ok(())
+    }
+
+    /// Rails-tangent mate: position `instance_b` so its axis is externally
+    /// tangent to `instance_a`'s axis. Center-to-center distance (perpendicular
+    /// to A's axis) becomes `r_a + r_b`. The component along A's axis is
+    /// preserved.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_rails_tangent_mate(
+        &self,
+        mi: usize,
+        instance_a: &str,
+        axis_a: &AxisRef,
+        radius_a: &Scalar,
+        instance_b: &str,
+        axis_b: &AxisRef,
+        radius_b: &Scalar,
+        poses: &mut HashMap<String, ResolvedPose>,
+        mut frozen: Option<&mut std::collections::HashSet<String>>,
+    ) -> Result<(), MateError> {
+        let r_a = radius_a
+            .resolve(&self.parameters)
+            .map_err(|e| MateError::Parameter(mi, format!("radius_a: {e}")))?;
+        let r_b = radius_b
+            .resolve(&self.parameters)
+            .map_err(|e| MateError::Parameter(mi, format!("radius_b: {e}")))?;
+        if r_a < 0.0 {
+            return Err(MateError::Invalid(mi, format!("RailsTangent: radius_a must be non-negative, got {r_a}")));
+        }
+        if r_b < 0.0 {
+            return Err(MateError::Invalid(mi, format!("RailsTangent: radius_b must be non-negative, got {r_b}")));
+        }
+        let target_dist = r_a + r_b;
+
+        let (oa, da) = self.resolve_axis_in_world(mi, instance_a, axis_a, poses)?;
+        let ob = poses.get(instance_b).expect("checked").translation;
+
+        // Perpendicular component from A's axis to B's origin.
+        let v = ob - oa;
+        let along = da * da.dot(&v);
+        let perp = v - along;
+        let cur_dist = perp.norm();
+
+        // Radial direction: if B is on the axis, pick a perpendicular.
+        let radial_dir = if cur_dist > MATE_TOL {
+            perp / cur_dist
+        } else {
+            pick_perpendicular(da)
+        };
+
+        // Target: foot on A's axis + radial_dir * target_dist.
+        let foot = oa + along;
+        let target_ob = foot + radial_dir * target_dist;
+        let delta = target_ob - ob;
+
+        if let Some(f) = frozen.as_deref() {
+            if f.contains(instance_b) {
+                if delta.norm() > MATE_TOL {
+                    return Err(MateError::OverConstrained(
+                        mi,
+                        format!(
+                            "RailsTangent: '{instance_b}' is already positioned at perpendicular \
+                             distance {cur_dist} from A's axis, want {target_dist}"
+                        ),
+                    ));
+                }
+                return Ok(());
+            }
+        }
+
+        let pose_b = poses.get_mut(instance_b).expect("checked");
+        pose_b.translation += delta;
+        if let Some(f) = frozen.as_deref_mut() {
+            f.insert(instance_b.to_string());
+        }
+
+        // Also need to check axis_b — but for RailsTangent the axial
+        // alignment is handled separately (or left free). The solver only
+        // constrains the center-to-center distance; the `_axis_b` field
+        // is informational for the caller. Suppress unused binding.
+        let _ = axis_b;
+        Ok(())
+    }
+
     /// Cylinder-on-plane tangent. Plane lives on instance A, cylinder on
     /// B. The cylinder's axis (world) becomes perpendicular to the plane
     /// normal, and its line sits at `radius` from the plane on the
@@ -2163,6 +2498,75 @@ impl Assembly {
                 };
                 Ok((theta_b - theta_a * r).powi(2))
             }
+            Mate::WidthCenter {
+                instance_a,
+                instance_b,
+                face_left_origin,
+                face_left_normal,
+                face_right_origin,
+                face_right_normal,
+            } => {
+                // Residual: signed distance of A's world origin from each face, measured
+                // along that face's normal. Constraint: d_left == d_right.
+                // Residual = (d_left - d_right)^2.
+                let ol = self.resolve_pt_in_world(mi, instance_b, face_left_origin, poses)?;
+                let nl = self.resolve_dir_in_world(mi, instance_b, face_left_normal, poses)?;
+                let or_ = self.resolve_pt_in_world(mi, instance_b, face_right_origin, poses)?;
+                let nr = self.resolve_dir_in_world(mi, instance_b, face_right_normal, poses)?;
+                let ca = poses
+                    .get(instance_a)
+                    .ok_or_else(|| {
+                        AssemblyError::Mate(MateError::UnknownInstance(instance_a.clone(), mi))
+                    })?
+                    .translation;
+                let d_left = nl.dot(&(ca - ol));
+                let d_right = nr.dot(&(ca - or_));
+                Ok((d_left - d_right).powi(2))
+            }
+            Mate::Symmetric {
+                instance_a,
+                instance_b,
+                plane_instance,
+                plane_origin,
+                plane_normal,
+            } => {
+                let po = self.resolve_pt_in_world(mi, plane_instance, plane_origin, poses)?;
+                let pn_raw = self.resolve_dir_in_world(mi, plane_instance, plane_normal, poses)?;
+                let pn = pn_raw.normalize();
+                let pose_a = poses.get(instance_a).ok_or_else(|| {
+                    AssemblyError::Mate(MateError::UnknownInstance(instance_a.clone(), mi))
+                })?;
+                let pose_b = poses.get(instance_b).ok_or_else(|| {
+                    AssemblyError::Mate(MateError::UnknownInstance(instance_b.clone(), mi))
+                })?;
+                let ta = pose_a.translation;
+                let target_t = ta - pn * (2.0 * (ta - po).dot(&pn));
+                Ok((pose_b.translation - target_t).norm_squared())
+            }
+            Mate::RailsTangent {
+                instance_a,
+                axis_a,
+                radius_a,
+                instance_b,
+                axis_b,
+                radius_b,
+            } => {
+                let r_a = radius_a.resolve(&self.parameters).map_err(|e| {
+                    AssemblyError::Mate(MateError::Parameter(mi, format!("radius_a: {e}")))
+                })?;
+                let r_b = radius_b.resolve(&self.parameters).map_err(|e| {
+                    AssemblyError::Mate(MateError::Parameter(mi, format!("radius_b: {e}")))
+                })?;
+                let (oa, da) = self.resolve_axis_in_world(mi, instance_a, axis_a, poses)?;
+                let (ob, _db) = self.resolve_axis_in_world(mi, instance_b, axis_b, poses)?;
+                // Perpendicular distance between the two axis lines.
+                let v = ob - oa;
+                let along = da * da.dot(&v);
+                let perp = v - along;
+                let cur_dist = perp.norm();
+                let target = r_a + r_b;
+                Ok((cur_dist - target).powi(2))
+            }
         }
     }
 
@@ -2313,6 +2717,123 @@ impl Assembly {
         self.evaluate_with_loader(|_path: &str| -> Result<Assembly, AssemblyError> {
             Err(AssemblyError::UnresolvedRef(String::new()))
         })
+    }
+
+    /// Evaluate the assembly in exploded view.
+    ///
+    /// When `self.exploded` is `None` or `Some(0.0)` this is identical to
+    /// [`Assembly::evaluate`].  Otherwise each instance solid is displaced
+    /// radially away from the assembly's volume-weighted centroid by
+    /// `exploded * explode_distance` units, where `explode_distance` is taken
+    /// from `self.explode_distance` or auto-computed as half the assembly's
+    /// bounding-box diagonal when that field is `None`.
+    ///
+    /// Steps:
+    /// 1. Solve mates (existing logic via `evaluate`).
+    /// 2. Compute assembly centroid (mean of instance AABB centres, weighted
+    ///    by AABB volume as a proxy for part volume).
+    /// 3. Determine `explode_distance` (field or auto).
+    /// 4. For each instance shift its solid along the unit vector from the
+    ///    assembly centroid to the instance AABB centre, scaled by
+    ///    `exploded * explode_distance`.
+    /// 5. Return the displaced solids in declaration order.
+    pub fn evaluate_exploded(&self) -> Result<Vec<(String, Solid)>, AssemblyError> {
+        // Step 1: evaluate using the existing path (mates + poses).
+        let solids = self.evaluate()?;
+
+        // If there is nothing to explode, return as-is.
+        let amount = match self.exploded {
+            None | Some(0.0) => return Ok(solids),
+            Some(a) => a,
+        };
+
+        // Step 2: compute per-instance AABB centres and volumes.
+        // We use AABB centre as a proxy for the part centroid, and AABB
+        // volume as a proxy for part volume (consistent with solid_aabb).
+        let mut centres: Vec<Vec3> = Vec::with_capacity(solids.len());
+        let mut weights: Vec<f64> = Vec::with_capacity(solids.len());
+
+        for (_, solid) in &solids {
+            if let Some((min, max)) = solid_aabb(solid) {
+                let c = Vec3::new(
+                    (min[0] + max[0]) * 0.5,
+                    (min[1] + max[1]) * 0.5,
+                    (min[2] + max[2]) * 0.5,
+                );
+                let vol = ((max[0] - min[0]) * (max[1] - min[1]) * (max[2] - min[2])).max(0.0);
+                centres.push(c);
+                weights.push(vol);
+            } else {
+                // Empty solid: use origin with zero weight.
+                centres.push(Vec3::zeros());
+                weights.push(0.0);
+            }
+        }
+
+        // Weighted mean centroid. Fall back to unweighted if all weights are zero.
+        let total_weight: f64 = weights.iter().sum();
+        let assembly_centroid = if total_weight > 0.0 {
+            let mut acc = Vec3::zeros();
+            for (c, w) in centres.iter().zip(weights.iter()) {
+                acc += *c * *w;
+            }
+            acc / total_weight
+        } else {
+            // All empty — just average unweighted.
+            let n = centres.len() as f64;
+            if n == 0.0 {
+                Vec3::zeros()
+            } else {
+                centres.iter().fold(Vec3::zeros(), |a, c| a + *c) / n
+            }
+        };
+
+        // Step 3: determine explode_distance.
+        let dist = match self.explode_distance {
+            Some(d) => d,
+            None => {
+                // Auto: half the assembly bounding-box diagonal.
+                let mut min_all = [f64::INFINITY; 3];
+                let mut max_all = [f64::NEG_INFINITY; 3];
+                let mut any = false;
+                for (_, solid) in &solids {
+                    if let Some((mn, mx)) = solid_aabb(solid) {
+                        any = true;
+                        for i in 0..3 {
+                            min_all[i] = min_all[i].min(mn[i]);
+                            max_all[i] = max_all[i].max(mx[i]);
+                        }
+                    }
+                }
+                if any {
+                    let dx = max_all[0] - min_all[0];
+                    let dy = max_all[1] - min_all[1];
+                    let dz = max_all[2] - min_all[2];
+                    (dx * dx + dy * dy + dz * dz).sqrt() * 0.5
+                } else {
+                    0.0
+                }
+            }
+        };
+
+        // Step 4: displace each solid radially.
+        let mut out = Vec::with_capacity(solids.len());
+        for ((id, solid), centre) in solids.into_iter().zip(centres.iter()) {
+            let radial = *centre - assembly_centroid;
+            let radial_norm = radial.norm();
+            let displaced = if radial_norm > 1e-15 {
+                let unit = radial / radial_norm;
+                let shift = unit * (amount * dist);
+                translate_solid(&solid, shift)
+            } else {
+                // Instance is exactly at the assembly centroid — no direction
+                // to explode along, leave in place.
+                solid
+            };
+            out.push((id, displaced));
+        }
+
+        Ok(out)
     }
 
     /// Evaluate every instance, using `loader` to resolve any
@@ -2695,7 +3216,10 @@ fn mate_endpoints(mate: &Mate) -> (&str, &str) {
         | Mate::TouchPoint { instance_a, instance_b, .. }
         | Mate::PointOnPlane { instance_a, instance_b, .. }
         | Mate::PointOnLine { instance_a, instance_b, .. }
-        | Mate::Gear { instance_a, instance_b, .. } => {
+        | Mate::Gear { instance_a, instance_b, .. }
+        | Mate::WidthCenter { instance_a, instance_b, .. }
+        | Mate::Symmetric { instance_a, instance_b, .. }
+        | Mate::RailsTangent { instance_a, instance_b, .. } => {
             (instance_a.as_str(), instance_b.as_str())
         }
         // PathMate has only ONE instance — degenerate "self loop". The
@@ -2784,6 +3308,329 @@ fn pick_perpendicular(v: Vec3) -> Vec3 {
     perp.normalize()
 }
 
+// ---------------------------------------------------------------------------
+// Tests for the three new mate types
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod sw_mates3_tests {
+    use super::*;
+    use crate::model::Model;
+    use crate::feature::Feature;
+    use crate::scalar::lits;
+
+    fn s(v: f64) -> Scalar { Scalar::lit(v) }
+
+    fn box_instance(id: &str, tx: f64, ty: f64, tz: f64) -> Instance {
+        Instance {
+            id: id.into(),
+            model: AssemblyRef::Inline(Box::new(
+                Model::new().add(Feature::Box {
+                    id: "body".into(),
+                    extents: lits([1.0, 1.0, 1.0]),
+                }),
+            )),
+            target: None,
+            default_pose: Pose::at(tx, ty, tz),
+        }
+    }
+
+    fn axis_z(ox: f64, oy: f64, oz: f64) -> AxisRef {
+        AxisRef {
+            origin: lits([ox, oy, oz]),
+            direction: lits([0.0, 0.0, 1.0]),
+        }
+    }
+
+    fn axis_z_origin() -> AxisRef { axis_z(0.0, 0.0, 0.0) }
+
+    // -----------------------------------------------------------------------
+    // WidthCenter tests
+    // -----------------------------------------------------------------------
+
+    /// Width mate: shaft ("shaft") centered between two wall faces of "slot".
+    /// The slot's left face is at x=0 (normal +x) and right face is at x=4
+    /// (normal -x). Shaft starts at x=10. Solver should place it at x=2.
+    #[test]
+    fn width_center_shaft_at_midpoint() {
+        let asm = Assembly::new()
+            .with_instance(box_instance("slot", 0.0, 0.0, 0.0))
+            .with_instance(box_instance("shaft", 10.0, 0.0, 0.0))
+            .with_mate(Mate::WidthCenter {
+                instance_a: "shaft".into(),
+                instance_b: "slot".into(),
+                // Left face at x=0 with normal +x (points inward toward slot interior)
+                face_left_origin: lits([0.0, 0.0, 0.0]),
+                face_left_normal: lits([1.0, 0.0, 0.0]),
+                // Right face at x=4 with normal -x (points inward toward slot interior)
+                face_right_origin: lits([4.0, 0.0, 0.0]),
+                face_right_normal: lits([-1.0, 0.0, 0.0]),
+            });
+
+        let poses = asm.solve_poses().expect("solve");
+        let shaft = poses.get("shaft").unwrap();
+        // Midpoint between x=0 and x=4 is x=2.
+        assert!(
+            (shaft.translation.x - 2.0).abs() < 1e-9,
+            "shaft.x = {}, want 2.0", shaft.translation.x
+        );
+    }
+
+    /// Width mate: shaft already at midpoint — should stay there (zero delta).
+    #[test]
+    fn width_center_already_centered() {
+        let asm = Assembly::new()
+            .with_instance(box_instance("slot", 0.0, 0.0, 0.0))
+            .with_instance(box_instance("shaft", 2.0, 0.0, 0.0))
+            .with_mate(Mate::WidthCenter {
+                instance_a: "shaft".into(),
+                instance_b: "slot".into(),
+                face_left_origin: lits([0.0, 0.0, 0.0]),
+                face_left_normal: lits([1.0, 0.0, 0.0]),
+                face_right_origin: lits([4.0, 0.0, 0.0]),
+                face_right_normal: lits([-1.0, 0.0, 0.0]),
+            });
+
+        let poses = asm.solve_poses().expect("solve");
+        let shaft = poses.get("shaft").unwrap();
+        assert!((shaft.translation.x - 2.0).abs() < 1e-9);
+    }
+
+    /// Width mate with non-opposing face normals should fail with MateError::Invalid.
+    #[test]
+    fn width_center_non_opposing_faces_errors() {
+        let asm = Assembly::new()
+            .with_instance(box_instance("slot", 0.0, 0.0, 0.0))
+            .with_instance(box_instance("shaft", 5.0, 0.0, 0.0))
+            .with_mate(Mate::WidthCenter {
+                instance_a: "shaft".into(),
+                instance_b: "slot".into(),
+                // Both normals point the same way — not a valid slot.
+                face_left_origin: lits([0.0, 0.0, 0.0]),
+                face_left_normal: lits([1.0, 0.0, 0.0]),
+                face_right_origin: lits([4.0, 0.0, 0.0]),
+                face_right_normal: lits([1.0, 0.0, 0.0]), // SAME direction, not opposing
+            });
+
+        let result = asm.solve_poses();
+        assert!(
+            matches!(result, Err(AssemblyError::Mate(MateError::Invalid(_, _)))),
+            "expected Invalid error, got {:?}", result.err()
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Symmetric tests
+    // -----------------------------------------------------------------------
+
+    /// Symmetric mate: instance_a at (3, 0, 0), plane is the YZ plane (x=0)
+    /// of plane_instance at origin. instance_b should end up at (-3, 0, 0).
+    #[test]
+    fn symmetric_mate_mirrors_across_yz_plane() {
+        let asm = Assembly::new()
+            .with_instance(box_instance("frame", 0.0, 0.0, 0.0))  // plane_instance
+            .with_instance(box_instance("part_a", 3.0, 0.0, 0.0))
+            .with_instance(box_instance("part_b", 99.0, 99.0, 99.0)) // garbage, will be overwritten
+            .with_mate(Mate::Symmetric {
+                instance_a: "part_a".into(),
+                instance_b: "part_b".into(),
+                plane_instance: "frame".into(),
+                // YZ plane: normal = +x, origin = world origin
+                plane_origin: lits([0.0, 0.0, 0.0]),
+                plane_normal: lits([1.0, 0.0, 0.0]),
+            });
+
+        let poses = asm.solve_poses().expect("solve");
+        let b = poses.get("part_b").unwrap();
+        assert!(
+            (b.translation.x - (-3.0)).abs() < 1e-9,
+            "part_b.x = {}, want -3.0", b.translation.x
+        );
+        assert!(b.translation.y.abs() < 1e-9, "part_b.y = {}, want 0", b.translation.y);
+        assert!(b.translation.z.abs() < 1e-9, "part_b.z = {}, want 0", b.translation.z);
+    }
+
+    /// Symmetric round-trip: solving twice leaves part_b in the same place.
+    #[test]
+    fn symmetric_mate_round_trip_stable() {
+        let asm = Assembly::new()
+            .with_instance(box_instance("frame", 0.0, 0.0, 0.0))
+            .with_instance(box_instance("part_a", 3.0, 2.0, 1.0))
+            .with_instance(box_instance("part_b", 0.0, 0.0, 0.0))
+            .with_mate(Mate::Symmetric {
+                instance_a: "part_a".into(),
+                instance_b: "part_b".into(),
+                plane_instance: "frame".into(),
+                plane_origin: lits([0.0, 0.0, 0.0]),
+                plane_normal: lits([1.0, 0.0, 0.0]),
+            });
+
+        let poses1 = asm.solve_poses().expect("first solve");
+        let t1 = poses1.get("part_b").unwrap().translation;
+
+        // Build a second assembly with part_b's initial pose set to the
+        // already-solved pose. Solving again should give the same result.
+        let asm2 = Assembly::new()
+            .with_instance(box_instance("frame", 0.0, 0.0, 0.0))
+            .with_instance(box_instance("part_a", 3.0, 2.0, 1.0))
+            .with_instance(Instance {
+                id: "part_b".into(),
+                model: AssemblyRef::Inline(Box::new(
+                    Model::new().add(Feature::Box {
+                        id: "body".into(),
+                        extents: lits([1.0, 1.0, 1.0]),
+                    }),
+                )),
+                target: None,
+                default_pose: Pose::at(t1.x, t1.y, t1.z),
+            })
+            .with_mate(Mate::Symmetric {
+                instance_a: "part_a".into(),
+                instance_b: "part_b".into(),
+                plane_instance: "frame".into(),
+                plane_origin: lits([0.0, 0.0, 0.0]),
+                plane_normal: lits([1.0, 0.0, 0.0]),
+            });
+
+        let poses2 = asm2.solve_poses().expect("second solve");
+        let t2 = poses2.get("part_b").unwrap().translation;
+        assert!(
+            (t1 - t2).norm() < 1e-9,
+            "round-trip changed part_b: {:?} vs {:?}", t1, t2
+        );
+    }
+
+    /// Symmetric mate with unknown plane_instance returns UnknownInstance error.
+    #[test]
+    fn symmetric_mate_unknown_plane_instance_errors() {
+        let asm = Assembly::new()
+            .with_instance(box_instance("part_a", 3.0, 0.0, 0.0))
+            .with_instance(box_instance("part_b", 0.0, 0.0, 0.0))
+            .with_mate(Mate::Symmetric {
+                instance_a: "part_a".into(),
+                instance_b: "part_b".into(),
+                plane_instance: "no_such_frame".into(),
+                plane_origin: lits([0.0, 0.0, 0.0]),
+                plane_normal: lits([1.0, 0.0, 0.0]),
+            });
+
+        let result = asm.solve_poses();
+        assert!(
+            matches!(result, Err(AssemblyError::Mate(MateError::UnknownInstance(_, _)))),
+            "expected UnknownInstance error, got {:?}", result.err()
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // RailsTangent tests
+    // -----------------------------------------------------------------------
+
+    /// Two cylindrical rails with r=1.0 each. B starts on top of A's axis.
+    /// After mate, B should be at distance r_a + r_b = 2.0 from A's axis.
+    #[test]
+    fn rails_tangent_external_tangency() {
+        let asm = Assembly::new()
+            .with_instance(box_instance("rail_a", 0.0, 0.0, 0.0))
+            .with_instance(box_instance("rail_b", 0.0, 5.0, 0.0)) // starts far away
+            .with_mate(Mate::RailsTangent {
+                instance_a: "rail_a".into(),
+                axis_a: axis_z_origin(),
+                radius_a: s(1.0),
+                instance_b: "rail_b".into(),
+                axis_b: axis_z_origin(),
+                radius_b: s(1.0),
+            });
+
+        let poses = asm.solve_poses().expect("solve");
+        let b = poses.get("rail_b").unwrap();
+        // B's translation is the centroid. Perpendicular distance from A's z-axis
+        // (which passes through origin) to B's centroid.
+        let perp_dist = (b.translation.x.powi(2) + b.translation.y.powi(2)).sqrt();
+        assert!(
+            (perp_dist - 2.0).abs() < 1e-9,
+            "perp dist = {perp_dist}, want 2.0"
+        );
+    }
+
+    /// RailsTangent: already tangent — no change.
+    #[test]
+    fn rails_tangent_already_tangent_no_move() {
+        // B is already at distance 3.0 (r_a=1.5, r_b=1.5) from A's axis.
+        let asm = Assembly::new()
+            .with_instance(box_instance("rail_a", 0.0, 0.0, 0.0))
+            .with_instance(box_instance("rail_b", 0.0, 3.0, 0.0))
+            .with_mate(Mate::RailsTangent {
+                instance_a: "rail_a".into(),
+                axis_a: axis_z_origin(),
+                radius_a: s(1.5),
+                instance_b: "rail_b".into(),
+                axis_b: axis_z_origin(),
+                radius_b: s(1.5),
+            });
+
+        let poses = asm.solve_poses().expect("solve");
+        let b = poses.get("rail_b").unwrap();
+        let perp_dist = (b.translation.x.powi(2) + b.translation.y.powi(2)).sqrt();
+        assert!(
+            (perp_dist - 3.0).abs() < 1e-9,
+            "perp dist = {perp_dist}, want 3.0"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // JSON round-trip for all three new mate types
+    // -----------------------------------------------------------------------
+
+    /// Round-trip Assembly JSON preserving all three new mate variants.
+    #[test]
+    fn json_round_trip_new_mate_variants() {
+        let asm = Assembly::new()
+            .with_instance(box_instance("frame", 0.0, 0.0, 0.0))
+            .with_instance(box_instance("shaft", 5.0, 0.0, 0.0))
+            .with_instance(box_instance("mirror_a", 3.0, 0.0, 0.0))
+            .with_instance(box_instance("mirror_b", 0.0, 0.0, 0.0))
+            .with_instance(box_instance("rail_a", 0.0, 0.0, 0.0))
+            .with_instance(box_instance("rail_b", 0.0, 5.0, 0.0))
+            .with_mate(Mate::WidthCenter {
+                instance_a: "shaft".into(),
+                instance_b: "frame".into(),
+                face_left_origin: lits([0.0, 0.0, 0.0]),
+                face_left_normal: lits([1.0, 0.0, 0.0]),
+                face_right_origin: lits([4.0, 0.0, 0.0]),
+                face_right_normal: lits([-1.0, 0.0, 0.0]),
+            })
+            .with_mate(Mate::Symmetric {
+                instance_a: "mirror_a".into(),
+                instance_b: "mirror_b".into(),
+                plane_instance: "frame".into(),
+                plane_origin: lits([0.0, 0.0, 0.0]),
+                plane_normal: lits([1.0, 0.0, 0.0]),
+            })
+            .with_mate(Mate::RailsTangent {
+                instance_a: "rail_a".into(),
+                axis_a: axis_z_origin(),
+                radius_a: s(1.0),
+                instance_b: "rail_b".into(),
+                axis_b: axis_z_origin(),
+                radius_b: s(1.0),
+            });
+
+        let json = asm.to_json_string().expect("to_json");
+        let asm2 = Assembly::from_json_str(&json).expect("from_json");
+
+        // Verify mate count preserved.
+        assert_eq!(asm2.mates.len(), 3, "mate count after round-trip");
+
+        // Verify mate kinds preserved.
+        assert!(matches!(asm2.mates[0], Mate::WidthCenter { .. }), "mate[0] should be WidthCenter");
+        assert!(matches!(asm2.mates[1], Mate::Symmetric { .. }), "mate[1] should be Symmetric");
+        assert!(matches!(asm2.mates[2], Mate::RailsTangent { .. }), "mate[2] should be RailsTangent");
+
+        // Verify it still solves after round-trip.
+        asm2.solve_poses().expect("solve after round-trip");
+    }
+}
+
 #[cfg(test)]
 mod unit_tests {
     use super::*;
@@ -2822,5 +3669,217 @@ mod unit_tests {
         let p = pick_perpendicular(v);
         assert!(v.dot(&p).abs() < 1e-12);
         assert!((p.norm() - 1.0).abs() < 1e-12);
+    }
+
+    // -----------------------------------------------------------------------
+    // Exploded-view tests
+    // -----------------------------------------------------------------------
+
+    /// Build a minimal inline model containing a 1×1×1 box centred at the
+    /// local origin. Returns an `Instance` at `pose` with id `id`.
+    fn unit_box_instance(id: &str, pose: Pose) -> Instance {
+        use crate::feature::Feature;
+        use crate::model::Model;
+        use crate::scalar::lits;
+        Instance {
+            id: id.into(),
+            model: AssemblyRef::Inline(Box::new(
+                Model::new().add(Feature::Box {
+                    id: "body".into(),
+                    extents: lits([1.0, 1.0, 1.0]),
+                }),
+            )),
+            target: None,
+            default_pose: pose,
+        }
+    }
+
+    /// Test 1: `exploded = None` → identical to `evaluate`.
+    ///
+    /// Two instances at different positions. `evaluate_exploded` with no
+    /// exploded field must return the same translations as plain `evaluate`.
+    #[test]
+    fn exploded_none_identical_to_evaluate() {
+        let asm = Assembly {
+            instances: vec![
+                unit_box_instance("a", Pose::at(0.0, 0.0, 0.0)),
+                unit_box_instance("b", Pose::at(10.0, 0.0, 0.0)),
+            ],
+            exploded: None,
+            ..Assembly::default()
+        };
+
+        let base = asm.evaluate().expect("evaluate");
+        let expl = asm.evaluate_exploded().expect("evaluate_exploded");
+
+        assert_eq!(base.len(), expl.len());
+        for ((id_b, s_b), (id_e, s_e)) in base.iter().zip(expl.iter()) {
+            assert_eq!(id_b, id_e);
+            // Same vertex count — no displacement happened.
+            assert_eq!(s_b.vertex_count(), s_e.vertex_count());
+            // Verify bounding-box centroids match to floating-point precision.
+            if let (Some((mn_b, mx_b)), Some((mn_e, mx_e))) =
+                (solid_aabb(s_b), solid_aabb(s_e))
+            {
+                for i in 0..3 {
+                    assert!(
+                        ((mn_b[i] + mx_b[i]) - (mn_e[i] + mx_e[i])).abs() < 1e-10,
+                        "centroid mismatch on axis {i} for instance {id_b}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Test 2: two instances at (0,0,0) and (10,0,0), exploded=1.0,
+    /// explode_distance=20 → they move apart by 20 along ±x.
+    ///
+    /// Assembly centroid (equal AABB volumes, both cubes): x = 5.0.
+    /// Instance A centroid = 0.5 (box 0..1 → centre 0.5); direction = −x.
+    /// Instance B centroid = 10.5; direction = +x.
+    /// Expected shift = ±20 along x.
+    #[test]
+    fn exploded_radial_displacement() {
+        let asm = Assembly {
+            instances: vec![
+                unit_box_instance("a", Pose::at(0.0, 0.0, 0.0)),
+                unit_box_instance("b", Pose::at(10.0, 0.0, 0.0)),
+            ],
+            exploded: Some(1.0),
+            explode_distance: Some(20.0),
+            ..Assembly::default()
+        };
+
+        let result = asm.evaluate_exploded().expect("evaluate_exploded");
+        assert_eq!(result.len(), 2);
+
+        let (id_a, solid_a) = &result[0];
+        let (id_b, solid_b) = &result[1];
+        assert_eq!(id_a, "a");
+        assert_eq!(id_b, "b");
+
+        let (mn_a, mx_a) = solid_aabb(solid_a).expect("solid_a aabb");
+        let (mn_b, mx_b) = solid_aabb(solid_b).expect("solid_b aabb");
+
+        let cx_a = (mn_a[0] + mx_a[0]) * 0.5;
+        let cx_b = (mn_b[0] + mx_b[0]) * 0.5;
+
+        // A moved in the −x direction, B in the +x direction.
+        assert!(cx_a < 0.0, "instance A should have moved in −x; cx_a = {cx_a}");
+        assert!(cx_b > 11.0, "instance B should have moved in +x; cx_b = {cx_b}");
+
+        // y and z centroids must be unchanged (both at 0.5 from the unit cube).
+        let cy_a = (mn_a[1] + mx_a[1]) * 0.5;
+        let cy_b = (mn_b[1] + mx_b[1]) * 0.5;
+        assert!((cy_a - 0.5).abs() < 1e-10, "cy_a = {cy_a}");
+        assert!((cy_b - 0.5).abs() < 1e-10, "cy_b = {cy_b}");
+    }
+
+    /// Test 3: round-trip JSON with `exploded` and `explode_distance` preserved.
+    #[test]
+    fn exploded_json_round_trip() {
+        let asm = Assembly {
+            instances: vec![unit_box_instance("x", Pose::identity())],
+            exploded: Some(0.75),
+            explode_distance: Some(42.0),
+            ..Assembly::default()
+        };
+
+        let json = asm.to_json_string().expect("to_json_string");
+        assert!(json.contains("\"exploded\""), "json should contain exploded field");
+        assert!(
+            json.contains("\"explode_distance\""),
+            "json should contain explode_distance field"
+        );
+
+        let restored = Assembly::from_json_str(&json).expect("from_json_str");
+        assert_eq!(
+            restored.exploded,
+            Some(0.75),
+            "exploded field should survive JSON round-trip"
+        );
+        assert_eq!(
+            restored.explode_distance,
+            Some(42.0),
+            "explode_distance field should survive JSON round-trip"
+        );
+    }
+
+    /// Test 4: `exploded = Some(0.0)` is identical to `exploded = None`.
+    ///
+    /// Both return the assembled (non-displaced) solids.
+    #[test]
+    fn exploded_zero_equals_none() {
+        let make_asm = |exploded: Option<f64>| Assembly {
+            instances: vec![
+                unit_box_instance("p", Pose::at(0.0, 0.0, 0.0)),
+                unit_box_instance("q", Pose::at(5.0, 3.0, 1.0)),
+            ],
+            exploded,
+            explode_distance: Some(10.0),
+            ..Assembly::default()
+        };
+
+        let none_result = make_asm(None).evaluate_exploded().expect("none");
+        let zero_result = make_asm(Some(0.0)).evaluate_exploded().expect("zero");
+
+        assert_eq!(none_result.len(), zero_result.len());
+        for ((_, s_n), (_, s_z)) in none_result.iter().zip(zero_result.iter()) {
+            if let (Some((mn_n, mx_n)), Some((mn_z, mx_z))) =
+                (solid_aabb(s_n), solid_aabb(s_z))
+            {
+                for i in 0..3 {
+                    assert!(
+                        ((mn_n[i] + mx_n[i]) - (mn_z[i] + mx_z[i])).abs() < 1e-10,
+                        "centroids must match on axis {i}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Test 5: auto-computed `explode_distance` when `explode_distance` is
+    /// `None`. Two unit cubes at x=0 and x=10 → assembly AABB spans 0..11
+    /// on x and 0..1 on y,z → diagonal ≈ sqrt(11²+1+1) ≈ 11.09 → auto dist
+    /// ≈ 5.54. With `exploded=1.0` both instances must move away from the
+    /// centroid (x≈5.5) by that amount.
+    #[test]
+    fn exploded_auto_distance() {
+        let asm = Assembly {
+            instances: vec![
+                unit_box_instance("left", Pose::at(0.0, 0.0, 0.0)),
+                unit_box_instance("right", Pose::at(10.0, 0.0, 0.0)),
+            ],
+            exploded: Some(1.0),
+            explode_distance: None, // auto
+            ..Assembly::default()
+        };
+
+        let result = asm.evaluate_exploded().expect("evaluate_exploded");
+        let (_, s_left) = &result[0];
+        let (_, s_right) = &result[1];
+
+        let (mn_l, mx_l) = solid_aabb(s_left).expect("left aabb");
+        let (mn_r, mx_r) = solid_aabb(s_right).expect("right aabb");
+
+        let cx_l = (mn_l[0] + mx_l[0]) * 0.5;
+        let cx_r = (mn_r[0] + mx_r[0]) * 0.5;
+
+        // With auto distance ≈ 5.54 the left cube (centred near 0.5) should
+        // have moved left of the assembly centroid (~5.5), and the right cube
+        // (centred near 10.5) should be further right.
+        assert!(cx_l < 0.5, "left cube should have moved left; cx_l = {cx_l}");
+        assert!(cx_r > 10.5, "right cube should have moved right; cx_r = {cx_r}");
+
+        // Compute expected auto distance and verify the displacement magnitude.
+        // Assembly AABB: x ∈ [0, 11], y ∈ [0, 1], z ∈ [0, 1].
+        let expected_dist = ((11.0f64).powi(2) + 1.0 + 1.0).sqrt() * 0.5;
+        // Assembly centroid: weighted average of AABB centres (equal volumes).
+        // left AABB centre x = 0.5, right AABB centre x = 10.5 → asm centroid x = 5.5.
+        let asm_cx = 5.5_f64;
+        let left_shift = (0.5 - asm_cx) / (0.5 - asm_cx).abs() * expected_dist; // negative
+        let right_shift = (10.5 - asm_cx) / (10.5 - asm_cx).abs() * expected_dist; // positive
+        assert!((cx_l - (0.5 + left_shift)).abs() < 0.5, "left displacement");
+        assert!((cx_r - (10.5 + right_shift)).abs() < 0.5, "right displacement");
     }
 }

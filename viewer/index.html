@@ -79,6 +79,47 @@
   .examples a { color: var(--accent); text-decoration: none; cursor: pointer; }
   .examples a:hover { text-decoration: underline; }
 
+  /* --- property manager --- */
+  .pm-row { margin-bottom: 14px; }
+  .pm-row-header { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+  .pm-label { flex: 1; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .pm-fx-btn, .pm-reset-btn {
+    background: none; border: 1px solid var(--line); border-radius: 3px;
+    color: var(--muted); font-size: 11px; padding: 1px 5px; cursor: pointer;
+    flex: none; transition: border-color .15s, color .15s;
+  }
+  .pm-fx-btn:hover, .pm-reset-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .pm-fx-active { border-color: var(--accent) !important; color: var(--accent) !important; }
+  .pm-stepper { display: flex; gap: 4px; margin-bottom: 4px; }
+  .pm-number-input {
+    flex: 1; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 4px;
+    padding: 4px 6px; font: inherit; font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .pm-number-input:focus { outline: none; border-color: var(--accent); }
+  .pm-step-up, .pm-step-down {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 3px;
+    color: var(--muted); font-size: 10px; padding: 2px 5px; cursor: pointer;
+    flex: none; line-height: 1; transition: border-color .15s, color .15s;
+  }
+  .pm-step-up:hover, .pm-step-down:hover { border-color: var(--accent); color: var(--accent); }
+  .pm-slider { width: 100%; margin-top: 2px; }
+  .pm-expr-wrap { margin-top: 4px; }
+  .pm-expr-input {
+    width: 100%; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--accent); border-radius: 4px;
+    padding: 4px 6px; font: inherit; font-size: 12px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .pm-expr-input:focus { outline: none; }
+  .pm-expr-preview {
+    margin-top: 3px; font-size: 11px; color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    min-height: 14px;
+  }
+  .pm-expr-error { color: #ff7b72 !important; }
+
   /* --- sketcher panel --- */
   #sketcher-toggle { margin-top: 14px; }
   #sketcher-panel { display: none; position: fixed; right: 16px; top: 16px;

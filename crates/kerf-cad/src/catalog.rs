@@ -280,6 +280,11 @@ pub fn categorize(name: &str) -> Category {
             | "DovetailSlot"
             | "VeeGroove"
             | "TSlot"
+            | "ChamferedHole"
+            | "ThreadedHoleMarker"
+            | "BoltPattern"
+            | "SquareDrive"
+            | "RaisedBoss"
     ) {
         return Category::Holes;
     }
@@ -289,7 +294,7 @@ pub fn categorize(name: &str) -> Category {
     ) {
         return Category::ExtrusionsAndProfiles;
     }
-    if matches!(name, "PipeRun" | "SweepPath" | "Coil" | "Spring") {
+    if matches!(name, "PipeRun" | "SweepPath" | "Coil" | "Spring" | "Helix") {
         return Category::Sweeps;
     }
     if matches!(
@@ -975,6 +980,38 @@ fn curated_override(variant: &str) -> Option<serde_json::Map<String, serde_json:
             m.insert("minor_segs".into(), json!(8));
             Some(m)
         }
+        "Donut2" => {
+            m.insert("major_radius".into(), num(5.0));
+            m.insert("minor_radius".into(), num(1.0));
+            m.insert("major_segs".into(), json!(24));
+            m.insert("minor_segs".into(), json!(12));
+            Some(m)
+        }
+        "ToroidalCap" => {
+            m.insert("major_radius".into(), num(5.0));
+            m.insert("minor_radius".into(), num(1.0));
+            m.insert("sweep_degrees".into(), num(180.0));
+            m.insert("major_segs".into(), json!(12));
+            m.insert("minor_segs".into(), json!(8));
+            Some(m)
+        }
+        "EllipticTube" => {
+            m.insert("semi_major".into(), num(4.0));
+            m.insert("semi_minor".into(), num(2.0));
+            m.insert("length".into(), num(10.0));
+            m.insert("axis".into(), Value::String("z".into()));
+            m.insert("segments".into(), json!(16));
+            Some(m)
+        }
+        "Goblet2" => {
+            m.insert("foot_radius".into(), num(4.0));
+            m.insert("stem_radius".into(), num(1.0));
+            m.insert("stem_height".into(), num(6.0));
+            m.insert("cup_radius".into(), num(3.0));
+            m.insert("cup_height".into(), num(4.0));
+            m.insert("segments".into(), json!(16));
+            Some(m)
+        }
         "Frustum" => {
             m.insert("top_radius".into(), num(3.0));
             m.insert("bottom_radius".into(), num(5.0));
@@ -1281,6 +1318,15 @@ fn curated_override(variant: &str) -> Option<serde_json::Map<String, serde_json:
             m.insert("wire_segments".into(), json!(8));
             Some(m)
         }
+        "Helix" => {
+            m.insert("axis_radius".into(), num(5.0));
+            m.insert("pitch".into(), num(2.0));
+            m.insert("turns".into(), num(2.0));
+            m.insert("wire_radius".into(), num(0.5));
+            m.insert("axis".into(), json!("z"));
+            m.insert("segments".into(), json!(16));
+            Some(m)
+        }
         "Bolt" => {
             m.insert("head_inscribed_radius".into(), num(3.0));
             m.insert("head_thickness".into(), num(2.0));
@@ -1547,6 +1593,55 @@ fn curated_override(variant: &str) -> Option<serde_json::Map<String, serde_json:
             m.insert("leg_inset".into(), num(1.0));
             m.insert("back_thickness".into(), num(1.0));
             m.insert("back_height".into(), num(12.0));
+            Some(m)
+        }
+        // --- Manufacturing batch 5 (2026-05-10) ---
+        "ChamferedHole" => {
+            m.insert("input".into(), Value::String("body".into()));
+            m.insert("center".into(), json!([5.0, 5.0, 10.0]));
+            m.insert("axis".into(), Value::String("z".into()));
+            m.insert("hole_radius".into(), num(1.5));
+            m.insert("hole_depth".into(), num(8.0));
+            m.insert("chamfer_radius".into(), num(2.5));
+            m.insert("chamfer_depth".into(), num(1.0));
+            Some(m)
+        }
+        "ThreadedHoleMarker" => {
+            m.insert("input".into(), Value::String("body".into()));
+            m.insert("center".into(), json!([5.0, 5.0, 10.0]));
+            m.insert("axis".into(), Value::String("z".into()));
+            m.insert("thread_diameter".into(), num(3.0));
+            m.insert("depth".into(), num(8.0));
+            m.insert("thread_pitch".into(), num(0.5));
+            Some(m)
+        }
+        "BoltPattern" => {
+            m.insert("input".into(), Value::String("body".into()));
+            m.insert("center".into(), json!([5.0, 5.0, 10.0]));
+            m.insert("axis".into(), Value::String("z".into()));
+            m.insert("pattern_radius".into(), num(3.5));
+            m.insert("hole_radius".into(), num(0.6));
+            m.insert("hole_depth".into(), num(8.0));
+            m.insert("count".into(), json!(4));
+            m.insert("phase".into(), num(0.0));
+            Some(m)
+        }
+        "SquareDrive" => {
+            m.insert("input".into(), Value::String("body".into()));
+            m.insert("center".into(), json!([5.0, 5.0, 10.0]));
+            m.insert("axis".into(), Value::String("z".into()));
+            m.insert("side_length".into(), num(3.0));
+            m.insert("depth".into(), num(6.0));
+            Some(m)
+        }
+        "RaisedBoss" => {
+            m.insert("input".into(), Value::String("body".into()));
+            m.insert("center".into(), json!([5.0, 5.0, 10.0]));
+            m.insert("axis".into(), Value::String("z".into()));
+            m.insert("boss_radius".into(), num(2.0));
+            m.insert("boss_height".into(), num(4.0));
+            m.insert("hole_radius".into(), num(0.8));
+            m.insert("hole_depth".into(), num(3.0));
             Some(m)
         }
         _ => None,

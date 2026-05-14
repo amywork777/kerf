@@ -26,6 +26,8 @@ pub enum EvalError {
     UnknownId(String),
     #[error("cycle detected involving id: {0}")]
     Cycle(String),
+    #[error("equation error: {0}")]
+    Equation(String),
     #[error("boolean op '{op}' on '{id}' failed: {message}")]
     Boolean { id: String, op: &'static str, message: String },
     #[error("invalid feature '{id}': {reason}")]
@@ -42,9 +44,14 @@ impl Model {
         if self.feature(target_id).is_none() {
             return Err(EvalError::UnknownId(target_id.to_string()));
         }
+        // Resolve equations before feature evaluation. If there are no
+        // equations this is just a clone of self.parameters.
+        let resolved_params = self
+            .resolve_params()
+            .map_err(|e| EvalError::Equation(e.to_string()))?;
         let mut cache: HashMap<String, Solid> = HashMap::new();
         let mut stack: Vec<String> = Vec::new();
-        self.eval_into(target_id, &mut cache, &mut stack)?;
+        self.eval_into(target_id, &resolved_params, &mut cache, &mut stack)?;
         Ok(cache.remove(target_id).expect("just computed"))
     }
 
@@ -79,6 +86,11 @@ impl Model {
         if self.feature(target_id).is_none() {
             return Err(EvalError::UnknownId(target_id.to_string()));
         }
+        // Resolve equations before feature evaluation. If there are no
+        // equations this is just a clone of self.parameters.
+        let resolved_params = self
+            .resolve_params()
+            .map_err(|e| EvalError::Equation(e.to_string()))?;
         // Fingerprints computed during this walk, by feature id. Local to
         // one evaluate_cached call so the same DAG produces consistent
         // upstream fingerprints regardless of caller's previous state.
@@ -88,7 +100,7 @@ impl Model {
         // here as clones from the long-lived cache.
         let mut local: HashMap<String, Solid> = HashMap::new();
         let mut stack: Vec<String> = Vec::new();
-        self.eval_into_cached(target_id, &mut local, &mut fps, cache, &mut stack)?;
+        self.eval_into_cached(target_id, &resolved_params, &mut local, &mut fps, cache, &mut stack)?;
         let fp = *fps.get(target_id).expect("just computed");
         Ok((local.remove(target_id).expect("just computed"), fp))
     }
@@ -96,6 +108,7 @@ impl Model {
     fn eval_into_cached(
         &self,
         id: &str,
+        params: &HashMap<String, f64>,
         local: &mut HashMap<String, Solid>,
         fps: &mut HashMap<String, Fingerprint>,
         cache: &mut EvalCache,
@@ -113,17 +126,18 @@ impl Model {
 
         stack.push(id.to_string());
         for dep in feature.inputs() {
-            self.eval_into_cached(dep, local, fps, cache, stack)?;
+            self.eval_into_cached(dep, params, local, fps, cache, stack)?;
         }
         stack.pop();
 
         // Compute this feature's fingerprint from its inputs'.
+        // Use the resolved params so equations affect cache keys.
         let input_fps: Vec<Fingerprint> = feature
             .inputs()
             .iter()
             .map(|dep| *fps.get(*dep).expect("dep evaluated"))
             .collect();
-        let fp = feature_fingerprint(feature, &self.parameters, &input_fps);
+        let fp = feature_fingerprint(feature, params, &input_fps);
         fps.insert(id.to_string(), fp);
 
         // Cache hit: clone the stored solid into local. Cloning a Solid
@@ -133,7 +147,7 @@ impl Model {
             return Ok(());
         }
 
-        let mut result = build(feature, &self.parameters, local, self)?;
+        let mut result = build(feature, params, local, self)?;
         // Picking provenance: tag any face in this feature's result that
         // doesn't already carry an owner tag with this feature's id.
         let owner = id.to_string();
@@ -151,6 +165,7 @@ impl Model {
     fn eval_into(
         &self,
         id: &str,
+        params: &HashMap<String, f64>,
         cache: &mut HashMap<String, Solid>,
         stack: &mut Vec<String>,
     ) -> Result<(), EvalError> {
@@ -166,11 +181,11 @@ impl Model {
 
         stack.push(id.to_string());
         for dep in feature.inputs() {
-            self.eval_into(dep, cache, stack)?;
+            self.eval_into(dep, params, cache, stack)?;
         }
         stack.pop();
 
-        let mut result = build(feature, &self.parameters, cache, self)?;
+        let mut result = build(feature, params, cache, self)?;
         // Picking provenance: tag any face in this feature's result that
         // doesn't already carry an owner tag with this feature's id. Boolean
         // operations propagate inputs' owner tags through stitch, so they
@@ -250,6 +265,219 @@ fn build(
                 });
             }
             Ok(torus_faceted(r_maj, r_min, *major_segs, *minor_segs))
+        }
+        // ----------------------------------------------------------------
+        // Donut2: same faceted torus as Donut. The "analytic ring geometry"
+        // preservation is semantic metadata — the mesh is identical but
+        // communicates intent for future analytic boolean paths.
+        // ----------------------------------------------------------------
+        Feature::Donut2 {
+            major_radius,
+            minor_radius,
+            major_segs,
+            minor_segs,
+            ..
+        } => {
+            let r_maj = resolve_one(id, major_radius, params)?;
+            let r_min = resolve_one(id, minor_radius, params)?;
+            if r_maj <= r_min || r_min <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Donut2 requires major > minor > 0 (got major={r_maj}, minor={r_min})"
+                    ),
+                });
+            }
+            if *major_segs < 3 || *minor_segs < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "Donut2 requires major_segs >= 3 and minor_segs >= 3".into(),
+                });
+            }
+            // Use higher-resolution faceting to better approximate the
+            // analytic torus volume 2π²Rr².
+            Ok(torus_faceted(r_maj, r_min, *major_segs, *minor_segs))
+        }
+        // ----------------------------------------------------------------
+        // ToroidalCap: a sweep_degrees wedge of the toroidal solid.
+        // Built as a union of sweep_cylinder_segment arcs, exactly like
+        // QuarterTorus (90°) and HalfTorus (180°) but for arbitrary angle.
+        // ----------------------------------------------------------------
+        Feature::ToroidalCap {
+            major_radius,
+            minor_radius,
+            sweep_degrees,
+            major_segs,
+            minor_segs: _,
+            ..
+        } => {
+            let r_maj = resolve_one(id, major_radius, params)?;
+            let r_min = resolve_one(id, minor_radius, params)?;
+            let sw_deg = resolve_one(id, sweep_degrees, params)?;
+            if r_maj <= r_min || r_min <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ToroidalCap requires major > minor > 0 (got maj={r_maj}, min={r_min})"
+                    ),
+                });
+            }
+            if sw_deg <= 0.0 || sw_deg > 360.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ToroidalCap requires 0 < sweep_degrees <= 360 (got {sw_deg})"
+                    ),
+                });
+            }
+            if *major_segs < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "ToroidalCap requires major_segs >= 3".into(),
+                });
+            }
+            if (sw_deg - 360.0).abs() < 1e-6 {
+                // Full torus — use the closed topology builder.
+                return Ok(torus_faceted(r_maj, r_min, *major_segs, 8));
+            }
+            let total_rad = sw_deg.to_radians();
+            let mut acc: Option<Solid> = None;
+            for i in 0..*major_segs {
+                let t0 = total_rad * (i as f64) / (*major_segs as f64);
+                let t1 = total_rad * ((i + 1) as f64) / (*major_segs as f64);
+                let p0 = [r_maj * t0.cos(), r_maj * t0.sin(), 0.0];
+                let p1 = [r_maj * t1.cos(), r_maj * t1.sin(), 0.0];
+                let cyl = sweep_cylinder_segment(p0, p1, r_min, 10)
+                    .ok_or_else(|| EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!("ToroidalCap seg {i} zero length"),
+                    })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "toroidal_cap_join",
+                        message: format!("seg {i}: {}", e.message),
+                    })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+        // ----------------------------------------------------------------
+        // EllipticTube: cylinder with elliptical cross-section built by
+        // constructing a unit cylinder along +z and non-uniformly scaling
+        // (semi_major along x, semi_minor along y, length along axis).
+        // ----------------------------------------------------------------
+        Feature::EllipticTube {
+            semi_major,
+            semi_minor,
+            length,
+            axis,
+            segments,
+            ..
+        } => {
+            let a = resolve_one(id, semi_major, params)?;
+            let b = resolve_one(id, semi_minor, params)?;
+            let l = resolve_one(id, length, params)?;
+            if a <= 0.0 || b <= 0.0 || l <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "EllipticTube requires positive semi_major, semi_minor, length (got a={a}, b={b}, l={l})"
+                    ),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "EllipticTube requires segments >= 3".into(),
+                });
+            }
+            // Build unit cylinder (radius=1) along +z, height=1, then scale.
+            let unit = cylinder_faceted(1.0, 1.0, *segments);
+            // Scale to elliptic cross-section along +z, then rotate to axis.
+            let axis_idx = parse_axis(id, axis)?;
+            let (scaled, el, ea, eb) = match axis_idx {
+                0 => {
+                    // axis = x: ellipse axes along y and z, tube along x
+                    // unit cyl is along z with radius 1; scale: x→l, y→b, z→a then swap axes
+                    // Actually build along z with sx=a, sy=b, sz=l then remap z→x.
+                    let s = scale_xyz_solid(&unit, a, b, l);
+                    let remapped = axis_swap_xz_to_x(&s);
+                    (remapped, l, a, b)
+                }
+                1 => {
+                    // axis = y: tube along y
+                    let s = scale_xyz_solid(&unit, a, b, l);
+                    let remapped = axis_swap_yz_to_y(&s);
+                    (remapped, l, a, b)
+                }
+                _ => {
+                    // axis = z (default)
+                    let s = scale_xyz_solid(&unit, a, b, l);
+                    (s, l, a, b)
+                }
+            };
+            let _ = (el, ea, eb);
+            Ok(scaled)
+        }
+        // ----------------------------------------------------------------
+        // Goblet2: foot disk + cylindrical stem + cylindrical cup,
+        // stacked along +z. Classic straight-sided chalice / wine-glass.
+        // foot_radius > stem_radius; cup_radius > stem_radius.
+        // ----------------------------------------------------------------
+        Feature::Goblet2 {
+            foot_radius,
+            stem_radius,
+            stem_height,
+            cup_radius,
+            cup_height,
+            segments,
+            ..
+        } => {
+            let fr = resolve_one(id, foot_radius, params)?;
+            let sr = resolve_one(id, stem_radius, params)?;
+            let sh = resolve_one(id, stem_height, params)?;
+            let cr = resolve_one(id, cup_radius, params)?;
+            let ch = resolve_one(id, cup_height, params)?;
+            if fr <= 0.0 || sr <= 0.0 || sh <= 0.0 || cr <= 0.0 || ch <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Goblet2 requires positive foot_radius, stem_radius, stem_height, cup_radius, cup_height (got fr={fr}, sr={sr}, sh={sh}, cr={cr}, ch={ch})"
+                    ),
+                });
+            }
+            if sr >= fr {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Goblet2 requires stem_radius < foot_radius (got sr={sr}, fr={fr})"
+                    ),
+                });
+            }
+            if *segments < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "Goblet2 requires segments >= 3".into(),
+                });
+            }
+            let foot_h = sr * 0.5; // thin flat disk foot
+            let foot = cylinder_faceted(fr, foot_h, *segments);
+            let stem_raw = cylinder_faceted(sr, sh, *segments);
+            let stem = translate_solid(&stem_raw, Vec3::new(0.0, 0.0, foot_h - 1e-3));
+            let cup_raw = cylinder_faceted(cr, ch, *segments);
+            let cup = translate_solid(&cup_raw, Vec3::new(0.0, 0.0, foot_h + sh - 2e-3));
+            let lower = foot.try_union(&stem).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "goblet2_foot_stem",
+                message: e.message,
+            })?;
+            lower.try_union(&cup).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "goblet2_cup",
+                message: e.message,
+            })
         }
         Feature::Cone { radius, height, .. } => Ok(cone(
             resolve_one(id, radius, params)?,
@@ -2848,6 +3076,83 @@ fn build(
                 acc = Some(match acc.take() {
                     None => cyl,
                     Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean { id: id.into(), op: "spring_segment_union", message: format!("segment {i}: {}", e.message) })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+        Feature::Helix {
+            axis_radius,
+            pitch,
+            turns,
+            wire_radius,
+            axis,
+            segments,
+            ..
+        } => {
+            let r_axis = resolve_one(id, axis_radius, params)?;
+            let p = resolve_one(id, pitch, params)?;
+            let t = resolve_one(id, turns, params)?;
+            let r_wire = resolve_one(id, wire_radius, params)?;
+            if r_axis <= 0.0 || p <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Helix requires positive axis_radius, pitch, turns (got radius={r_axis}, pitch={p}, turns={t})"
+                    ),
+                });
+            }
+            if r_wire <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "Helix wire_radius must be > 0 (path-only helix not yet supported; set wire_radius > 0 to materialize the wire)".into(),
+                });
+            }
+            if r_wire >= r_axis {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Helix wire_radius ({r_wire}) must be less than axis_radius ({r_axis}) — otherwise the helix self-overlaps"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Helix segments per turn must be >= 6 (got {segments})"),
+                });
+            }
+            let total_samples = (*segments as f64 * t).ceil() as usize + 1;
+            let total_angle = 2.0 * std::f64::consts::PI * t;
+            // Build helix sample points. For axis="z" (default): x=R cosθ, y=R sinθ, z=p*θ/(2π).
+            // For axis="x": rotate so the helix wraps around X — coords become (p*θ/(2π), R cosθ, R sinθ).
+            // For axis="y": coords become (R cosθ, p*θ/(2π), R sinθ) (helix wraps around Y).
+            let helix_point = |theta: f64| -> [f64; 3] {
+                let rise = p * theta / (2.0 * std::f64::consts::PI);
+                let cos_t = theta.cos();
+                let sin_t = theta.sin();
+                match axis.as_str() {
+                    "x" => [rise, r_axis * cos_t, r_axis * sin_t],
+                    "y" => [r_axis * cos_t, rise, r_axis * sin_t],
+                    _ => [r_axis * cos_t, r_axis * sin_t, rise], // "z" and default
+                }
+            };
+            let mut acc: Option<Solid> = None;
+            for i in 0..total_samples - 1 {
+                let theta_a = total_angle * i as f64 / (total_samples - 1) as f64;
+                let theta_b = total_angle * (i + 1) as f64 / (total_samples - 1) as f64;
+                let p0 = helix_point(theta_a);
+                let p1 = helix_point(theta_b);
+                let cyl = sweep_cylinder_segment(p0, p1, r_wire, 8).ok_or_else(|| EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Helix segment {i} has zero length"),
+                })?;
+                acc = Some(match acc.take() {
+                    None => cyl,
+                    Some(prev) => prev.try_union(&cyl).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "helix_segment_union",
+                        message: format!("segment {i}: {}", e.message),
+                    })?,
                 });
             }
             Ok(acc.unwrap())
@@ -8917,6 +9222,310 @@ fn build(
                 })?;
             }
             Ok(acc)
+        }
+
+        // ---------------------------------------------------------------
+        // Manufacturing batch 5 (5 features) — 2026-05-10
+        // ---------------------------------------------------------------
+
+        Feature::ChamferedHole {
+            input,
+            center,
+            axis,
+            hole_radius,
+            hole_depth,
+            chamfer_radius,
+            chamfer_depth,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let ctr = resolve3(id, center, params)?;
+            let hr = resolve_one(id, hole_radius, params)?;
+            let hd = resolve_one(id, hole_depth, params)?;
+            let cr = resolve_one(id, chamfer_radius, params)?;
+            let cd = resolve_one(id, chamfer_depth, params)?;
+            if hr <= 0.0 || hd <= 0.0 || cr <= 0.0 || cd <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ChamferedHole requires positive radii and depths (got hr={hr}, hd={hd}, cr={cr}, cd={cd})"
+                    ),
+                });
+            }
+            if cr <= hr {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ChamferedHole chamfer_radius ({cr}) must be > hole_radius ({hr})"
+                    ),
+                });
+            }
+            if cd >= hd {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ChamferedHole chamfer_depth ({cd}) must be < hole_depth ({hd})"
+                    ),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            let segs = 16usize;
+            let eps = (hr * 0.1).max(1e-3).min(hd * 0.1);
+            // Main bore cylinder.
+            let bore = cylinder_along_axis(
+                hr,
+                hd + eps,
+                segs,
+                axis_idx,
+                ctr[axis_idx] - hd,
+                ctr[a_idx],
+                ctr[b_idx],
+            );
+            // Chamfer frustum: bottom radius = hole_radius, top radius =
+            // chamfer_radius, height = chamfer_depth + eps (overshoot above surface).
+            let cone_local = frustum_faceted(hr, cr, cd + eps, segs);
+            let cone_oriented = match axis_idx {
+                2 => cone_local,
+                0 => axis_swap_xz_to_x(&cone_local),
+                1 => axis_swap_yz_to_y(&cone_local),
+                _ => unreachable!(),
+            };
+            let mut chamfer_offset = [0.0_f64; 3];
+            chamfer_offset[axis_idx] = ctr[axis_idx] - cd;
+            chamfer_offset[a_idx] = ctr[a_idx];
+            chamfer_offset[b_idx] = ctr[b_idx];
+            let chamfer_cutter = translate_solid(
+                &cone_oriented,
+                Vec3::new(chamfer_offset[0], chamfer_offset[1], chamfer_offset[2]),
+            );
+            let composite = bore.try_union(&chamfer_cutter).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "chamfered_hole_union",
+                message: e.message,
+            })?;
+            base.try_difference(&composite).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "chamfered_hole",
+                message: e.message,
+            })
+        }
+
+        Feature::ThreadedHoleMarker {
+            input,
+            center,
+            axis,
+            thread_diameter,
+            depth,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let ctr = resolve3(id, center, params)?;
+            let td = resolve_one(id, thread_diameter, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if td <= 0.0 || d <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ThreadedHoleMarker requires positive thread_diameter and depth (got td={td}, d={d})"
+                    ),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            let segs = 16usize;
+            let r = td / 2.0;
+            let eps = (r * 0.1).max(1e-3).min(d * 0.1);
+            // Drill a cylinder of thread_diameter/2 radius.
+            let bore = cylinder_along_axis(
+                r,
+                d + eps,
+                segs,
+                axis_idx,
+                ctr[axis_idx] - d,
+                ctr[a_idx],
+                ctr[b_idx],
+            );
+            base.try_difference(&bore).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "threaded_hole_marker",
+                message: e.message,
+            })
+        }
+
+        Feature::BoltPattern {
+            input,
+            center,
+            axis,
+            pattern_radius,
+            hole_radius,
+            hole_depth,
+            count,
+            phase,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let ctr = resolve3(id, center, params)?;
+            let pr = resolve_one(id, pattern_radius, params)?;
+            let hr = resolve_one(id, hole_radius, params)?;
+            let hd = resolve_one(id, hole_depth, params)?;
+            let ph = resolve_one(id, phase, params)?;
+            if *count == 0 || pr <= 0.0 || hr <= 0.0 || hd <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "BoltPattern requires count>=1, positive pattern_radius/hole_radius/hole_depth (got count={count}, pr={pr}, hr={hr}, hd={hd})"
+                    ),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            let segs = 12usize;
+            let eps = (hr * 0.1).max(1e-3).min(hd * 0.1);
+            let mut acc = base.clone();
+            for k in 0..*count {
+                let theta = ph + 2.0 * std::f64::consts::PI * k as f64 / *count as f64;
+                let pa = ctr[a_idx] + pr * theta.cos();
+                let pb = ctr[b_idx] + pr * theta.sin();
+                let bore = cylinder_along_axis(
+                    hr,
+                    hd + eps,
+                    segs,
+                    axis_idx,
+                    ctr[axis_idx] - hd,
+                    pa,
+                    pb,
+                );
+                acc = acc.try_difference(&bore).map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "bolt_pattern",
+                    message: format!("drilling hole {k}: {}", e.message),
+                })?;
+            }
+            Ok(acc)
+        }
+
+        Feature::SquareDrive {
+            input,
+            center,
+            axis,
+            side_length,
+            depth,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let ctr = resolve3(id, center, params)?;
+            let s = resolve_one(id, side_length, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if s <= 0.0 || d <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "SquareDrive requires positive side_length and depth (got s={s}, d={d})"
+                    ),
+                });
+            }
+            // Square pocket: circumradius = s * sqrt(2) / 2, phase = π/4 so sides are axis-aligned.
+            let cutter = build_polygon_pocket(
+                id,
+                ctr,
+                axis,
+                s * std::f64::consts::SQRT_2 / 2.0,
+                d,
+                4,
+                std::f64::consts::FRAC_PI_4,
+            )?;
+            base.try_difference(&cutter).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "square_drive",
+                message: e.message,
+            })
+        }
+
+        Feature::RaisedBoss {
+            input,
+            center,
+            axis,
+            boss_radius,
+            boss_height,
+            hole_radius,
+            hole_depth,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let ctr = resolve3(id, center, params)?;
+            let br = resolve_one(id, boss_radius, params)?;
+            let bh = resolve_one(id, boss_height, params)?;
+            let hr = resolve_one(id, hole_radius, params)?;
+            let hd = resolve_one(id, hole_depth, params)?;
+            if br <= 0.0 || bh <= 0.0 || hr <= 0.0 || hd <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "RaisedBoss requires positive radii and depths (got br={br}, bh={bh}, hr={hr}, hd={hd})"
+                    ),
+                });
+            }
+            if hr >= br {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "RaisedBoss hole_radius ({hr}) must be < boss_radius ({br})"
+                    ),
+                });
+            }
+            if hd > bh {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "RaisedBoss hole_depth ({hd}) must be <= boss_height ({bh})"
+                    ),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            let segs = 16usize;
+            // Boss cylinder sits ON TOP of the surface at center.
+            // The boss base is at ctr[axis_idx], top at ctr[axis_idx] + bh.
+            let boss_local = cylinder_faceted(br, bh, segs);
+            let boss_oriented = match axis_idx {
+                2 => boss_local,
+                0 => axis_swap_xz_to_x(&boss_local),
+                1 => axis_swap_yz_to_y(&boss_local),
+                _ => unreachable!(),
+            };
+            let mut boss_offset = [0.0_f64; 3];
+            boss_offset[axis_idx] = ctr[axis_idx];
+            boss_offset[a_idx] = ctr[a_idx];
+            boss_offset[b_idx] = ctr[b_idx];
+            let boss = translate_solid(
+                &boss_oriented,
+                Vec3::new(boss_offset[0], boss_offset[1], boss_offset[2]),
+            );
+            // Union boss onto input.
+            let with_boss = base.try_union(&boss).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "raised_boss_union",
+                message: e.message,
+            })?;
+            // Blind hole in top of boss, going in -axis direction from the top.
+            // Top of boss is at ctr[axis_idx] + bh; hole goes to ctr[axis_idx] + bh - hd.
+            let eps = (hr * 0.1).max(1e-3).min(hd * 0.1);
+            let hole_top_pos = ctr[axis_idx] + bh;
+            let bore = cylinder_along_axis(
+                hr,
+                hd + eps,
+                segs,
+                axis_idx,
+                hole_top_pos - hd,
+                ctr[a_idx],
+                ctr[b_idx],
+            );
+            with_boss.try_difference(&bore).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "raised_boss_drill",
+                message: e.message,
+            })
         }
 }
 }

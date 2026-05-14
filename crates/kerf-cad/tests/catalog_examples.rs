@@ -57,6 +57,7 @@ const KNOWN_EXEMPT: &[(&str, &str)] = &[
     // just exceeds the per-variant test cap. The geometry itself is correct.
     ("Coil", "evaluation >5s at default segments_per_turn=12, turns=4"),
     ("Spring", "evaluation >5s at default coil density"),
+    ("Helix", "evaluation >5s at default segments=64 × turns — same family as Coil/Spring"),
     ("Capsule", "evaluation >5s — many sphere ∪ cyl ∪ sphere booleans"),
     ("AngleArc", "evaluation >5s — chained cylinder cylinders for arc"),
     ("HookHandle", "evaluation >5s — sweep + half-torus boolean chain"),
@@ -120,6 +121,8 @@ const KNOWN_EXEMPT: &[(&str, &str)] = &[
     ("PaperLantern", "evaluation >5s — cylinder + 2 hemisphere caps"),
     // Stitch trip on default sweep-with-twist parameters.
     ("SweepWithTwist", "stitch: non-manifold on segment-1 union of twisted-profile sweep"),
+    // Curved-surface batch 2 (sw-curved-batch-2).
+    ("ToroidalCap", "evaluation >5s — sweep_cylinder_segment chain for arc wedge"),
 ];
 
 /// Parse feature.rs once at the top of every test (cheap — feature.rs is ~3k

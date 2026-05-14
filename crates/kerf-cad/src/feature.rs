@@ -73,6 +73,57 @@ pub enum Feature {
         major_segs: usize,
         minor_segs: usize,
     },
+    /// Donut2: refined torus shape that preserves the exact analytic ring
+    /// geometry (vertex positions satisfy the torus equation exactly).
+    /// Unlike `Donut`, which uses best-fit planar quads, `Donut2` tags faces
+    /// with `SurfaceKind::Torus` so the analytic boolean path can exploit the
+    /// exact surface equation when available. Centered on the origin, axis
+    /// along +z. `major_radius` must exceed `minor_radius`.
+    Donut2 {
+        id: String,
+        major_radius: Scalar,
+        minor_radius: Scalar,
+        major_segs: usize,
+        minor_segs: usize,
+    },
+    /// ToroidalCap: a wedge of a torus — like `Donut` sliced by two half-
+    /// spaces to keep only `sweep_degrees` (0 < sweep ≤ 360) of the full
+    /// toroidal sweep. At 360° it is identical to `Donut`. At 180° it is a
+    /// half-torus (D-shaped cross-section in the xy plane). Centered on the
+    /// origin with the sweep starting at θ = 0 and going counter-clockwise.
+    ToroidalCap {
+        id: String,
+        major_radius: Scalar,
+        minor_radius: Scalar,
+        sweep_degrees: Scalar,
+        major_segs: usize,
+        minor_segs: usize,
+    },
+    /// EllipticTube: a solid tube whose cross-section is an ellipse with
+    /// semi-axes `semi_major` (along x by default) and `semi_minor` (along
+    /// y). The tube extends `length` units along the named `axis` ("x", "y",
+    /// or "z"). Built by scaling a faceted cylinder non-uniformly.
+    EllipticTube {
+        id: String,
+        semi_major: Scalar,
+        semi_minor: Scalar,
+        length: Scalar,
+        axis: String,
+        segments: usize,
+    },
+    /// Goblet2: chalice/wine-glass shape (revolved profile: flat disk foot +
+    /// narrow cylindrical stem + flared cup). Distinct from `Goblet` (which
+    /// has a frustum bowl) — `Goblet2` uses a cylindrical cup rim so the
+    /// silhouette is a classic straight-sided chalice.
+    Goblet2 {
+        id: String,
+        foot_radius: Scalar,
+        stem_radius: Scalar,
+        stem_height: Scalar,
+        cup_radius: Scalar,
+        cup_height: Scalar,
+        segments: usize,
+    },
     Cone {
         id: String,
         radius: Scalar,
@@ -3582,6 +3633,86 @@ pub enum Feature {
         groove_count: usize,
     },
 
+    // -------------------------------------------------------------------
+    // Manufacturing batch 5 (5 features) — ship 2026-05-10.
+    // -------------------------------------------------------------------
+
+    /// **ChamferedHole**: counterbore + 45° chamfer at the top edge of the
+    /// bore. Drills a cylinder of `hole_radius`/`hole_depth` and adds a
+    /// conical chamfer frustum (from `hole_radius` at `chamfer_depth` to
+    /// `chamfer_radius` at the surface) at the top of the opening.
+    /// `axis` is "x"|"y"|"z" (drill direction is -axis). `center` is the
+    /// center of the opening on the +axis-facing surface.
+    ChamferedHole {
+        id: String,
+        input: String,
+        center: [Scalar; 3],
+        axis: String,
+        hole_radius: Scalar,
+        hole_depth: Scalar,
+        chamfer_radius: Scalar,
+        chamfer_depth: Scalar,
+    },
+
+    /// **ThreadedHoleMarker**: visual marker for a threaded hole in `input`.
+    /// Drills a cylinder of `thread_diameter / 2` radius and `depth` along
+    /// -`axis` from `center` on the +axis face. Tags the hole with
+    /// `face_owner_tag = "thread"` so drawing tools can render the thread
+    /// symbol. No actual threads are modelled.
+    ThreadedHoleMarker {
+        id: String,
+        input: String,
+        center: [Scalar; 3],
+        axis: String,
+        thread_diameter: Scalar,
+        depth: Scalar,
+        thread_pitch: Scalar,
+    },
+
+    /// **BoltPattern**: circular array of `count` bolt holes, each of
+    /// `hole_radius` and `hole_depth`, distributed at `pattern_radius` from
+    /// `center` around `axis`. `phase` (radians) offsets the first hole.
+    /// Drills all holes into `input` in a single feature.
+    BoltPattern {
+        id: String,
+        input: String,
+        center: [Scalar; 3],
+        axis: String,
+        pattern_radius: Scalar,
+        hole_radius: Scalar,
+        hole_depth: Scalar,
+        count: usize,
+        phase: Scalar,
+    },
+
+    /// **SquareDrive**: square pocket for a square key or drive. Subtracts
+    /// a square prismatic pocket of `side_length` × `side_length` × `depth`
+    /// from `input`, centered at `center` on the +`axis`-facing surface.
+    /// The pocket axis runs in -`axis` from the opening at `center`.
+    SquareDrive {
+        id: String,
+        input: String,
+        center: [Scalar; 3],
+        axis: String,
+        side_length: Scalar,
+        depth: Scalar,
+    },
+
+    /// **RaisedBoss**: raised cylindrical boss on `input` with an embedded
+    /// blind screw hole. Unions a cylinder of `boss_radius`/`boss_height`
+    /// at `center` on the +`axis` surface, then drills a blind hole of
+    /// `hole_radius`/`hole_depth` along -`axis` from the top of the boss.
+    RaisedBoss {
+        id: String,
+        input: String,
+        center: [Scalar; 3],
+        axis: String,
+        boss_radius: Scalar,
+        boss_height: Scalar,
+        hole_radius: Scalar,
+        hole_depth: Scalar,
+    },
+
     Union {
         id: String,
         inputs: Vec<String>,
@@ -3826,6 +3957,30 @@ pub enum Feature {
         tip_width: Scalar,
         tooth_height: Scalar,
         thickness: Scalar,
+    },
+
+    /// Helix: a helical curve or tubular wire sweep. `axis_radius` is the
+    /// distance from the central axis to the curve. `pitch` is the rise per
+    /// full turn. `turns` is the number of full turns (must be > 0).
+    /// `axis` selects the central axis: "x", "y", or "z" (default "z").
+    ///
+    /// When `wire_radius` > 0 the helix is materialized as a tubular wire
+    /// (like Coil/Spring) built by chaining short cylinder segments along the
+    /// helical path. `segments` controls the number of straight-line segments
+    /// per turn (minimum 6). When `wire_radius` == 0 the evaluator returns an
+    /// error — path-only use is reserved for a future SweepPathHelix feature.
+    ///
+    /// Unlike Coil, the wire-overlap constraint (`wire_radius < axis_radius`)
+    /// is enforced; the axis field enables non-z orientations without a
+    /// separate Rotate step.
+    Helix {
+        id: String,
+        axis_radius: Scalar,
+        pitch: Scalar,
+        turns: Scalar,
+        wire_radius: Scalar,
+        axis: String,
+        segments: usize,
     },}
 
 impl Feature {
@@ -3837,6 +3992,10 @@ impl Feature {
             | Feature::Sphere { id, .. }
             | Feature::Torus { id, .. }
             | Feature::Donut { id, .. }
+            | Feature::Donut2 { id, .. }
+            | Feature::ToroidalCap { id, .. }
+            | Feature::EllipticTube { id, .. }
+            | Feature::Goblet2 { id, .. }
             | Feature::Cone { id, .. }
             | Feature::Frustum { id, .. }
             | Feature::ExtrudePolygon { id, .. }
@@ -4111,6 +4270,7 @@ impl Feature {
             | Feature::GearBlank2 { id, .. }
             | Feature::PaperClipShape { id, .. }
             | Feature::Caltrops { id, .. }
+            | Feature::Helix { id, .. }
             | Feature::Translate { id, .. }
             | Feature::Scale { id, .. }
             | Feature::ScaleXYZ { id, .. }
@@ -4145,6 +4305,13 @@ impl Feature {
             | Feature::Cross3D { id, .. }
             | Feature::Chair { id, .. }
 => id,
+
+            Feature::ChamferedHole { id, .. }
+            | Feature::ThreadedHoleMarker { id, .. }
+            | Feature::BoltPattern { id, .. }
+            | Feature::SquareDrive { id, .. }
+            | Feature::RaisedBoss { id, .. }
+=> id,
 }
     }
 
@@ -4157,6 +4324,10 @@ impl Feature {
             | Feature::Sphere { .. }
             | Feature::Torus { .. }
             | Feature::Donut { .. }
+            | Feature::Donut2 { .. }
+            | Feature::ToroidalCap { .. }
+            | Feature::EllipticTube { .. }
+            | Feature::Goblet2 { .. }
             | Feature::Cone { .. }
             | Feature::Frustum { .. }
             | Feature::ExtrudePolygon { .. }
@@ -4409,7 +4580,8 @@ impl Feature {
             | Feature::AnchorChain { .. }
             | Feature::GearBlank2 { .. }
             | Feature::PaperClipShape { .. }
-            | Feature::Caltrops { .. } => Vec::new(),
+            | Feature::Caltrops { .. }
+            | Feature::Helix { .. } => Vec::new(),
             Feature::HoleArray { input, .. }
             | Feature::BoltCircle { input, .. }
             | Feature::HexHole { input, .. }
@@ -4469,6 +4641,12 @@ impl Feature {
             | Feature::Cross3D { .. }
             | Feature::Chair { .. }
 => Vec::new(),
+
+            Feature::ChamferedHole { input, .. }
+            | Feature::ThreadedHoleMarker { input, .. }
+            | Feature::BoltPattern { input, .. }
+            | Feature::SquareDrive { input, .. }
+            | Feature::RaisedBoss { input, .. } => vec![input.as_str()],
 }
     }
 }
