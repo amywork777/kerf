@@ -3799,6 +3799,376 @@ fn build(
                 message: e.message,
             })
         }
+        // ----------------------------------------------------------------
+        // New sweep/loft batch
+        // ----------------------------------------------------------------
+        Feature::SpinalLoft { sections, spacing, twist, axis, .. } => {
+            if sections.len() < 2 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "SpinalLoft needs at least 2 sections (got {})",
+                        sections.len()
+                    ),
+                });
+            }
+            let spc = resolve_one(id, spacing, params)?;
+            if spc <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("SpinalLoft spacing must be > 0 (got {spc})"),
+                });
+            }
+            let twist_total_deg = resolve_one(id, twist, params)?;
+            let n_sec = sections.len();
+            let n_pts = sections[0].points.len();
+            if n_pts < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "SpinalLoft sections need at least 3 points each (got {n_pts})"
+                    ),
+                });
+            }
+            for (i, sec) in sections.iter().enumerate() {
+                if sec.points.len() != n_pts {
+                    return Err(EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!(
+                            "SpinalLoft section {i} has {} points; section 0 has {n_pts}",
+                            sec.points.len()
+                        ),
+                    });
+                }
+            }
+            // Build one lifted+twisted ring of points per section.
+            // The spine runs along `axis`; section i is at position
+            // i * spacing along the axis, centred so section 0 is at 0.
+            let axis_idx: usize = match axis.as_str() {
+                "x" => 0,
+                "y" => 1,
+                "z" | _ => 2,
+            };
+            // For each section, compute twist angle and lift points.
+            let mut resolved: Vec<Vec<Point3>> = Vec::with_capacity(n_sec);
+            for (i, sec) in sections.iter().enumerate() {
+                let frac = if n_sec > 1 {
+                    i as f64 / (n_sec - 1) as f64
+                } else {
+                    0.0
+                };
+                let angle_rad = (twist_total_deg * frac).to_radians();
+                let cos_a = angle_rad.cos();
+                let sin_a = angle_rad.sin();
+                let spine_pos = i as f64 * spc;
+                // Centroid of section.
+                let np = sec.points.len() as f64;
+                let mut raw: Vec<[f64; 2]> = Vec::with_capacity(sec.points.len());
+                for p in &sec.points {
+                    let xy = resolve_arr(p, params).map_err(|m| EvalError::Parameter {
+                        id: id.into(),
+                        message: format!("section {i}: {m}"),
+                    })?;
+                    raw.push([xy[0], xy[1]]);
+                }
+                let cx = raw.iter().map(|p| p[0]).sum::<f64>() / np;
+                let cy = raw.iter().map(|p| p[1]).sum::<f64>() / np;
+                let mut pts = Vec::with_capacity(n_pts);
+                for &[u, v] in &raw {
+                    // Rotate around centroid.
+                    let du = u - cx;
+                    let dv = v - cy;
+                    let ru = du * cos_a - dv * sin_a + cx;
+                    let rv = du * sin_a + dv * cos_a + cy;
+                    let mut world = [0.0f64; 3];
+                    // The two non-axis directions are the profile XY.
+                    let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+                    world[a_idx] = ru;
+                    world[b_idx] = rv;
+                    world[axis_idx] = spine_pos;
+                    pts.push(Point3::new(world[0], world[1], world[2]));
+                }
+                resolved.push(pts);
+            }
+            // Union consecutive lofted segments.
+            let mut acc: Option<Solid> = None;
+            for i in 0..resolved.len() - 1 {
+                let seg = extrude_lofted(&resolved[i], &resolved[i + 1]);
+                acc = Some(match acc.take() {
+                    None => seg,
+                    Some(prev) => prev.try_union(&seg).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "spinal_loft_segment_union",
+                        message: format!("segment {i}→{}: {}", i + 1, e.message),
+                    })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+
+        Feature::RailedSweep { profile, path, rail, .. } => {
+            if path.len() < 2 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "RailedSweep needs at least 2 path points (got {})",
+                        path.len()
+                    ),
+                });
+            }
+            if path.len() != rail.len() {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "RailedSweep path ({}) and rail ({}) must have the same length",
+                        path.len(),
+                        rail.len()
+                    ),
+                });
+            }
+            if profile.points.len() < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "RailedSweep profile needs at least 3 points (got {})",
+                        profile.points.len()
+                    ),
+                });
+            }
+            // Resolve profile XY.
+            let mut prof_xy: Vec<(f64, f64)> = Vec::with_capacity(profile.points.len());
+            for p in &profile.points {
+                let xy = resolve_arr(p, params).map_err(|m| EvalError::Parameter {
+                    id: id.into(),
+                    message: m,
+                })?;
+                prof_xy.push((xy[0], xy[1]));
+            }
+            // Resolve path and rail.
+            let mut pts: Vec<[f64; 3]> = Vec::with_capacity(path.len());
+            let mut rail_pts: Vec<[f64; 3]> = Vec::with_capacity(rail.len());
+            for (i, (pp, rp)) in path.iter().zip(rail.iter()).enumerate() {
+                let xyz = resolve_arr(pp, params).map_err(|m| EvalError::Parameter {
+                    id: id.into(),
+                    message: format!("path point {i}: {m}"),
+                })?;
+                pts.push(xyz);
+                let rxyz = resolve_arr(rp, params).map_err(|m| EvalError::Parameter {
+                    id: id.into(),
+                    message: format!("rail point {i}: {m}"),
+                })?;
+                rail_pts.push(rxyz);
+            }
+            let n_path = pts.len();
+            // Centroid of profile.
+            let np = prof_xy.len() as f64;
+            let cx = prof_xy.iter().map(|p| p.0).sum::<f64>() / np;
+            let cy = prof_xy.iter().map(|p| p.1).sum::<f64>() / np;
+            // Build a frame from tangent + rail-derived up vector.
+            let frame_railed = |seg_tangent: [f64; 3], path_pt: [f64; 3], rail_pt: [f64; 3]|
+                -> ([f64; 3], [f64; 3])
+            {
+                // "up" direction = vector from path point to rail point.
+                let raw_up = [
+                    rail_pt[0] - path_pt[0],
+                    rail_pt[1] - path_pt[1],
+                    rail_pt[2] - path_pt[2],
+                ];
+                let up_len = (raw_up[0]*raw_up[0] + raw_up[1]*raw_up[1] + raw_up[2]*raw_up[2]).sqrt();
+                // Fall back to standard frame if rail coincides with path.
+                let up: [f64; 3] = if up_len > 1e-12 {
+                    [raw_up[0]/up_len, raw_up[1]/up_len, raw_up[2]/up_len]
+                } else if seg_tangent[2].abs() > 0.9 {
+                    [1.0, 0.0, 0.0]
+                } else {
+                    [0.0, 0.0, 1.0]
+                };
+                // x = up × tangent (profile's local X)
+                let x = [
+                    up[1]*seg_tangent[2] - up[2]*seg_tangent[1],
+                    up[2]*seg_tangent[0] - up[0]*seg_tangent[2],
+                    up[0]*seg_tangent[1] - up[1]*seg_tangent[0],
+                ];
+                let xn = (x[0]*x[0] + x[1]*x[1] + x[2]*x[2]).sqrt();
+                let xu = if xn > 1e-12 {
+                    [x[0]/xn, x[1]/xn, x[2]/xn]
+                } else {
+                    // tangent and up are parallel — fall back to any perpendicular.
+                    let fb: [f64; 3] = if seg_tangent[0].abs() < 0.9 {
+                        [1.0, 0.0, 0.0]
+                    } else {
+                        [0.0, 1.0, 0.0]
+                    };
+                    let x2 = [
+                        fb[1]*seg_tangent[2] - fb[2]*seg_tangent[1],
+                        fb[2]*seg_tangent[0] - fb[0]*seg_tangent[2],
+                        fb[0]*seg_tangent[1] - fb[1]*seg_tangent[0],
+                    ];
+                    let x2n = (x2[0]*x2[0] + x2[1]*x2[1] + x2[2]*x2[2]).sqrt();
+                    [x2[0]/x2n, x2[1]/x2n, x2[2]/x2n]
+                };
+                // y = tangent × x
+                let y = [
+                    seg_tangent[1]*xu[2] - seg_tangent[2]*xu[1],
+                    seg_tangent[2]*xu[0] - seg_tangent[0]*xu[2],
+                    seg_tangent[0]*xu[1] - seg_tangent[1]*xu[0],
+                ];
+                (xu, y)
+            };
+            // Build tangents.
+            let mut tangents: Vec<[f64; 3]> = Vec::with_capacity(n_path);
+            for i in 0..n_path - 1 {
+                let d = [
+                    pts[i+1][0] - pts[i][0],
+                    pts[i+1][1] - pts[i][1],
+                    pts[i+1][2] - pts[i][2],
+                ];
+                let len = (d[0]*d[0] + d[1]*d[1] + d[2]*d[2]).sqrt();
+                if len < 1e-12 {
+                    return Err(EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!("RailedSweep segment {i}→{} has zero length", i+1),
+                    });
+                }
+                tangents.push([d[0]/len, d[1]/len, d[2]/len]);
+            }
+            // Lift profile at a given path point with railed frame.
+            let lift_railed = |p: [f64; 3], tangent: [f64; 3], rail_pt: [f64; 3]| -> Vec<Point3> {
+                let (xu, y) = frame_railed(tangent, p, rail_pt);
+                prof_xy.iter().map(|&(u, v)| {
+                    let lu = u - cx;
+                    let lv = v - cy;
+                    Point3::new(
+                        p[0] + lu*xu[0] + lv*y[0],
+                        p[1] + lu*xu[1] + lv*y[1],
+                        p[2] + lu*xu[2] + lv*y[2],
+                    )
+                }).collect()
+            };
+            let mut acc: Option<Solid> = None;
+            for i in 0..n_path - 1 {
+                let bot = lift_railed(pts[i], tangents[i], rail_pts[i]);
+                let top = lift_railed(pts[i+1], tangents[i], rail_pts[i+1]);
+                let seg = extrude_lofted(&bot, &top);
+                acc = Some(match acc.take() {
+                    None => seg,
+                    Some(prev) => prev.try_union(&seg).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "railed_sweep_segment_union",
+                        message: format!("segment {i}: {}", e.message),
+                    })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+
+        Feature::ScaledExtrude { profile, direction, length, scale_at_end, segments, .. } => {
+            let len = resolve_one(id, length, params)?;
+            let s_end = resolve_one(id, scale_at_end, params)?;
+            if len <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("ScaledExtrude length must be > 0 (got {len})"),
+                });
+            }
+            if s_end <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("ScaledExtrude scale_at_end must be > 0 (got {s_end})"),
+                });
+            }
+            if *segments < 1 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "ScaledExtrude segments must be >= 1".into(),
+                });
+            }
+            if profile.points.len() < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ScaledExtrude profile needs at least 3 points (got {})",
+                        profile.points.len()
+                    ),
+                });
+            }
+            // Resolve direction vector and normalise.
+            let dir = resolve_arr(direction, params).map_err(|m| EvalError::Parameter {
+                id: id.into(),
+                message: m,
+            })?;
+            let dir_len = (dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]).sqrt();
+            if dir_len < 1e-12 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "ScaledExtrude direction must be non-zero".into(),
+                });
+            }
+            let dn = [dir[0]/dir_len, dir[1]/dir_len, dir[2]/dir_len];
+            // Resolve profile XY.
+            let mut prof_xy: Vec<(f64, f64)> = Vec::with_capacity(profile.points.len());
+            for p in &profile.points {
+                let xy = resolve_arr(p, params).map_err(|m| EvalError::Parameter {
+                    id: id.into(),
+                    message: m,
+                })?;
+                prof_xy.push((xy[0], xy[1]));
+            }
+            // Centroid.
+            let np = prof_xy.len() as f64;
+            let cx = prof_xy.iter().map(|p| p.0).sum::<f64>() / np;
+            let cy = prof_xy.iter().map(|p| p.1).sum::<f64>() / np;
+            // Build frame: x and y perpendicular to dn.
+            let up: [f64; 3] = if dn[2].abs() > 0.9 {
+                [1.0, 0.0, 0.0]
+            } else {
+                [0.0, 0.0, 1.0]
+            };
+            let x = [
+                up[1]*dn[2] - up[2]*dn[1],
+                up[2]*dn[0] - up[0]*dn[2],
+                up[0]*dn[1] - up[1]*dn[0],
+            ];
+            let xn = (x[0]*x[0] + x[1]*x[1] + x[2]*x[2]).sqrt();
+            let xu = [x[0]/xn, x[1]/xn, x[2]/xn];
+            let y = [
+                dn[1]*xu[2] - dn[2]*xu[1],
+                dn[2]*xu[0] - dn[0]*xu[2],
+                dn[0]*xu[1] - dn[1]*xu[0],
+            ];
+            let n_seg = *segments;
+            let lift_at = |frac: f64| -> Vec<Point3> {
+                let scale = 1.0 + (s_end - 1.0) * frac;
+                let pos = [dn[0]*len*frac, dn[1]*len*frac, dn[2]*len*frac];
+                prof_xy.iter().map(|&(u, v)| {
+                    let du = (u - cx) * scale;
+                    let dv = (v - cy) * scale;
+                    Point3::new(
+                        pos[0] + du*xu[0] + dv*y[0],
+                        pos[1] + du*xu[1] + dv*y[1],
+                        pos[2] + du*xu[2] + dv*y[2],
+                    )
+                }).collect()
+            };
+            let mut acc: Option<Solid> = None;
+            for i in 0..n_seg {
+                let fa = i as f64 / n_seg as f64;
+                let fb = (i + 1) as f64 / n_seg as f64;
+                let bot = lift_at(fa);
+                let top = lift_at(fb);
+                let seg = extrude_lofted(&bot, &top);
+                acc = Some(match acc.take() {
+                    None => seg,
+                    Some(prev) => prev.try_union(&seg).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "scaled_extrude_segment_union",
+                        message: format!("segment {i}: {}", e.message),
+                    })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+
         Feature::Mortise { center, width, length, depth, .. } => {
             let cx = resolve_one(id, &center[0], params)?;
             let cy = resolve_one(id, &center[1], params)?;
