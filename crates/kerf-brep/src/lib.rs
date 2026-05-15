@@ -7,6 +7,7 @@ pub mod dimension;
 pub mod export_3mf;
 pub mod export_gltf;
 pub mod geometry;
+pub mod mass;
 pub mod measure;
 pub mod mesh_import;
 pub mod obj;
@@ -26,6 +27,7 @@ pub use dimension::{
     ViewportSpec,
 };
 pub use geometry::{CurveKind, CurveSegment, Sense, SurfaceKind};
+pub use mass::{mass_properties, MassProperties};
 pub use measure::{shell_volume, solid_volume};
 pub use mesh_import::{from_triangles, read_ascii, read_stl_auto, read_stl_binary_to_solid, read_stl_to_solid, MeshImportError};
 pub use export_3mf::{write_3mf, write_3mf_with_analytics, Export3mfError};
