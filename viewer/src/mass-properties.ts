@@ -7,7 +7,17 @@
  *   // After a rebuild:
  *   panel.update(massPropertiesData);   // show values
  *   panel.update(null);                 // hide / clear values
+ *
+ * The panel header includes a unit-system toggle ("mm / g" | "in / lb").
+ * The selection is persisted in viewer-session state (no Rust changes needed).
  */
+
+import {
+  type UnitSystem,
+  type ValueKind,
+  formatWithUnit,
+  UNIT_SYSTEM_LABELS,
+} from "./mass-units.js";
 
 export interface MassPropertiesData {
   volume: number;
@@ -22,14 +32,21 @@ export interface MassPropertiesData {
 
 export interface MassPropertiesPanel {
   update(data: MassPropertiesData | null): void;
+  /** Expose current unit system for testing / external integration. */
+  getUnitSystem(): UnitSystem;
+  /** Set unit system programmatically (triggers display refresh). */
+  setUnitSystem(system: UnitSystem): void;
 }
 
-function fmt(n: number, decimals = 3): string {
-  return n.toFixed(decimals);
-}
+/** Session-scoped last unit selection (survives panel remounts). */
+let _sessionUnitSystem: UnitSystem = "metric";
 
-function fmt3(v: [number, number, number], decimals = 3): string {
-  return `(${fmt(v[0], decimals)}, ${fmt(v[1], decimals)}, ${fmt(v[2], decimals)})`;
+/**
+ * Format a (x, y, z) triple with the appropriate length unit.
+ */
+function fmtVec3(v: [number, number, number], system: UnitSystem): string {
+  const fmt = (n: number) => formatWithUnit(n, "length", system);
+  return `(${fmt(v[0])}, ${fmt(v[1])}, ${fmt(v[2])})`;
 }
 
 /**
@@ -57,8 +74,35 @@ export function mountMassProperties(host: HTMLElement): MassPropertiesPanel {
   title.className = "mp-title";
   title.textContent = "Mass Properties";
 
+  // --- Unit toggle dropdown ---
+  const unitLabel = document.createElement("label");
+  unitLabel.className = "mp-unit-label";
+  unitLabel.textContent = "Units:";
+
+  const unitSelect = document.createElement("select");
+  unitSelect.className = "mp-unit-select";
+  unitSelect.id = "mp-unit-select";
+
+  for (const [value, label] of Object.entries(UNIT_SYSTEM_LABELS) as [UnitSystem, string][]) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    if (value === _sessionUnitSystem) opt.selected = true;
+    unitSelect.appendChild(opt);
+  }
+
+  // Stop header collapse/expand from firing when interacting with the select.
+  unitSelect.addEventListener("click", (e) => e.stopPropagation());
+  unitSelect.addEventListener("change", () => {
+    _sessionUnitSystem = unitSelect.value as UnitSystem;
+    if (lastData) renderData(lastData);
+  });
+
+  unitLabel.appendChild(unitSelect);
+
   header.appendChild(chevron);
   header.appendChild(title);
+  header.appendChild(unitLabel);
 
   const body = document.createElement("div");
   body.className = "mp-body";
@@ -134,26 +178,55 @@ export function mountMassProperties(host: HTMLElement): MassPropertiesPanel {
     }
   }
 
+  /** Last data snapshot — kept so unit-toggle re-renders without a rebuild. */
+  let lastData: MassPropertiesData | null = null;
+
+  function renderData(data: MassPropertiesData) {
+    const sys = _sessionUnitSystem;
+
+    const [xmin, ymin, zmin] = data.aabb_min;
+    const [xmax, ymax, zmax] = data.aabb_max;
+    const dx = xmax - xmin;
+    const dy = ymax - ymin;
+    const dz = zmax - zmin;
+
+    setValue("mp-volume",   formatWithUnit(data.volume, "volume", sys));
+    setValue("mp-area",     formatWithUnit(data.surface_area, "area", sys));
+    setValue("mp-centroid", fmtVec3(data.centroid, sys));
+    setValue("mp-bbox",
+      `Δx ${formatWithUnit(dx, "length", sys)}  Δy ${formatWithUnit(dy, "length", sys)}  Δz ${formatWithUnit(dz, "length", sys)}`);
+    // Principal moments are in g·mm²; leave as raw numbers with no unit
+    // (unit conversion for inertia tensors would need mass input which we
+    //  don't have separately — display as-is with 3 sig figs).
+    const fmtI = (n: number) => {
+      if (n === 0) return "0";
+      const d = Math.ceil(Math.log10(Math.abs(n)));
+      const mag = Math.pow(10, 3 - d);
+      return String(Math.round(n * mag) / mag);
+    };
+    setValue("mp-i1", fmtI(data.principal_moments[0]));
+    setValue("mp-i2", fmtI(data.principal_moments[1]));
+    setValue("mp-i3", fmtI(data.principal_moments[2]));
+  }
+
   return {
     update(data: MassPropertiesData | null) {
+      lastData = data;
       if (!data) {
         clearValues();
         return;
       }
-      const [xmin, ymin, zmin] = data.aabb_min;
-      const [xmax, ymax, zmax] = data.aabb_max;
-      const dx = xmax - xmin;
-      const dy = ymax - ymin;
-      const dz = zmax - zmin;
+      renderData(data);
+    },
 
-      setValue("mp-volume",   `${fmt(data.volume)} mm³`);
-      setValue("mp-area",     `${fmt(data.surface_area)} mm²`);
-      setValue("mp-centroid", fmt3(data.centroid));
-      setValue("mp-bbox",
-        `Δx ${fmt(dx, 2)}  Δy ${fmt(dy, 2)}  Δz ${fmt(dz, 2)}`);
-      setValue("mp-i1", fmt(data.principal_moments[0]));
-      setValue("mp-i2", fmt(data.principal_moments[1]));
-      setValue("mp-i3", fmt(data.principal_moments[2]));
+    getUnitSystem(): UnitSystem {
+      return _sessionUnitSystem;
+    },
+
+    setUnitSystem(system: UnitSystem) {
+      _sessionUnitSystem = system;
+      unitSelect.value = system;
+      if (lastData) renderData(lastData);
     },
   };
 }
