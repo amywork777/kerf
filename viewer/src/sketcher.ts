@@ -1,5 +1,6 @@
 // Interactive 2D sketcher panel.
-// Glyph rendering is delegated to sketcher-glyphs.ts.
+// Import edit ops (copy/paste, mirror, pattern).
+import { copySelection, pasteFragment, mirrorSelection, patternRect } from "./sketcher-edit-ops.js";
 //
 // Self-contained module: renders a `<canvas>` for sketch authoring, drives a
 // tool state machine (Point / Line / Circle / Arc / Pan / Select / Delete),
@@ -86,7 +87,9 @@ export type Tool =
   | "delete"
   | "trim"
   | "extend"
-  | "fillet";
+  | "fillet"
+  | "mirror"
+  | "pattern-rect";
 
 type View = {
   // World origin in canvas pixels (after pan/zoom).
@@ -133,6 +136,8 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
       <button data-tool="trim" title="Trim: click a Line, then click the trim point on it">Trim</button>
       <button data-tool="extend" title="Extend: click a Line, then click the target point">Extend</button>
       <button data-tool="fillet" title="Fillet: click a corner Point, then enter a radius">Fillet</button>
+      <button data-tool="mirror" title="Mirror: pick axis (two clicks), then primitives are reflected">Mirror</button>
+      <button data-tool="pattern-rect" title="Pattern Rect: select primitives, then enter dx/dy/nx/ny">Pattern Rect</button>
     </div>
     <canvas class="sk-canvas" width="400" height="400"></canvas>
     <div class="sk-row">
@@ -181,8 +186,19 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
   let trimSelectedLineId: string | null = null;
   let extendSelectedLineId: string | null = null;
 
+  // Copy/paste clipboard: stores a SketchFragment of copied primitives and
+  // the last paste offset so successive Cmd+V pastes keep shifting by 10px.
+  let clipboardPrims: SketchPrim[] = [];
+  let lastPasteOffset: { x: number; y: number } = { x: 10, y: 10 };
+
+  // Mirror tool: two-click axis pick (first click = axis start, second = axis end).
+  let mirrorAxisStart: { x: number; y: number } | null = null;
+  // Mirror/PatternRect: the selected primitive ids to operate on.
+  let editOpIds: string[] = [];
+
   // Selection / drag state.
   let selectedId: string | null = null;
+  let selectedIds: Set<string> = new Set();
   let dragPointId: string | null = null;
   let dragPanStart: { x: number; y: number; ox: number; oy: number } | null = null;
 
@@ -417,6 +433,8 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
     arcStartAngle = null;
     trimSelectedLineId = null;
     extendSelectedLineId = null;
+    mirrorAxisStart = null;
+    editOpIds = [];
     for (const btn of toolbarBtns) {
       btn.classList.toggle("active", btn.dataset.tool === t);
     }
@@ -436,6 +454,8 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
       case "trim": return "Trim: click a Line, then click a Point on it (creates trim);";
       case "extend": return "Extend: click a Line, then click the target Point";
       case "fillet": return "Fillet: click a corner Point (shared by two Lines), enter a radius";
+      case "mirror": return "Mirror: click axis start, then axis end; selected primitives are reflected";
+      case "pattern-rect": return "Pattern Rect: select primitives (right-click to add), then enter dx/dy/nx/ny";
     }
   }
 
@@ -628,6 +648,71 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
         } else {
           setStatus("Fillet: invalid radius (must be > 0)", true);
         }
+        break;
+      }
+      case "mirror": {
+        // Two-click axis pick. After the axis is defined, the user is prompted
+        // for which primitives to mirror (using the current selection or all).
+        if (mirrorAxisStart == null) {
+          mirrorAxisStart = snapWorld(world);
+          setStatus("Mirror: click axis end point");
+        } else {
+          const axisEnd = snapWorld(world);
+          const ax = mirrorAxisStart;
+          mirrorAxisStart = null;
+          // Use editOpIds if non-empty, otherwise use selectedId or all primitives.
+          const ids = editOpIds.length > 0
+            ? editOpIds
+            : selectedId
+              ? [selectedId]
+              : Array.from(primitives.keys());
+          if (ids.length === 0) {
+            setStatus("Mirror: nothing to mirror", true);
+            break;
+          }
+          const result = mirrorSelection(toSketch(), ids, { from: ax, to: axisEnd });
+          // Merge the new prims (those not already in primitives).
+          const existingIds = new Set(primitives.keys());
+          for (const p of result.primitives) {
+            if (!existingIds.has(p.id)) addPrim(p);
+          }
+          editOpIds = [];
+          setStatus(`mirrored ${ids.length} primitives`);
+        }
+        break;
+      }
+      case "pattern-rect": {
+        // Prompt for parameters, then replicate.
+        const ids = editOpIds.length > 0
+          ? editOpIds
+          : selectedId
+            ? [selectedId]
+            : Array.from(primitives.keys());
+        if (ids.length === 0) {
+          setStatus("Pattern Rect: nothing selected", true);
+          break;
+        }
+        const params = window.prompt("Pattern Rect: dx dy nx ny (space-separated)", "5 5 2 2");
+        if (!params) {
+          setStatus("Pattern Rect: cancelled");
+          break;
+        }
+        const [dxS, dyS, nxS, nyS] = params.trim().split(/\s+/);
+        const pdx = Number(dxS);
+        const pdy = Number(dyS);
+        const pnx = Math.max(1, Math.round(Number(nxS)));
+        const pny = Math.max(1, Math.round(Number(nyS)));
+        if ([pdx, pdy, pnx, pny].some(Number.isNaN)) {
+          setStatus("Pattern Rect: invalid parameters", true);
+          break;
+        }
+        const result = patternRect(toSketch(), ids, pdx, pdy, pnx, pny);
+        const existingIds = new Set(primitives.keys());
+        for (const p of result.primitives) {
+          if (!existingIds.has(p.id)) addPrim(p);
+        }
+        editOpIds = [];
+        setStatus(`pattern ${pnx}×${pny} from ${ids.length} primitives`);
         break;
       }
       case "pan":
@@ -1235,26 +1320,34 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) return;
 
-    const meta = e.metaKey || e.ctrlKey;
-
-    // Undo: Cmd+Z / Ctrl+Z
-    if (meta && !e.shiftKey && e.key === "z") {
+    // Cmd+C / Ctrl+C: copy the current selection to the internal clipboard.
+    if ((e.metaKey || e.ctrlKey) && (e.key === "c" || e.key === "C")) {
+      const ids = selectedId ? [selectedId] : Array.from(primitives.keys());
+      const frag = copySelection(toSketch(), ids);
+      clipboardPrims = frag.primitives;
+      lastPasteOffset = { x: 10, y: 10 };
+      setStatus(`copied ${clipboardPrims.length} primitive(s)`);
       e.preventDefault();
-      const prev = history.undo(toSketch());
-      if (prev) {
-        applySketch(prev);
-        setStatus("undo");
-      }
       return;
     }
-    // Redo: Shift+Cmd+Z / Ctrl+Y
-    if ((meta && e.shiftKey && e.key === "z") || (e.ctrlKey && e.key === "y")) {
-      e.preventDefault();
-      const next = history.redo(toSketch());
-      if (next) {
-        applySketch(next);
-        setStatus("redo");
+    // Cmd+V / Ctrl+V: paste the clipboard at the last paste offset.
+    if ((e.metaKey || e.ctrlKey) && (e.key === "v" || e.key === "V")) {
+      if (clipboardPrims.length === 0) {
+        setStatus("paste: clipboard empty", true);
+        e.preventDefault();
+        return;
       }
+      const frag = { primitives: clipboardPrims };
+      const result = pasteFragment(toSketch(), frag, lastPasteOffset);
+      // Add only the new prims (those absent from current primitives).
+      const existingBefore = new Set(primitives.keys());
+      for (const p of result.primitives) {
+        if (!existingBefore.has(p.id)) addPrim(p);
+      }
+      // Shift the next paste offset so repeated pastes cascade.
+      lastPasteOffset = { x: lastPasteOffset.x + 10, y: lastPasteOffset.y + 10 };
+      setStatus(`pasted ${clipboardPrims.length} primitive(s)`);
+      e.preventDefault();
       return;
     }
 
@@ -1267,6 +1360,7 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
     else if (e.key === "t" || e.key === "T") setTool("trim");
     else if (e.key === "e" || e.key === "E") setTool("extend");
     else if (e.key === "f" || e.key === "F") setTool("fillet");
+    else if (e.key === "m" || e.key === "M") setTool("mirror");
     else if (e.key === "Escape") {
       pendingStartId = null;
       circleCenterId = null;
@@ -1274,6 +1368,8 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
       arcStartAngle = null;
       trimSelectedLineId = null;
       extendSelectedLineId = null;
+      mirrorAxisStart = null;
+      editOpIds = [];
       selectedId = null;
       redraw();
     } else if (e.key === "Delete" || e.key === "Backspace") {
