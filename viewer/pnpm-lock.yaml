@@ -19,6 +19,7 @@ importers:
         specifier: ^0.170.0
         version: 0.170.0
 <<<<<<< HEAD
+<<<<<<< HEAD
       happy-dom:
         specifier: ^20.9.0
         version: 20.9.0
@@ -30,6 +31,11 @@ importers:
         specifier: ^25.0.0
         version: 25.0.1
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+      jsdom:
+        specifier: ^25.0.0
+        version: 25.0.1
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
@@ -38,6 +44,7 @@ importers:
         version: 5.4.21(@types/node@25.8.0)
       vitest:
         specifier: ^2.1.9
+<<<<<<< HEAD
 <<<<<<< HEAD
         version: 2.1.9(@types/node@25.8.0)(happy-dom@20.9.0)(jsdom@29.1.1)
 
@@ -102,6 +109,12 @@ packages:
 
 packages:
 
+=======
+        version: 2.1.9(jsdom@25.0.1)
+
+packages:
+
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   '@asamuzakjp/css-color@3.2.0':
     resolution: {integrity: sha512-K1A6z8tS3XsmCMM86xoWdn7Fkdn9m6RSVtocUrJYIwZnFVkng/PvkEoWtOWmP+Scc6saYWHWZYbndEEXxl24jw==}
 
@@ -132,7 +145,10 @@ packages:
   '@csstools/css-tokenizer@3.0.4':
     resolution: {integrity: sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw==}
     engines: {node: '>=18'}
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   '@esbuild/aix-ppc64@0.21.5':
     resolution: {integrity: sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==}
@@ -563,12 +579,17 @@ packages:
     engines: {node: '>=12'}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   bidi-js@1.0.3:
     resolution: {integrity: sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==}
 =======
   asynckit@0.4.0:
     resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+  asynckit@0.4.0:
+    resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   cac@6.7.14:
     resolution: {integrity: sha512-b6Ilus+c3RrdDk+JhLKUAQfzzgLEPy6wcXqS7f/xe1EETvsDP6GORG7SFuOs6cID5YkqchW/LXZbX5bc8j7ZcQ==}
@@ -587,6 +608,7 @@ packages:
     engines: {node: '>= 16'}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   css-tree@3.2.1:
     resolution: {integrity: sha512-X7sjQzceUhu1u7Y/ylrRZFU2FS6LRiFVp6rKLPg23y3x3c3DOKAwuXGDp+PAGjh6CSnCjYeAul8pcT8bAl+lSA==}
     engines: {node: ^10 || ^12.20.0 || ^14.13.0 || >=15.0.0}
@@ -595,6 +617,8 @@ packages:
     resolution: {integrity: sha512-23XHcCF+coGYevirZceTVD7NdJOqVn+49IHyxgszm+JIiHLoB2TkmPtsYkNWT1pvRSGkc35L6NHs0yHkN2SumA==}
     engines: {node: ^20.19.0 || ^22.12.0 || >=24.0.0}
 =======
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   combined-stream@1.0.8:
     resolution: {integrity: sha512-FQN4MRfuJeHf7cBbBMJFXhKSDq+2kAArBlmRBvcvFE5BB1HZKXtSFASDhdlz9zOYwxh8lDdnvmMOe/+5cdoEdg==}
     engines: {node: '>= 0.8'}
@@ -606,7 +630,10 @@ packages:
   data-urls@5.0.0:
     resolution: {integrity: sha512-ZYP5VBHshaDAiVZxjbRVcFJpc+4xGgT0bK3vzy1HLN8jTO975HEbuYzZJcHoQEY5K1a0z8YayJkyVETa08eNTg==}
     engines: {node: '>=18'}
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
@@ -625,6 +652,7 @@ packages:
     engines: {node: '>=6'}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   entities@7.0.1:
     resolution: {integrity: sha512-TWrgLOFUQTH994YUyl1yT4uyavY5nNB5muff+RtWaqNVCAK408b5ZnnbNAUEWLTCpum9w6arT70i1XdQ4UeOPA==}
     engines: {node: '>=0.12'}
@@ -633,6 +661,8 @@ packages:
     resolution: {integrity: sha512-zwfzJecQ/Uej6tusMqwAqU/6KL2XaB2VZ2Jg54Je6ahNBGNH6Ek6g3jjNCF0fG9EWQKGZNddNjU5F1ZQn/sBnA==}
     engines: {node: '>=20.19.0'}
 =======
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   delayed-stream@1.0.0:
     resolution: {integrity: sha512-ZySD7Nf91aLB0RxL4KGrKHBXl7Eds1DAmEdcoVawXnLD7SDhpNgtuII2aAkg7a7QS41jxPSZ17p4VdGnMHk3MQ==}
     engines: {node: '>=0.4.0'}
@@ -652,7 +682,10 @@ packages:
   es-errors@1.3.0:
     resolution: {integrity: sha512-Zf5H2Kxt2xjTvbJvP2ZWLEICxA6j+hAmMzIlypy4xcBg1vKVnx89Wy0GbS+kf5cwCVFFzdCFh2XSCFNULS6csw==}
     engines: {node: '>= 0.4'}
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   es-module-lexer@1.7.0:
     resolution: {integrity: sha512-jEQoCwk8hyb2AZziIOLhDqpm5+2ww5uIE6lkO/6jcOCusfk6LhMHpXXfBLXTZ7Ydyt0j4VoUQv6uGNYbdW+kBA==}
@@ -690,6 +723,7 @@ packages:
     os: [darwin]
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   happy-dom@20.9.0:
     resolution: {integrity: sha512-GZZ9mKe8r646NUAf/zemnGbjYh4Bt8/MqASJY+pSm5ZDtc3YQox+4gsLI7yi1hba6o+eCsGxpHn5+iEVn31/FQ==}
     engines: {node: '>=20.0.0'}
@@ -698,6 +732,8 @@ packages:
     resolution: {integrity: sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==}
     engines: {node: ^20.19.0 || ^22.12.0 || >=24.0.0}
 =======
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   function-bind@1.1.2:
     resolution: {integrity: sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==}
 
@@ -740,11 +776,15 @@ packages:
   iconv-lite@0.6.3:
     resolution: {integrity: sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==}
     engines: {node: '>=0.10.0'}
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   is-potential-custom-element-name@1.0.1:
     resolution: {integrity: sha512-bCYeRA2rVibKZd+s2625gGnGF/t7DSqDs4dP7CrLA1m7jKWz6pps0LpYLJN8Q64HtmPKJ1hrN3nzPNKFEKOUiQ==}
 
+<<<<<<< HEAD
 <<<<<<< HEAD
   jsdom@29.1.1:
     resolution: {integrity: sha512-ECi4Fi2f7BdJtUKTflYRTiaMxIB0O6zfR1fX0GXpUrf6flp8QIYn1UT20YQqdSOfk2dfkCwS8LAFoJDEppNK5Q==}
@@ -752,12 +792,17 @@ packages:
     peerDependencies:
       canvas: ^3.0.0
 =======
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   jsdom@25.0.1:
     resolution: {integrity: sha512-8i7LzZj7BF8uplX+ZyOlIz86V6TAsSs+np6m1kpW9u0JWi4z/1t+FzcK1aek+ybTnAC4KhBL4uXCNT0wcUIeCw==}
     engines: {node: '>=18'}
     peerDependencies:
       canvas: ^2.11.2
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
     peerDependenciesMeta:
       canvas:
         optional: true
@@ -766,6 +811,7 @@ packages:
     resolution: {integrity: sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   lru-cache@11.3.6:
     resolution: {integrity: sha512-Gf/KoL3C/MlI7Bt0PGI9I+TeTC/I6r/csU58N4BSNc4lppLBeKsOdFYkK+dX0ABDUMJNfCHTyPpzwwO21Awd3A==}
     engines: {node: 20 || >=22}
@@ -773,10 +819,15 @@ packages:
   lru-cache@10.4.3:
     resolution: {integrity: sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ==}
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+  lru-cache@10.4.3:
+    resolution: {integrity: sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ==}
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
 
+<<<<<<< HEAD
 <<<<<<< HEAD
   mdn-data@2.27.1:
     resolution: {integrity: sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==}
@@ -785,6 +836,11 @@ packages:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
     engines: {node: '>= 0.4'}
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+  math-intrinsics@1.1.0:
+    resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
+    engines: {node: '>= 0.4'}
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   meshoptimizer@0.18.1:
     resolution: {integrity: sha512-ZhoIoL7TNV4s5B6+rx5mC//fw8/POGyNxS/DZyCJeiZ12ScLfVwRE/GfsxwiTkMYYD5DmK2/JXnEVXqL4rF+Sw==}
@@ -806,15 +862,21 @@ packages:
     hasBin: true
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   parse5@8.0.1:
     resolution: {integrity: sha512-z1e/HMG90obSGeidlli3hj7cbocou0/wa5HacvI3ASx34PecNjNQeaHNo5WIZpWofN9kgkqV1q5YvXe3F0FoPw==}
 =======
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   nwsapi@2.2.23:
     resolution: {integrity: sha512-7wfH4sLbt4M0gCDzGE6vzQBo0bfTKjU7Sfpqy/7gs1qBfYz2vEJH6vXcBKpO3+6Yu1telwd0t9HpyOoLEQQbIQ==}
 
   parse5@7.3.0:
     resolution: {integrity: sha512-IInvU7fabl34qmi9gY8XOVxhYyMyuH2xUNpb2q8/Y+7552KlejkRvqvD19nMoUW/uQGGbqNpA6Tufu5FL5BZgw==}
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   pathe@1.1.2:
     resolution: {integrity: sha512-whLdWMYL2TwI08hn8/ZqAbrVemu0LNaNNJZX73O6qaIdCTfXutsLhMkjdENX0qhsQ9uIimo4/aQOmXkoon2nDQ==}
@@ -835,19 +897,25 @@ packages:
     engines: {node: '>=6'}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   require-from-string@2.0.2:
     resolution: {integrity: sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw==}
     engines: {node: '>=0.10.0'}
 
 =======
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   rollup@4.60.2:
     resolution: {integrity: sha512-J9qZyW++QK/09NyN/zeO0dG/1GdGfyp9lV8ajHnRVLfo/uFsbji5mHnDgn/qYdUHyCkM2N+8VyspgZclfAh0eQ==}
     engines: {node: '>=18.0.0', npm: '>=8.0.0'}
     hasBin: true
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   rrweb-cssom@0.7.1:
     resolution: {integrity: sha512-TrEMa7JGdVm0UThDJSx7ddw5nVm3UJS9o9CCIZ72B1vSyEZoziDqBYP3XIoi/12lKrJR8rE3jeFHMok2F/Mnsg==}
 
@@ -857,7 +925,10 @@ packages:
   safer-buffer@2.1.2:
     resolution: {integrity: sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==}
 
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   saxes@6.0.0:
     resolution: {integrity: sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==}
     engines: {node: '>=v12.22.7'}
@@ -900,6 +971,7 @@ packages:
     engines: {node: '>=14.0.0'}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   tldts-core@7.0.30:
     resolution: {integrity: sha512-uiHN8PIB1VmWyS98eZYja4xzlYqeFZVjb4OuYlJQnZAuJhMw4PbKQOKgHKhBdJR3FE/t5mUQ1Kd80++B+qhD1Q==}
 
@@ -915,6 +987,8 @@ packages:
     resolution: {integrity: sha512-bLVMLPtstlZ4iMQHpFHTR7GAGj2jxi8Dg0s2h2MafAE4uSWF98FC/3MomU51iQAMf8/qDUbKWf5GxuvvVcXEhw==}
     engines: {node: '>=20'}
 =======
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   tldts-core@6.1.86:
     resolution: {integrity: sha512-Je6p7pkk+KMzMv2XXKmAE3McmolOQFdxkKw0R8EYNr7sELW46JqnNeTX8ybPiQgvg1ymCoF8LXs5fzFaZvJPTA==}
 
@@ -929,7 +1003,10 @@ packages:
   tr46@5.1.1:
     resolution: {integrity: sha512-hdF5ZgjTqgAntKkklYw0R03MG2x/bSzTtkxmIRw/sTNV8YXsCJ1tfLAX23lhxhHJlEf3CRCOCGGWw3vI3GaSPw==}
     engines: {node: '>=18'}
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
@@ -1009,6 +1086,7 @@ packages:
     engines: {node: '>=18'}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   webidl-conversions@8.0.1:
     resolution: {integrity: sha512-BMhLD/Sw+GbJC21C/UgyaZX41nPt8bUTg+jWyDeg7e7YN4xOM05YPSIXceACnXVtqyEw/LMClUQMtMZ+PGGpqQ==}
     engines: {node: '>=20'}
@@ -1025,6 +1103,8 @@ packages:
     resolution: {integrity: sha512-1to4zXBxmXHV3IiSSEInrreIlu02vUOvrhxJJH5vcxYTBDAx51cqZiKdyTxlecdKNSjj8EcxGBxNf6Vg+945gw==}
     engines: {node: ^20.19.0 || ^22.12.0 || >=24.0.0}
 =======
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   webidl-conversions@7.0.0:
     resolution: {integrity: sha512-VwddBukDzu71offAQR975unBIGqfKZpM+8ZX6ySk8nYhVoo5CYaZyzt3YBvYtRtO+aoGlqxPg/B87NGVZ/fu6g==}
     engines: {node: '>=12'}
@@ -1041,7 +1121,10 @@ packages:
   whatwg-url@14.2.0:
     resolution: {integrity: sha512-De72GdQZzNTUBBChsXueQUnPKDkg/5A5zp7pFDuQAj5UFoENpiACU0wlCvzpAGnTkj++ihpKwKyYewn/XNUbKw==}
     engines: {node: '>=18'}
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   why-is-node-running@2.3.0:
     resolution: {integrity: sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==}
@@ -1069,6 +1152,7 @@ packages:
 
 snapshots:
 
+<<<<<<< HEAD
 <<<<<<< HEAD
   '@asamuzakjp/css-color@5.1.11':
     dependencies:
@@ -1118,6 +1202,8 @@ snapshots:
 
   '@csstools/css-tokenizer@4.0.0': {}
 =======
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   '@asamuzakjp/css-color@3.2.0':
     dependencies:
       '@csstools/css-calc': 2.1.4(@csstools/css-parser-algorithms@3.0.5(@csstools/css-tokenizer@3.0.4))(@csstools/css-tokenizer@3.0.4)
@@ -1145,7 +1231,10 @@ snapshots:
       '@csstools/css-tokenizer': 3.0.4
 
   '@csstools/css-tokenizer@3.0.4': {}
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   '@esbuild/aix-ppc64@0.21.5':
     optional: true
@@ -1416,12 +1505,16 @@ snapshots:
   assertion-error@2.0.1: {}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   bidi-js@1.0.3:
     dependencies:
       require-from-string: 2.0.2
 =======
   asynckit@0.4.0: {}
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+  asynckit@0.4.0: {}
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   cac@6.7.14: {}
 
@@ -1441,6 +1534,7 @@ snapshots:
   check-error@2.1.3: {}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   css-tree@3.2.1:
     dependencies:
       mdn-data: 2.27.1
@@ -1453,6 +1547,8 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 =======
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   combined-stream@1.0.8:
     dependencies:
       delayed-stream: 1.0.0
@@ -1466,7 +1562,10 @@ snapshots:
     dependencies:
       whatwg-mimetype: 4.0.0
       whatwg-url: 14.2.0
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   debug@4.4.3:
     dependencies:
@@ -1477,10 +1576,13 @@ snapshots:
   deep-eql@5.0.2: {}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   entities@7.0.1: {}
 
   entities@8.0.0: {}
 =======
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   delayed-stream@1.0.0: {}
 
   dunder-proto@1.0.1:
@@ -1494,7 +1596,10 @@ snapshots:
   es-define-property@1.0.1: {}
 
   es-errors@1.3.0: {}
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   es-module-lexer@1.7.0: {}
 
@@ -1554,6 +1659,7 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
+<<<<<<< HEAD
 <<<<<<< HEAD
   happy-dom@20.9.0:
     dependencies:
@@ -1693,16 +1799,109 @@ snapshots:
 
   lru-cache@10.4.3: {}
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+  function-bind@1.1.2: {}
+
+  get-intrinsic@1.3.0:
+    dependencies:
+      call-bind-apply-helpers: 1.0.2
+      es-define-property: 1.0.1
+      es-errors: 1.3.0
+      es-object-atoms: 1.1.1
+      function-bind: 1.1.2
+      get-proto: 1.0.1
+      gopd: 1.2.0
+      has-symbols: 1.1.0
+      hasown: 2.0.3
+      math-intrinsics: 1.1.0
+
+  get-proto@1.0.1:
+    dependencies:
+      dunder-proto: 1.0.1
+      es-object-atoms: 1.1.1
+
+  gopd@1.2.0: {}
+
+  has-symbols@1.1.0: {}
+
+  has-tostringtag@1.0.2:
+    dependencies:
+      has-symbols: 1.1.0
+
+  hasown@2.0.3:
+    dependencies:
+      function-bind: 1.1.2
+
+  html-encoding-sniffer@4.0.0:
+    dependencies:
+      whatwg-encoding: 3.1.1
+
+  http-proxy-agent@7.0.2:
+    dependencies:
+      agent-base: 7.1.4
+      debug: 4.4.3
+    transitivePeerDependencies:
+      - supports-color
+
+  https-proxy-agent@7.0.6:
+    dependencies:
+      agent-base: 7.1.4
+      debug: 4.4.3
+    transitivePeerDependencies:
+      - supports-color
+
+  iconv-lite@0.6.3:
+    dependencies:
+      safer-buffer: 2.1.2
+
+  is-potential-custom-element-name@1.0.1: {}
+
+  jsdom@25.0.1:
+    dependencies:
+      cssstyle: 4.6.0
+      data-urls: 5.0.0
+      decimal.js: 10.6.0
+      form-data: 4.0.5
+      html-encoding-sniffer: 4.0.0
+      http-proxy-agent: 7.0.2
+      https-proxy-agent: 7.0.6
+      is-potential-custom-element-name: 1.0.1
+      nwsapi: 2.2.23
+      parse5: 7.3.0
+      rrweb-cssom: 0.7.1
+      saxes: 6.0.0
+      symbol-tree: 3.2.4
+      tough-cookie: 5.1.2
+      w3c-xmlserializer: 5.0.0
+      webidl-conversions: 7.0.0
+      whatwg-encoding: 3.1.1
+      whatwg-mimetype: 4.0.0
+      whatwg-url: 14.2.0
+      ws: 8.20.0
+      xml-name-validator: 5.0.0
+    transitivePeerDependencies:
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+
+  loupe@3.2.1: {}
+
+  lru-cache@10.4.3: {}
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   magic-string@0.30.21:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   mdn-data@2.27.1: {}
 =======
   math-intrinsics@1.1.0: {}
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+  math-intrinsics@1.1.0: {}
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   meshoptimizer@0.18.1: {}
 
@@ -1717,16 +1916,22 @@ snapshots:
   nanoid@3.3.12: {}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   parse5@8.0.1:
     dependencies:
       entities: 8.0.0
 =======
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   nwsapi@2.2.23: {}
 
   parse5@7.3.0:
     dependencies:
       entities: 6.0.1
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   pathe@1.1.2: {}
 
@@ -1743,10 +1948,13 @@ snapshots:
   punycode@2.3.1: {}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   require-from-string@2.0.2: {}
 
 =======
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   rollup@4.60.2:
     dependencies:
       '@types/estree': 1.0.8
@@ -1779,14 +1987,20 @@ snapshots:
       fsevents: 2.3.3
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   rrweb-cssom@0.7.1: {}
 
   rrweb-cssom@0.8.0: {}
 
   safer-buffer@2.1.2: {}
 
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   saxes@6.0.0:
     dependencies:
       xmlchars: 2.2.0
@@ -1814,6 +2028,7 @@ snapshots:
   tinyspy@3.0.2: {}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   tldts-core@7.0.30: {}
 
   tldts@7.0.30:
@@ -1826,6 +2041,8 @@ snapshots:
 
   tr46@6.0.0:
 =======
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   tldts-core@6.1.86: {}
 
   tldts@6.1.86:
@@ -1837,7 +2054,10 @@ snapshots:
       tldts: 6.1.86
 
   tr46@5.1.1:
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
     dependencies:
       punycode: 2.3.1
 
@@ -1875,10 +2095,14 @@ snapshots:
       fsevents: 2.3.3
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   vitest@2.1.9(@types/node@25.8.0)(happy-dom@20.9.0)(jsdom@29.1.1):
 =======
   vitest@2.1.9(jsdom@25.0.1):
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+  vitest@2.1.9(jsdom@25.0.1):
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
     dependencies:
       '@vitest/expect': 2.1.9
       '@vitest/mocker': 2.1.9(vite@5.4.21(@types/node@25.8.0))
@@ -1902,12 +2126,16 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
 <<<<<<< HEAD
+<<<<<<< HEAD
       '@types/node': 25.8.0
       happy-dom: 20.9.0
       jsdom: 29.1.1
 =======
       jsdom: 25.0.1
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+      jsdom: 25.0.1
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
     transitivePeerDependencies:
       - less
       - lightningcss
@@ -1924,6 +2152,7 @@ snapshots:
       xml-name-validator: 5.0.0
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   webidl-conversions@8.0.1: {}
 
   whatwg-mimetype@3.0.0: {}
@@ -1938,6 +2167,8 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 =======
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
   webidl-conversions@7.0.0: {}
 
   whatwg-encoding@3.1.1:
@@ -1950,7 +2181,10 @@ snapshots:
     dependencies:
       tr46: 5.1.1
       webidl-conversions: 7.0.0
+<<<<<<< HEAD
 >>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
+=======
+>>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
   why-is-node-running@2.3.0:
     dependencies:
