@@ -47,19 +47,25 @@ fn symmetry_mate_mirrors_lid() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "lid_left".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(3.0, 0.0, 5.0),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "lid_right".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(99.0, 99.0, 99.0), // garbage, will be overwritten
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Symmetry {
             instance_a: "lid_left".into(),
             plane_origin: lits([0.0, 0.0, 0.0]),
@@ -84,19 +90,25 @@ fn symmetry_round_trip_json() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "left".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(2.5, 1.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "right".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Symmetry {
             instance_a: "left".into(),
             plane_origin: lits([0.0, 0.0, 0.0]),
@@ -145,13 +157,17 @@ fn width_mate_distance_validates() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "satellite".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(5.0, 0.0, 7.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Width {
             instance_a: "shaft".into(),
             axis_a: AxisRef {
@@ -184,13 +200,17 @@ fn width_mate_negative_distance_rejected() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(1.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Width {
             instance_a: "a".into(),
             axis_a: AxisRef {
@@ -222,7 +242,9 @@ fn path_mate_at_t_zero_at_start() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(99.0, 99.0, 99.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::PathMate {
             instance: "follower".into(),
             path: vec![
@@ -246,7 +268,9 @@ fn path_mate_at_t_one_at_end() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::PathMate {
             instance: "follower".into(),
             path: vec![
@@ -276,7 +300,9 @@ fn path_mate_at_t_half_arc_length() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::PathMate {
             instance: "follower".into(),
             path: vec![
@@ -304,7 +330,9 @@ fn path_mate_out_of_range_rejected() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::PathMate {
             instance: "f".into(),
             path: vec![lits([0.0, 0.0, 0.0]), lits([1.0, 0.0, 0.0])],
@@ -332,13 +360,17 @@ fn lock_mate_freezes_instance_b() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(4.0, 5.0, 6.0),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(99.0, -42.0, 13.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Lock {
             instance_a: "a".into(),
             instance_b: "b".into(),
@@ -371,13 +403,17 @@ fn lock_mate_with_rotated_a_propagates_rotation() {
                 rotation_axis: lits([0.0, 1.0, 0.0]),
                 rotation_angle: Scalar::lit(std::f64::consts::FRAC_PI_3),
             },
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Lock {
             instance_a: "a".into(),
             instance_b: "b".into(),
@@ -412,7 +448,9 @@ fn sub_assembly_loads_from_loader() {
         model: AssemblyRef::Inline(Box::new(unit_cube_model())),
         target: None,
         default_pose: Pose::identity(),
-    });
+    
+
+        pinned: false,});
     let sub_json = sub.to_json_string().expect("to_json");
 
     // The fixture: a HashMap<String, String> from "filename" → JSON.
@@ -424,7 +462,9 @@ fn sub_assembly_loads_from_loader() {
         model: AssemblyRef::Path("sub.json".into()),
         target: None,
         default_pose: Pose::at(10.0, 0.0, 0.0),
-    });
+    
+
+        pinned: false,});
 
     // Evaluate without loader: should fail with UnresolvedRef.
     let err = top.evaluate().expect_err("no-loader evaluate must fail");
@@ -472,7 +512,9 @@ fn sub_assembly_loader_error_propagates() {
         model: AssemblyRef::Path("nope.json".into()),
         target: None,
         default_pose: Pose::identity(),
-    });
+    
+
+        pinned: false,});
     let loader =
         |_path: &str| -> Result<Assembly, AssemblyError> { Err(AssemblyError::UnresolvedRef("nope.json".into())) };
     let err = top.evaluate_with_loader(loader).expect_err("must fail");
@@ -496,13 +538,17 @@ fn interference_detection_finds_overlapping_aabb() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "beta".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(0.5, 0.0, 0.0),
-        });
+        
+
+            pinned: false,});
     // Without any mates, default poses are kept.
     let params: HashMap<String, f64> = HashMap::new();
     let pairs = asm.detect_interference(&params).expect("detect");
@@ -524,13 +570,17 @@ fn interference_no_overlap_returns_empty() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "beta".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(5.0, 0.0, 0.0),
-        });
+        
+
+            pinned: false,});
     let params: HashMap<String, f64> = HashMap::new();
     let pairs = asm.detect_interference(&params).expect("detect");
     assert!(pairs.is_empty(), "expected no pairs, got {pairs:?}");
@@ -546,19 +596,25 @@ fn interference_three_instances_detects_two_pairs() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "beta".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(0.5, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "gamma".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(10.0, 0.0, 0.0),
-        });
+        
+
+            pinned: false,});
     let params: HashMap<String, f64> = HashMap::new();
     let pairs = asm.detect_interference(&params).expect("detect");
     assert_eq!(pairs.len(), 1);
