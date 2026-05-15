@@ -48,10 +48,11 @@ const VIEWS: ViewSpec[] = [
   { name: "ISO",         forward: new THREE.Vector3(-1, -0.7, -1.2).normalize(), up: new THREE.Vector3(0, 0, 1), hAxis: null, vAxis: null },
 ];
 
-export function exportThreeViewPng(mesh: THREE.Mesh, fileName: string, modelJson?: string) {
 export interface ExportOptions {
   sections?: SectionViewParams[];
   details?: DetailViewParams[];
+  gdt?: GdtAnnotations;
+  modelJson?: string;
 }
 
 /** Map baseView name → cell index in the 2×2 grid (0=front, 1=top, 2=side). */
@@ -88,12 +89,12 @@ function meshToTriangles(geometry: THREE.BufferGeometry): Triangle[] {
   return tris;
 }
 
-export function exportThreeViewPng(mesh: THREE.Mesh, fileName: string, opts?: ExportOptions) {
 export function exportThreeViewPng(
   mesh: THREE.Mesh,
   fileName: string,
-  gdt?: GdtAnnotations,
+  opts?: ExportOptions,
 ) {
+  const gdt = opts?.gdt;
   const sceneClone = new THREE.Scene();
   sceneClone.background = new THREE.Color(0xffffff);
   sceneClone.add(new THREE.AmbientLight(0xffffff, 0.7));

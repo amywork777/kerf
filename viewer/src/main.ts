@@ -326,28 +326,17 @@ function refreshEdgeHighlight() {
     edgeHighlightLine.geometry.dispose();
     edgeHighlightLine = null;
   }
-  if (picking.highlightedEdge < 0 || !currentEdgeEndpoints || !currentVertexPositions) return;
-  const eid = picking.highlightedEdge;
-  const va = currentEdgeEndpoints[eid * 2]!;
-  const vb = currentEdgeEndpoints[eid * 2 + 1]!;
-  if (va === 0xffffffff || vb === 0xffffffff) return;
-  const positions = new Float32Array([
-    currentVertexPositions[va * 3]!,
-    currentVertexPositions[va * 3 + 1]!,
-    currentVertexPositions[va * 3 + 2]!,
-    currentVertexPositions[vb * 3]!,
-    currentVertexPositions[vb * 3 + 1]!,
-    currentVertexPositions[vb * 3 + 2]!,
-  ]);
   if (!currentEdgeEndpoints || !currentVertexPositions) return;
 
   // Collect the set of edges to draw: loop takes precedence, else single edge.
   const edgesToDraw: number[] =
     highlightedEdgeLoop.length > 0
       ? highlightedEdgeLoop
-      : highlightedEdge >= 0
-        ? [highlightedEdge]
-        : [];
+      : picking.highlightedEdge >= 0
+        ? [picking.highlightedEdge]
+        : highlightedEdge >= 0
+          ? [highlightedEdge]
+          : [];
   if (edgesToDraw.length === 0) return;
 
   const posArr: number[] = [];
@@ -636,13 +625,6 @@ renderer.domElement.addEventListener("click", (e) => {
   highlightedFaceLoop = [];
 
   if (pickMode === "face") {
-    const fid = pickFaceAt(e.clientX, e.clientY);
-    picking = handleFaceClick(picking, fid, e.shiftKey);
-    refreshFaceColors();
-    refreshVertexHighlight();
-    refreshEdgeHighlight();
-    const label = faceSelectionLabel(picking, currentFaceCount);
-    if (label) ok(label);
     const rawFid = pickFaceAt(e.clientX, e.clientY);
     // Apply feature-kind filter: if the face doesn't pass, treat as a miss.
     const fid =
@@ -650,6 +632,7 @@ renderer.domElement.addEventListener("click", (e) => {
       applyFilter(rawFid, faceOwnerTags, parsedFeaturesForFilter, filterKind)
         ? rawFid
         : -1;
+    picking = handleFaceClick(picking, fid, e.shiftKey);
     if (fid >= 0) pickHistory.push({ kind: "face", id: fid });
     highlightedFace = fid;
     highlightedVertex = -1;
@@ -657,7 +640,10 @@ renderer.domElement.addEventListener("click", (e) => {
     refreshFaceColors();
     refreshVertexHighlight();
     refreshEdgeHighlight();
-    if (fid >= 0) {
+    const label = faceSelectionLabel(picking, currentFaceCount);
+    if (label) {
+      ok(label);
+    } else if (fid >= 0) {
       const ownerTag = faceOwnerTags.get(fid);
       const ownerInfo = ownerTag ? ` owner=${ownerTag}` : "";
       ok(`selected face #${fid}${ownerInfo} (of ${currentFaceCount})`);
@@ -729,15 +715,10 @@ renderer.domElement.addEventListener("pointerleave", () => {
   const next = clearHover(picking);
   if (next !== picking) {
     picking = next;
-  const rawFid = pickFaceAt(e.clientX, e.clientY);
-  // Apply feature-kind filter to hover as well.
-  const fid =
-    rawFid >= 0 &&
-    applyFilter(rawFid, faceOwnerTags, parsedFeaturesForFilter, filterKind)
-      ? rawFid
-      : -1;
-  if (fid !== hoveredFace) {
-    hoveredFace = fid;
+    refreshFaceColors();
+  }
+  if (hoveredFace !== -1) {
+    hoveredFace = -1;
     refreshFaceColors();
   }
 });
@@ -1640,6 +1621,15 @@ document.querySelectorAll("[data-example]").forEach((a) => {
 });
 
 ok("waiting for a model — drop a JSON or click an example");
+
+// Auto-load via ?auto=<example-name> query param (handy for headless smoke tests).
+const autoExample = new URLSearchParams(location.search).get("auto");
+if (autoExample) {
+  fetch(`/examples/${autoExample}.json`)
+    .then((r) => r.text())
+    .then((j) => loadJson(j))
+    .catch((e) => err(`auto-load failed: ${e}`));
+}
 
 // --- view cube ---
 mountViewCube(stage, camera, controls);
