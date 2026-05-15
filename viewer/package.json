@@ -7,37 +7,19 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-<<<<<<< HEAD
     "test": "vitest run",
     "tauri": "tauri"
-=======
-    "test:legacy": "rm -rf .test-out && tsc --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop --outDir .test-out --lib ES2022,DOM src/sketcher.ts src/sketch_state.test.ts && node .test-out/sketch_state.test.js",
-    "test": "vitest run"
->>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
   },
   "dependencies": {
     "three": "^0.170.0"
   },
   "devDependencies": {
-<<<<<<< HEAD
     "@tauri-apps/cli": "^2",
-    "@types/three": "^0.170.0",
-<<<<<<< HEAD
-<<<<<<< HEAD
-    "happy-dom": "^20.9.0",
-    "jsdom": "^29.1.1",
-=======
-    "jsdom": "^25.0.0",
->>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
-=======
-    "jsdom": "^25.0.0",
->>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
-=======
     "@types/jsdom": "^28.0.1",
     "@types/three": "^0.170.0",
     "@vitest/coverage-v8": "^2.1.9",
+    "happy-dom": "^20.9.0",
     "jsdom": "^29.1.1",
->>>>>>> 582a0c7 (feat(sketcher): add undo/redo history stack + inline dimension entry)
     "typescript": "^5.6.3",
     "vite": "^5.4.10",
     "vitest": "^2.1.9"
