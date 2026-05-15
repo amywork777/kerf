@@ -9637,6 +9637,316 @@ fn build(
             Ok(extrude_polygon(&prof, Vec3::new(0.0, 0.0, h)))
         }
 
+        // -------------------------------------------------------------------
+        // Manufacturing batch 5 (5 features) — ship 2026-05-10.
+        // -------------------------------------------------------------------
+
+        Feature::ShaftOilHole {
+            input,
+            center,
+            axis,
+            radius,
+            depth,
+            segments,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let ctr = resolve3(id, center, params)?;
+            let r = resolve_one(id, radius, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if r <= 0.0 || d <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ShaftOilHole requires positive radius and depth (got r={r}, d={d})"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("ShaftOilHole segments must be >= 6 (got {segments})"),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            // Bore runs along the first perpendicular axis (a_idx).
+            // Total bore length = 2*d, centered on `ctr`.
+            // Extend each end by a small epsilon so the bore exits the body.
+            let eps = (d * 0.05).max(1e-3);
+            let bore_len = 2.0 * d + 2.0 * eps;
+            let bore_origin = ctr[a_idx] - d - eps;
+            // Build bore cylinder: along a_idx, starting at bore_origin,
+            // centered on b_idx = ctr[b_idx].
+            let bore = cylinder_along_axis(
+                r,
+                bore_len,
+                *segments,
+                a_idx,
+                bore_origin,
+                ctr[b_idx],
+                ctr[axis_idx],
+            );
+            base.try_difference(&bore).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "shaft_oil_hole",
+                message: e.message,
+            })
+        }
+
+        Feature::WoodruffKey {
+            input,
+            center,
+            axis,
+            radius,
+            width,
+            depth,
+            segments,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let ctr = resolve3(id, center, params)?;
+            let r = resolve_one(id, radius, params)?;
+            let w = resolve_one(id, width, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if r <= 0.0 || w <= 0.0 || d <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "WoodruffKey requires positive radius, width, depth (got r={r}, w={w}, d={d})"
+                    ),
+                });
+            }
+            if d > r {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "WoodruffKey depth ({d}) must be <= radius ({r}) (half-moon slots can't exceed the disc radius)"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("WoodruffKey segments must be >= 6 (got {segments})"),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            // The Woodruff cutter is a full disc (cylinder) of `radius` and
+            // `width` centered at `center`. The disc axis is along the shaft
+            // axis (axis_idx). The disc is positioned so its center is at
+            // `center`, but it extends downward by `depth` into the shaft and
+            // upward by `radius - depth` above the surface — however we just
+            // use the full cylinder as the cutter since only the overlapping
+            // half will be removed.
+            let eps = r * 0.05 + 1e-3;
+            // Disc runs along axis_idx; place bottom of disc at
+            // ctr[axis_idx] - (r - depth) - eps.
+            let disc_bottom = ctr[axis_idx] - (r - d) - eps;
+            let disc_height = w + 2.0 * eps;
+            let cutter = cylinder_along_axis(
+                r,
+                disc_height,
+                *segments,
+                axis_idx,
+                disc_bottom,
+                ctr[a_idx],
+                ctr[b_idx],
+            );
+            base.try_difference(&cutter).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "woodruff_key",
+                message: e.message,
+            })
+        }
+
+        Feature::DraftedHole {
+            input,
+            center,
+            axis,
+            top_radius,
+            bottom_radius,
+            depth,
+            segments,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let ctr = resolve3(id, center, params)?;
+            let tr = resolve_one(id, top_radius, params)?;
+            let br = resolve_one(id, bottom_radius, params)?;
+            let d = resolve_one(id, depth, params)?;
+            if tr <= 0.0 || br <= 0.0 || d <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "DraftedHole requires positive radii and depth (got tr={tr}, br={br}, d={d})"
+                    ),
+                });
+            }
+            if tr <= br {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "DraftedHole top_radius ({tr}) must be > bottom_radius ({br})"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("DraftedHole segments must be >= 6 (got {segments})"),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            // Frustum cutter: wide at top (= tr), narrow at bottom (= br),
+            // height = depth. Place so the top opening sits at
+            // ctr[axis_idx] + eps and goes DOWN by depth.
+            // frustum_faceted(r_bot, r_top, h, n):
+            //   r_bot at z=0, r_top at z=h.
+            // We want top (wider) at z=0 of the local frustum,
+            // which will sit at the body surface.
+            // So: r_bot = br (deep), r_top = tr (surface), h = depth + eps.
+            let eps = (tr * 0.05).max(1e-3);
+            // frustum_faceted(r_bot, r_top, h, n):
+            // r_bot at z=0 (deep end = br), r_top at z=h (opening = tr).
+            let cutter_local = frustum_faceted(br, tr, d + eps, *segments);
+            // Place it so the opening (z=h = tr end) sits at ctr[axis_idx]+eps
+            // and the bottom (z=0 = br end) sits at ctr[axis_idx]-d.
+            // Reorient then translate.
+            let oriented = match axis_idx {
+                2 => cutter_local,
+                0 => axis_swap_xz_to_x(&cutter_local),
+                1 => axis_swap_yz_to_y(&cutter_local),
+                _ => unreachable!(),
+            };
+            let mut offset = [0.0_f64; 3];
+            offset[axis_idx] = ctr[axis_idx] - d;
+            offset[a_idx] = ctr[a_idx];
+            offset[b_idx] = ctr[b_idx];
+            let cutter = translate_solid(&oriented, Vec3::new(offset[0], offset[1], offset[2]));
+            base.try_difference(&cutter).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "drafted_hole",
+                message: e.message,
+            })
+        }
+
+        Feature::HexFlange {
+            center,
+            axis,
+            across_flats,
+            height,
+            ..
+        } => {
+            let ctr = resolve3(id, center, params)?;
+            let af = resolve_one(id, across_flats, params)?;
+            let h = resolve_one(id, height, params)?;
+            if af <= 0.0 || h <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "HexFlange requires positive across_flats and height (got af={af}, h={h})"
+                    ),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            // Hex prism: inscribed radius (apothem) = across_flats / 2.
+            // cylinder_faceted with 6 sides gives the hex prism.
+            let apothem = af / 2.0;
+            let hex = cylinder_along_axis(apothem, h, 6, axis_idx, ctr[axis_idx], ctr[a_idx], ctr[b_idx]);
+            Ok(hex)
+        }
+
+        Feature::Heatset {
+            input,
+            center,
+            axis,
+            insert_radius,
+            insert_depth,
+            lead_in_radius,
+            segments,
+            ..
+        } => {
+            let base = cache_get(cache, input)?;
+            let ctr = resolve3(id, center, params)?;
+            let ir = resolve_one(id, insert_radius, params)?;
+            let id_depth = resolve_one(id, insert_depth, params)?;
+            let lr = resolve_one(id, lead_in_radius, params)?;
+            if ir <= 0.0 || id_depth <= 0.0 || lr <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Heatset requires positive insert_radius, insert_depth, lead_in_radius (got ir={ir}, d={id_depth}, lr={lr})"
+                    ),
+                });
+            }
+            if lr <= ir {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "Heatset lead_in_radius ({lr}) must be > insert_radius ({ir})"
+                    ),
+                });
+            }
+            if *segments < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Heatset segments must be >= 6 (got {segments})"),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            // Lead-in: short frustum from lr (at surface) to ir (at lead_in_depth below).
+            // lead_in_depth = max(insert_depth / 3, 0.5mm capped at insert_depth * 0.9).
+            let lead_in_depth = (id_depth / 3.0).max(0.5e-3).min(id_depth * 0.9);
+            let insert_cyl_depth = id_depth - lead_in_depth;
+            // Small overhang so the cutter pokes out the top surface.
+            let eps = (ir * 0.1).max(1e-3);
+            // Lead-in frustum: wide at top (lr), narrow at bottom (ir), height = lead_in_depth + eps.
+            // Position: bottom at ctr[axis_idx] - lead_in_depth.
+            let lead_in_local = frustum_faceted(ir, lr, lead_in_depth + eps, *segments);
+            let mut lead_offset = [0.0_f64; 3];
+            lead_offset[axis_idx] = ctr[axis_idx] - lead_in_depth;
+            lead_offset[a_idx] = ctr[a_idx];
+            lead_offset[b_idx] = ctr[b_idx];
+            let lead_in_oriented = match axis_idx {
+                2 => lead_in_local,
+                0 => axis_swap_xz_to_x(&lead_in_local),
+                1 => axis_swap_yz_to_y(&lead_in_local),
+                _ => unreachable!(),
+            };
+            let lead_in_cutter = translate_solid(
+                &lead_in_oriented,
+                Vec3::new(lead_offset[0], lead_offset[1], lead_offset[2]),
+            );
+            // Insert cylinder: radius ir, height = insert_cyl_depth.
+            // Goes deeper into the body from lead-in bottom.
+            let insert_cutter = cylinder_along_axis(
+                ir,
+                insert_cyl_depth + eps,
+                *segments,
+                axis_idx,
+                ctr[axis_idx] - id_depth,
+                ctr[a_idx],
+                ctr[b_idx],
+            );
+            let composite = lead_in_cutter
+                .try_union(&insert_cutter)
+                .map_err(|e| EvalError::Boolean {
+                    id: id.into(),
+                    op: "heatset_union",
+                    message: e.message,
+                })?;
+            base.try_difference(&composite).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "heatset",
+                message: e.message,
+            })
+        }
+
         Feature::Union { inputs, .. } => fold_boolean(id, inputs, cache, BoolKind::Union),
         Feature::Intersection { inputs, .. } => {
             fold_boolean(id, inputs, cache, BoolKind::Intersection)
