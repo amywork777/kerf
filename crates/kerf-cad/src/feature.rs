@@ -4130,56 +4130,59 @@ pub enum Feature {
         thickness: Scalar,
     },
 
-    /// TruncatedSphere: a faceted sphere of `radius` clipped at z = `clip_z`.
-    /// Everything above `clip_z` is retained. When `clip_z` = 0 the result
-    /// equals a Hemisphere (volume = 2/3 π r³). When `clip_z` = -`radius`
-    /// the full sphere is returned. Implemented as sphere_faceted minus a
-    /// half-space box cutting z < clip_z.
-    TruncatedSphere {
+    /// Bagel: a faceted torus (like `Donut`) with a thin annular dome
+    /// on the top surface — like a baked bagel. The base is a standard
+    /// faceted torus (`major_radius` × `minor_radius`); the dome is a
+    /// narrow flattened toroidal ridge of height `dome_height` sitting on
+    /// top of the torus. `major_radius` must exceed `minor_radius`;
+    /// `dome_height` must be > 0 and ≤ `minor_radius`. Axis along +z,
+    /// centered on the origin.
+    Bagel {
         id: String,
-        radius: Scalar,
-        clip_z: Scalar,
+        major_radius: Scalar,
+        minor_radius: Scalar,
+        dome_height: Scalar,
         segments: usize,
     },
 
-    /// Lens2: biconvex lens shape — intersection of two faceted spheres of
-    /// equal `radius`, offset along ±z so the lens has total `thickness`.
-    /// The offset d satisfies: at x=y=0, the two sphere surfaces meet at
-    /// ±thickness/2, giving d = sqrt(r² - 0) adjusted so that the lens
-    /// half-thickness equals thickness/2. Specifically offset = sqrt(r² -
-    /// (r - thickness/2)²) along z. When thickness = 2*radius the
-    /// intersection is the full sphere (volume = 4/3 π r³).
-    Lens2 {
+    /// Pringle: a saddle-shaped chip — a thin slab whose top surface
+    /// follows z = dome_height * (x² − y²) / side². Built as a grid of
+    /// points on that quadric surface, extruded downward by a small
+    /// thickness (dome_height / 4) to give a solid body. The chip is
+    /// `side` × `side` in the xy plane, centred on the origin.
+    /// `segments` controls grid resolution (≥ 2).
+    Pringle {
         id: String,
-        radius: Scalar,
-        thickness: Scalar,
+        side: Scalar,
+        dome_height: Scalar,
         segments: usize,
     },
 
-    /// Capsule2: pill shape — cylinder body of `radius` and `length` along
-    /// the chosen `axis` ("x" | "y" | "z"), capped by two hemispherical
-    /// caps of the same `radius`. Volume = π r² · length + 4/3 π r³.
-    /// Uses current best-practice idiom (sphere + box clip for each cap,
-    /// then union with body cylinder).
-    Capsule2 {
+    /// Cone2: a refined cone with a smooth frustum body and a
+    /// hemispherical cap at the top. `tip_radius` = 0 gives a standard
+    /// pointed cone topped with a hemisphere of `tip_radius`; a small
+    /// `tip_radius` > 0 gives a frustum capped with a hemisphere.
+    /// Specifically: a frustum from `base_radius` at z=0 to `tip_radius`
+    /// at z=`height`, plus a hemisphere of radius `tip_radius` centred at
+    /// (0, 0, `height`). `base_radius` must be > `tip_radius` ≥ 0.
+    Cone2 {
         id: String,
-        radius: Scalar,
-        length: Scalar,
-        axis: String,
+        base_radius: Scalar,
+        tip_radius: Scalar,
+        height: Scalar,
         segments: usize,
     },
 
-    /// OvoidShell: hollow egg-shaped shell. Outer ovoid is built as a
-    /// sphere scaled by (1, 1, length / (2*radius_max)) so it spans
-    /// `radius_min` along x/y and `length/2` along z. Inner ovoid is the
-    /// same shape shrunk inward by `thickness`. The shell is the Difference
-    /// of outer minus inner. Very small `thickness` → near-zero volume.
-    OvoidShell {
+    /// Lozenge: a rectangular box with rounded vertical edges — a
+    /// discrete "pillowed" cuboid. The box has dimensions `size[0]` × `size[1]`
+    /// × `size[2]` (x, y, z). Each of the four vertical (z-axis) edges is
+    /// replaced by a cylindrical fillet of radius `corner_radius`. Must
+    /// satisfy corner_radius > 0 and corner_radius < min(size[0], size[1]) / 2.
+    /// `segments` is the arc resolution per quarter-circle (≥ 2).
+    Lozenge {
         id: String,
-        radius_min: Scalar,
-        radius_max: Scalar,
-        length: Scalar,
-        thickness: Scalar,
+        size: [Scalar; 3],
+        corner_radius: Scalar,
         segments: usize,
     },
 }
@@ -4520,10 +4523,10 @@ impl Feature {
             | Feature::Star3D { id, .. }
             | Feature::Cross3D { id, .. }
             | Feature::Chair { id, .. }
-            | Feature::TruncatedSphere { id, .. }
-            | Feature::Lens2 { id, .. }
-            | Feature::Capsule2 { id, .. }
-            | Feature::OvoidShell { id, .. }
+            | Feature::Bagel { id, .. }
+            | Feature::Pringle { id, .. }
+            | Feature::Cone2 { id, .. }
+            | Feature::Lozenge { id, .. }
 => id,
 }
     }
@@ -4872,7 +4875,10 @@ impl Feature {
             | Feature::Star3D { .. }
             | Feature::Cross3D { .. }
             | Feature::Chair { .. }
-            | Feature::ImportedMesh { .. }
+            | Feature::Bagel { .. }
+            | Feature::Pringle { .. }
+            | Feature::Cone2 { .. }
+            | Feature::Lozenge { .. }
 => Vec::new(),
 
             Feature::ChamferedHole { input, .. }

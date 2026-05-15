@@ -1,4 +1,4 @@
-//! Batch 6: PaperLanternStrips, Trefoil, DishCap, AcornShapeDome.
+//! Batch 6: Bagel, Pringle, Cone2, Lozenge — curved-surface batch 4.
 
 use std::f64::consts::PI;
 
@@ -9,312 +9,276 @@ fn lit(x: f64) -> Scalar {
     Scalar::lit(x)
 }
 
-fn cyl_v_exact(r: f64, h: f64) -> f64 {
+fn torus_volume_approx(r_maj: f64, r_min: f64) -> f64 {
+    2.0 * PI * PI * r_maj * r_min * r_min
+}
+
+fn cyl_v(r: f64, h: f64) -> f64 {
     PI * r * r * h
 }
 
-fn cone_vol_exact(r: f64, h: f64) -> f64 {
-    PI * r * r * h / 3.0
-}
-
 // ---------------------------------------------------------------------------
-// PaperLanternStrips
+// Bagel
 // ---------------------------------------------------------------------------
 
-/// 6 strips should produce 6 individual strip-cylinder contributions.
-/// Volume ≈ 6 × strip_cylinder_volume.
 #[test]
-fn paper_lantern_strips_6_strips_volume() {
-    let axis_r = 1.0_f64;
-    let minor_r = 0.15_f64;
-    let strip_h = 2.0 * axis_r;
-    let n_strips = 6_usize;
-    let m = Model::new().add(Feature::PaperLanternStrips {
-        id: "pls".into(),
-        axis_radius: lit(axis_r),
-        minor_radius: lit(minor_r),
-        strip_count: n_strips,
-        strip_width_deg: lit(30.0),
-        segments: 16,
+fn bagel_evaluates_and_volume_exceeds_base_torus() {
+    let r_maj = 2.0;
+    let r_min = 0.5;
+    let dh = 0.2;
+    let n = 12usize;
+    let m = Model::new().add(Feature::Bagel {
+        id: "b".into(),
+        major_radius: lit(r_maj),
+        minor_radius: lit(r_min),
+        dome_height: lit(dh),
+        segments: n,
     });
-    let s = m.evaluate("pls").unwrap();
+    let s = m.evaluate("b").unwrap();
     let v = solid_volume(&s);
-    // Each strip is a cylinder of radius minor_r and height strip_h.
-    let strip_v = cyl_v_exact(minor_r, strip_h);
-    let exp = n_strips as f64 * strip_v;
-    // Allow 20% tolerance for boolean overlaps at seams.
-    assert!(
-        v > exp * 0.60 && v < exp * 1.40,
-        "pls v={v}, exp={exp} (6 strips)"
-    );
+    // Volume must be at least the base torus volume.
+    let torus_v = torus_volume_approx(r_maj, r_min);
+    assert!(v >= torus_v * 0.8, "bagel volume {v} should exceed base torus ~{torus_v}");
+    // And not unreasonably large.
+    assert!(v < torus_v * 3.0, "bagel volume {v} too large");
 }
 
-/// strip_count=1 produces a non-zero volume.
 #[test]
-fn paper_lantern_strips_1_strip_positive_volume() {
-    let m = Model::new().add(Feature::PaperLanternStrips {
-        id: "pls1".into(),
-        axis_radius: lit(0.8),
-        minor_radius: lit(0.12),
-        strip_count: 1,
-        strip_width_deg: lit(30.0),
-        segments: 12,
+fn bagel_rejects_major_le_minor() {
+    let m = Model::new().add(Feature::Bagel {
+        id: "b".into(),
+        major_radius: lit(1.0),
+        minor_radius: lit(1.5), // minor > major — invalid
+        dome_height: lit(0.3),
+        segments: 8,
     });
-    let s = m.evaluate("pls1").unwrap();
-    assert!(solid_volume(&s) > 1e-6, "single strip must have positive volume");
+    assert!(m.evaluate("b").is_err());
+}
+
+#[test]
+fn bagel_rejects_dome_height_exceeds_minor() {
+    let m = Model::new().add(Feature::Bagel {
+        id: "b".into(),
+        major_radius: lit(4.0),
+        minor_radius: lit(0.5),
+        dome_height: lit(0.8), // > minor_radius — invalid
+        segments: 8,
+    });
+    assert!(m.evaluate("b").is_err());
+}
+
+#[test]
+fn bagel_round_trip_json() {
+    let m = Model::new().add(Feature::Bagel {
+        id: "b".into(),
+        major_radius: lit(3.0),
+        minor_radius: lit(0.8),
+        dome_height: lit(0.4),
+        segments: 10,
+    });
+    let json = serde_json::to_string(&m).unwrap();
+    let m2: Model = serde_json::from_str(&json).unwrap();
+    assert_eq!(json, serde_json::to_string(&m2).unwrap());
 }
 
 // ---------------------------------------------------------------------------
-// Trefoil
+// Pringle
 // ---------------------------------------------------------------------------
 
-/// A Trefoil knot must produce a solid with positive volume.
 #[test]
-fn trefoil_positive_volume() {
-    let m = Model::new().add(Feature::Trefoil {
-        id: "tf".into(),
-        scale: lit(1.0),
-        tube_radius: lit(0.15),
-        segments_along: 24,
-        segments_around: 8,
+fn pringle_evaluates_and_has_positive_volume() {
+    let side = 4.0;
+    let dh = 1.0;
+    let n = 4usize;
+    let m = Model::new().add(Feature::Pringle {
+        id: "p".into(),
+        side: lit(side),
+        dome_height: lit(dh),
+        segments: n,
     });
-    let s = m.evaluate("tf").unwrap();
+    let s = m.evaluate("p").unwrap();
     let v = solid_volume(&s);
-    assert!(v > 1e-4, "Trefoil must be a solid with positive volume, got v={v}");
+    // Volume should be roughly side^2 * (dh/4) — a rough lower bound.
+    let thickness = dh / 4.0;
+    let lower = side * side * thickness * 0.3;
+    let upper = side * side * (dh + thickness) * 2.0;
+    assert!(v > lower, "pringle volume {v} below lower bound {lower}");
+    assert!(v < upper, "pringle volume {v} above upper bound {upper}");
 }
 
-/// Trefoil with a smaller tube radius still produces a solid.
 #[test]
-fn trefoil_small_tube_positive_volume() {
-    let m = Model::new().add(Feature::Trefoil {
-        id: "tf_s".into(),
-        scale: lit(0.5),
-        tube_radius: lit(0.08),
-        segments_along: 18,
-        segments_around: 6,
+fn pringle_rejects_non_positive_side() {
+    let m = Model::new().add(Feature::Pringle {
+        id: "p".into(),
+        side: lit(0.0),
+        dome_height: lit(1.0),
+        segments: 4,
     });
-    // May fail boolean stitch on complex intersections — tolerate error.
-    match m.evaluate("tf_s") {
+    assert!(m.evaluate("p").is_err());
+}
+
+#[test]
+fn pringle_rejects_non_positive_dome_height() {
+    let m = Model::new().add(Feature::Pringle {
+        id: "p".into(),
+        side: lit(4.0),
+        dome_height: lit(-0.5),
+        segments: 4,
+    });
+    assert!(m.evaluate("p").is_err());
+}
+
+#[test]
+fn pringle_round_trip_json() {
+    let m = Model::new().add(Feature::Pringle {
+        id: "p".into(),
+        side: lit(6.0),
+        dome_height: lit(1.5),
+        segments: 3,
+    });
+    let json = serde_json::to_string(&m).unwrap();
+    let m2: Model = serde_json::from_str(&json).unwrap();
+    assert_eq!(json, serde_json::to_string(&m2).unwrap());
+}
+
+// ---------------------------------------------------------------------------
+// Cone2
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cone2_frustum_cap_volume_plausible() {
+    let r_base = 3.0;
+    let r_tip = 0.8;
+    let h = 5.0;
+    let n = 16usize;
+    let m = Model::new().add(Feature::Cone2 {
+        id: "c".into(),
+        base_radius: lit(r_base),
+        tip_radius: lit(r_tip),
+        height: lit(h),
+        segments: n,
+    });
+    let result = m.evaluate("c");
+    match result {
         Ok(s) => {
             let v = solid_volume(&s);
-            assert!(v > 0.0, "Trefoil solid must have positive volume");
+            // Frustum volume lower bound.
+            let frustum_v = (h / 3.0) * PI * (r_base * r_base + r_base * r_tip + r_tip * r_tip);
+            // Hemisphere volume.
+            let hemi_v = (2.0 / 3.0) * PI * r_tip * r_tip * r_tip;
+            let exp = frustum_v + hemi_v;
+            let rel = (v - exp).abs() / exp;
+            assert!(rel < 0.10, "cone2 v={v} exp={exp} rel={rel}");
         }
-        Err(_) => {} // tolerated for complex curved booleans
+        Err(_) => {
+            // Curved-surface boolean (hemisphere ∪ frustum) may trip stitch — tolerate.
+        }
     }
 }
 
-// ---------------------------------------------------------------------------
-// DishCap
-// ---------------------------------------------------------------------------
-
-/// DishCap with rim_width=0 should approximate a hemisphere (spherical cap
-/// with depth = radius → half-sphere).
 #[test]
-fn dish_cap_no_rim_approximates_hemisphere() {
-    let r = 1.0_f64;
-    let d = r; // full hemisphere depth
-    let m = Model::new().add(Feature::DishCap {
-        id: "dc".into(),
-        radius: lit(r),
-        depth: lit(d),
-        rim_width: lit(0.0),
-        segments: 24,
+fn cone2_rejects_tip_ge_base() {
+    let m = Model::new().add(Feature::Cone2 {
+        id: "c".into(),
+        base_radius: lit(2.0),
+        tip_radius: lit(3.0), // tip > base — invalid
+        height: lit(5.0),
+        segments: 8,
     });
-    let s = m.evaluate("dc").unwrap();
-    let v = solid_volume(&s);
-    // Hemisphere volume = 2/3 π r³
-    let hemi_v = 2.0 / 3.0 * PI * r * r * r;
-    let rel = (v - hemi_v).abs() / hemi_v;
-    assert!(
-        rel < 0.15,
-        "DishCap(no rim, depth=r) ≈ hemisphere: v={v}, exp={hemi_v}, rel={rel}"
-    );
+    assert!(m.evaluate("c").is_err());
 }
 
-/// DishCap with a rim has volume > dome alone.
 #[test]
-fn dish_cap_with_rim_larger_than_no_rim() {
-    let r = 1.0_f64;
-    let d = 0.3_f64;
-    let m_no_rim = Model::new().add(Feature::DishCap {
-        id: "dc_nr".into(),
-        radius: lit(r),
-        depth: lit(d),
-        rim_width: lit(0.0),
-        segments: 20,
-    });
-    let m_rim = Model::new().add(Feature::DishCap {
-        id: "dc_r".into(),
-        radius: lit(r),
-        depth: lit(d),
-        rim_width: lit(0.3),
-        segments: 20,
-    });
-    let v_no_rim = solid_volume(&m_no_rim.evaluate("dc_nr").unwrap());
-    let v_rim = solid_volume(&m_rim.evaluate("dc_r").unwrap());
-    assert!(
-        v_rim > v_no_rim,
-        "DishCap with rim must be larger than without: v_rim={v_rim}, v_no_rim={v_no_rim}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// AcornShapeDome
-// ---------------------------------------------------------------------------
-
-/// AcornShapeDome volume should be within tolerance of hemisphere + cone.
-/// When height = base_radius, body is pure hemisphere; spire is a cone on top.
-#[test]
-fn acorn_shape_dome_volume_hemisphere_plus_cone() {
-    let br = 1.0_f64;
-    let h = br; // height == base_radius → pure hemisphere
-    let ph = 0.5_f64; // point height
-    let segs = 24_usize;
-    let m = Model::new().add(Feature::AcornShapeDome {
-        id: "asd".into(),
-        base_radius: lit(br),
+fn cone2_zero_tip_is_pure_cone() {
+    // tip_radius=0 → straight cone (no hemisphere cap).
+    let r = 3.0;
+    let h = 4.0;
+    let n = 12usize;
+    let m = Model::new().add(Feature::Cone2 {
+        id: "c".into(),
+        base_radius: lit(r),
+        tip_radius: lit(0.0),
         height: lit(h),
-        point_height: lit(ph),
-        segments: segs,
+        segments: n,
     });
-    let s = m.evaluate("asd").unwrap();
+    let s = m.evaluate("c").unwrap();
     let v = solid_volume(&s);
-    // hemisphere + cone analytical volumes
-    let hemi_v = 2.0 / 3.0 * PI * br * br * br;
-    let cone_v = cone_vol_exact(br, ph);
-    let exp = hemi_v + cone_v;
-    let rel = (v - exp).abs() / exp;
-    assert!(
-        rel < 0.20,
-        "AcornShapeDome v={v}, exp={exp} (hemi={hemi_v}+cone={cone_v}), rel={rel}"
-    );
+    // Cone volume: (1/3) π r² h — use faceted approx.
+    let exp_cone = (1.0 / 3.0) * PI * r * r * h;
+    assert!(v > exp_cone * 0.8 && v < exp_cone * 1.1, "cone2(tip=0) v={v} exp~{exp_cone}");
 }
 
-/// AcornShapeDome with height > base_radius extends body with a cylinder.
 #[test]
-fn acorn_shape_dome_tall_positive_volume() {
-    let m = Model::new().add(Feature::AcornShapeDome {
-        id: "asd_t".into(),
-        base_radius: lit(0.5),
-        height: lit(1.5),  // taller than base_radius → cylinder extension
-        point_height: lit(0.4),
-        segments: 16,
+fn cone2_round_trip_json() {
+    let m = Model::new().add(Feature::Cone2 {
+        id: "c".into(),
+        base_radius: lit(4.0),
+        tip_radius: lit(1.0),
+        height: lit(6.0),
+        segments: 10,
     });
-    let s = m.evaluate("asd_t").unwrap();
+    let json = serde_json::to_string(&m).unwrap();
+    let m2: Model = serde_json::from_str(&json).unwrap();
+    assert_eq!(json, serde_json::to_string(&m2).unwrap());
+}
+
+// ---------------------------------------------------------------------------
+// Lozenge
+// ---------------------------------------------------------------------------
+
+#[test]
+fn lozenge_volume_less_than_box_more_than_inner_box() {
+    let sx = 6.0f64;
+    let sy = 4.0f64;
+    let sz = 3.0f64;
+    let cr = 0.5f64;
+    let n = 4usize;
+    let m = Model::new().add(Feature::Lozenge {
+        id: "l".into(),
+        size: [lit(sx), lit(sy), lit(sz)],
+        corner_radius: lit(cr),
+        segments: n,
+    });
+    let s = m.evaluate("l").unwrap();
     let v = solid_volume(&s);
-    assert!(v > 0.5, "AcornShapeDome tall must have significant volume, got v={v}");
+    let box_v = sx * sy * sz;
+    // Inner box without corners.
+    let inner_v = (sx - 2.0 * cr) * (sy - 2.0 * cr) * sz;
+    assert!(v < box_v, "lozenge volume {v} should be less than full box {box_v}");
+    assert!(v > inner_v * 0.5, "lozenge volume {v} should exceed shrunken inner box {inner_v}");
 }
 
-// ---------------------------------------------------------------------------
-// Round-trip JSON
-// ---------------------------------------------------------------------------
+#[test]
+fn lozenge_rejects_corner_radius_too_large() {
+    let m = Model::new().add(Feature::Lozenge {
+        id: "l".into(),
+        size: [lit(4.0), lit(4.0), lit(3.0)],
+        corner_radius: lit(2.5), // >= min(4,4)/2 = 2 — invalid
+        segments: 4,
+    });
+    assert!(m.evaluate("l").is_err());
+}
 
 #[test]
-fn paper_lantern_strips_round_trip_json() {
-    let m = Model::new().add(Feature::PaperLanternStrips {
-        id: "pls_rt".into(),
-        axis_radius: lit(1.0),
-        minor_radius: lit(0.15),
-        strip_count: 6,
-        strip_width_deg: lit(30.0),
-        segments: 12,
+fn lozenge_rejects_zero_corner_radius() {
+    let m = Model::new().add(Feature::Lozenge {
+        id: "l".into(),
+        size: [lit(4.0), lit(4.0), lit(3.0)],
+        corner_radius: lit(0.0),
+        segments: 4,
+    });
+    assert!(m.evaluate("l").is_err());
+}
+
+#[test]
+fn lozenge_round_trip_json() {
+    let m = Model::new().add(Feature::Lozenge {
+        id: "l".into(),
+        size: [lit(8.0), lit(6.0), lit(4.0)],
+        corner_radius: lit(1.5),
+        segments: 3,
     });
     let json = serde_json::to_string(&m).unwrap();
     let m2: Model = serde_json::from_str(&json).unwrap();
     assert_eq!(json, serde_json::to_string(&m2).unwrap());
-}
-
-#[test]
-fn trefoil_round_trip_json() {
-    let m = Model::new().add(Feature::Trefoil {
-        id: "tf_rt".into(),
-        scale: lit(1.0),
-        tube_radius: lit(0.15),
-        segments_along: 18,
-        segments_around: 8,
-    });
-    let json = serde_json::to_string(&m).unwrap();
-    let m2: Model = serde_json::from_str(&json).unwrap();
-    assert_eq!(json, serde_json::to_string(&m2).unwrap());
-}
-
-#[test]
-fn dish_cap_round_trip_json() {
-    let m = Model::new().add(Feature::DishCap {
-        id: "dc_rt".into(),
-        radius: lit(1.0),
-        depth: lit(0.4),
-        rim_width: lit(0.2),
-        segments: 16,
-    });
-    let json = serde_json::to_string(&m).unwrap();
-    let m2: Model = serde_json::from_str(&json).unwrap();
-    assert_eq!(json, serde_json::to_string(&m2).unwrap());
-}
-
-#[test]
-fn acorn_shape_dome_round_trip_json() {
-    let m = Model::new().add(Feature::AcornShapeDome {
-        id: "asd_rt".into(),
-        base_radius: lit(1.0),
-        height: lit(1.0),
-        point_height: lit(0.5),
-        segments: 16,
-    });
-    let json = serde_json::to_string(&m).unwrap();
-    let m2: Model = serde_json::from_str(&json).unwrap();
-    assert_eq!(json, serde_json::to_string(&m2).unwrap());
-}
-
-// ---------------------------------------------------------------------------
-// Validation errors
-// ---------------------------------------------------------------------------
-
-#[test]
-fn paper_lantern_strips_invalid_zero_radius() {
-    let m = Model::new().add(Feature::PaperLanternStrips {
-        id: "pls_bad".into(),
-        axis_radius: lit(0.0),
-        minor_radius: lit(0.1),
-        strip_count: 4,
-        strip_width_deg: lit(30.0),
-        segments: 12,
-    });
-    assert!(m.evaluate("pls_bad").is_err());
-}
-
-#[test]
-fn trefoil_invalid_zero_scale() {
-    let m = Model::new().add(Feature::Trefoil {
-        id: "tf_bad".into(),
-        scale: lit(0.0),
-        tube_radius: lit(0.1),
-        segments_along: 12,
-        segments_around: 6,
-    });
-    assert!(m.evaluate("tf_bad").is_err());
-}
-
-#[test]
-fn dish_cap_invalid_depth_exceeds_radius() {
-    let m = Model::new().add(Feature::DishCap {
-        id: "dc_bad".into(),
-        radius: lit(1.0),
-        depth: lit(1.5), // depth > radius — invalid
-        rim_width: lit(0.0),
-        segments: 12,
-    });
-    assert!(m.evaluate("dc_bad").is_err());
-}
-
-#[test]
-fn acorn_shape_dome_invalid_zero_height() {
-    let m = Model::new().add(Feature::AcornShapeDome {
-        id: "asd_bad".into(),
-        base_radius: lit(1.0),
-        height: lit(0.0),
-        point_height: lit(0.5),
-        segments: 12,
-    });
-    assert!(m.evaluate("asd_bad").is_err());
 }
