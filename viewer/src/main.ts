@@ -11,7 +11,7 @@ import init, {
 } from "./wasm/kerf_cad_wasm.js";
 import { exportThreeViewPng } from "./drawings.js";
 import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js";
-import type { GdtAnnotations } from "./gdt.js";
+import { mountConfigDropdown, mountDesignTable } from "./configurations.js";
 
 await init();
 
