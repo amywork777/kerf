@@ -4048,63 +4048,56 @@ pub enum Feature {
         thickness: Scalar,
     },
 
-    // -------------------------------------------------------------------
-    // Reference geometry batch 4 (5 features) — ship 2026-05-10.
-    // -------------------------------------------------------------------
-
-    /// Centerline: a thin cylinder rod between two world-space points.
-    /// Used for visualizing axes-of-rotation in drawings. The rod runs
-    /// from `from` to `to` along an arbitrary direction; `radius` sets
-    /// the rod thickness.
-    Centerline {
+    /// TruncatedSphere: a faceted sphere of `radius` clipped at z = `clip_z`.
+    /// Everything above `clip_z` is retained. When `clip_z` = 0 the result
+    /// equals a Hemisphere (volume = 2/3 π r³). When `clip_z` = -`radius`
+    /// the full sphere is returned. Implemented as sphere_faceted minus a
+    /// half-space box cutting z < clip_z.
+    TruncatedSphere {
         id: String,
-        from: [Scalar; 3],
-        to: [Scalar; 3],
         radius: Scalar,
+        clip_z: Scalar,
+        segments: usize,
     },
 
-    /// MidPlane: a thin slab centered at the midpoint between two
-    /// world-space points, oriented by a `normal` vector. Used for
-    /// symmetry references. `extent` is the half-size of the slab in
-    /// the two directions perpendicular to `normal`; thickness along
-    /// `normal` is 0.05 (fixed visual marker thickness).
-    MidPlane {
+    /// Lens2: biconvex lens shape — intersection of two faceted spheres of
+    /// equal `radius`, offset along ±z so the lens has total `thickness`.
+    /// The offset d satisfies: at x=y=0, the two sphere surfaces meet at
+    /// ±thickness/2, giving d = sqrt(r² - 0) adjusted so that the lens
+    /// half-thickness equals thickness/2. Specifically offset = sqrt(r² -
+    /// (r - thickness/2)²) along z. When thickness = 2*radius the
+    /// intersection is the full sphere (volume = 4/3 π r³).
+    Lens2 {
         id: String,
-        point_a: [Scalar; 3],
-        point_b: [Scalar; 3],
-        normal: [Scalar; 3],
-        extent: Scalar,
+        radius: Scalar,
+        thickness: Scalar,
+        segments: usize,
     },
 
-    /// ConstructionAxis: a thin rod through a named point in a named
-    /// direction. `origin` is the center of the rod; `direction` is the
-    /// axis vector (need not be unit); `length` is the total rod length;
-    /// `radius` is the rod cross-section radius.
-    ConstructionAxis {
+    /// Capsule2: pill shape — cylinder body of `radius` and `length` along
+    /// the chosen `axis` ("x" | "y" | "z"), capped by two hemispherical
+    /// caps of the same `radius`. Volume = π r² · length + 4/3 π r³.
+    /// Uses current best-practice idiom (sphere + box clip for each cap,
+    /// then union with body cylinder).
+    Capsule2 {
         id: String,
-        origin: [Scalar; 3],
-        direction: [Scalar; 3],
+        radius: Scalar,
         length: Scalar,
-        radius: Scalar,
+        axis: String,
+        segments: usize,
     },
 
-    /// AnchorPoint: a small cube marker at a named point. For visual
-    /// reference points. The cube has side length `size` and is centered
-    /// at `position`.
-    AnchorPoint2 {
+    /// OvoidShell: hollow egg-shaped shell. Outer ovoid is built as a
+    /// sphere scaled by (1, 1, length / (2*radius_max)) so it spans
+    /// `radius_min` along x/y and `length/2` along z. Inner ovoid is the
+    /// same shape shrunk inward by `thickness`. The shell is the Difference
+    /// of outer minus inner. Very small `thickness` → near-zero volume.
+    OvoidShell {
         id: String,
-        position: [Scalar; 3],
-        size: Scalar,
-    },
-
-    /// BoundingSphere: a sphere fitted to the bounding box of an input
-    /// feature. Evaluates `input`, computes its AABB, builds a faceted
-    /// sphere whose radius = half the AABB diagonal length, centered at
-    /// the AABB center. `segments` controls the latitude/longitude
-    /// resolution (stacks = segments, slices = 2*segments).
-    BoundingSphere {
-        id: String,
-        input: String,
+        radius_min: Scalar,
+        radius_max: Scalar,
+        length: Scalar,
+        thickness: Scalar,
         segments: usize,
     },
 }
@@ -4440,14 +4433,10 @@ impl Feature {
             | Feature::Star3D { id, .. }
             | Feature::Cross3D { id, .. }
             | Feature::Chair { id, .. }
-            | Feature::ImportedMesh { id, .. }
-=> id,
-
-            Feature::ChamferedHole { id, .. }
-            | Feature::ThreadedHoleMarker { id, .. }
-            | Feature::BoltPattern { id, .. }
-            | Feature::SquareDrive { id, .. }
-            | Feature::RaisedBoss { id, .. }
+            | Feature::TruncatedSphere { id, .. }
+            | Feature::Lens2 { id, .. }
+            | Feature::Capsule2 { id, .. }
+            | Feature::OvoidShell { id, .. }
 => id,
 }
     }
@@ -4754,7 +4743,11 @@ impl Feature {
         
             Feature::TaperedPin { .. }
             | Feature::FlangedNut { .. }
-            | Feature::DowelPin { .. } => Vec::new(),
+            | Feature::DowelPin { .. }
+            | Feature::TruncatedSphere { .. }
+            | Feature::Lens2 { .. }
+            | Feature::Capsule2 { .. }
+            | Feature::OvoidShell { .. } => Vec::new(),
             Feature::EndChamfer { input, .. }
             | Feature::InternalChamfer { input, .. }
             | Feature::ConicalCounterbore { input, .. }

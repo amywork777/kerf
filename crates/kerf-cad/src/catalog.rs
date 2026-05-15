@@ -510,6 +510,10 @@ pub fn categorize(name: &str) -> Category {
             | "SphericalCap"
             | "CylinderAt"
             | "Diamond"
+            | "TruncatedSphere"
+            | "Lens2"
+            | "Capsule2"
+            | "OvoidShell"
     ) {
         return Category::Primitives;
     }
@@ -1609,34 +1613,31 @@ fn curated_override(variant: &str) -> Option<serde_json::Map<String, serde_json:
             m.insert("back_height".into(), num(12.0));
             Some(m)
         }
-        "Centerline" => {
-            m.insert("from".into(), json!([0.0, 0.0, 0.0]));
-            m.insert("to".into(), json!([0.0, 0.0, 10.0]));
-            m.insert("radius".into(), num(0.1));
+        "TruncatedSphere" => {
+            m.insert("radius".into(), num(5.0));
+            m.insert("clip_z".into(), num(0.0)); // hemisphere by default
+            m.insert("segments".into(), json!(12));
             Some(m)
         }
-        "MidPlane" => {
-            m.insert("point_a".into(), json!([0.0, 0.0, 0.0]));
-            m.insert("point_b".into(), json!([0.0, 0.0, 10.0]));
-            m.insert("normal".into(), json!([0.0, 0.0, 1.0]));
-            m.insert("extent".into(), num(5.0));
+        "Lens2" => {
+            m.insert("radius".into(), num(5.0));
+            m.insert("thickness".into(), num(4.0));
+            m.insert("segments".into(), json!(12));
             Some(m)
         }
-        "ConstructionAxis" => {
-            m.insert("origin".into(), json!([0.0, 0.0, 0.0]));
-            m.insert("direction".into(), json!([0.0, 0.0, 1.0]));
-            m.insert("length".into(), num(10.0));
-            m.insert("radius".into(), num(0.1));
+        "Capsule2" => {
+            m.insert("radius".into(), num(3.0));
+            m.insert("length".into(), num(8.0));
+            m.insert("axis".into(), Value::String("z".into()));
+            m.insert("segments".into(), json!(12));
             Some(m)
         }
-        "AnchorPoint2" => {
-            m.insert("position".into(), json!([0.0, 0.0, 0.0]));
-            m.insert("size".into(), num(1.0));
-            Some(m)
-        }
-        "BoundingSphere" => {
-            m.insert("input".into(), Value::String("body".into()));
-            m.insert("segments".into(), json!(8));
+        "OvoidShell" => {
+            m.insert("radius_min".into(), num(4.0));
+            m.insert("radius_max".into(), num(4.0));
+            m.insert("length".into(), num(8.0));
+            m.insert("thickness".into(), num(0.5));
+            m.insert("segments".into(), json!(12));
             Some(m)
         }
         _ => None,

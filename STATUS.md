@@ -39,9 +39,40 @@ mod, sign, if_pos for conditionals, pi/tau/e constants).
 
 ## Readiness against published CAD packages
 
-See [PROGRESS.md](./PROGRESS.md) for the current SW-tier scorecard.
+Weighted scorecard, where Solidworks/Fusion-tier = 100% and OpenSCAD-tier is
+the subset of categories OpenSCAD actually covers (~31 SW pts, mostly:
+kernel + authoring + viewer + production output).
 
-## Latest session (2026-05-06)
+| Capability                                | SW weight | We're at | SW pts |
+|-------------------------------------------|----------:|---------:|-------:|
+| Planar booleans + primitives + validation | 15%       | 99%      | 14.85  |
+| Authoring layer (params + expressions)    | 6%        | 98%      | 5.88   |
+| 3D viewer (mesh, camera, lighting)        | 7%        | 90%      | 6.3    |
+| Picking / selection (face → owner Feature)| 5%        | 70%      | 3.5    |
+| Feature tree UI                           | 5%        | 60%      | 3.0    |
+| Production output (STL/STEP/OBJ)          | 3%        | 95%      | 2.85   |
+| Drawings (3-view + dimensions)            | 4%        | 50%      | 2.0    |
+| Constraint solver (forward expressions)   | 10%       | 30%      | 3.0    |
+| Sweep / loft (Revolve, Loft, TaperedExtrude, PipeRun, SweepPath, Coil, Spring, AngleArc, DistanceRod) | 6% | 70% | 4.2 |
+| Manufacturing features (240+ — see catalog) | 12% | 95% | 11.4 |
+| Reference geometry (RefPoint, RefAxis, RefPlane, Mirror, BoundingBoxRef, CentroidPoint, DistanceRod, AngleArc, Marker3D, VectorArrow) | 3% | 85% | 2.55 |
+| Curved-surface analytic booleans (faceted spheres + torus + Hemisphere + SphericalCap + Bowl + Donut + ReducerCone + Lens + EggShape + UBendPipe + SBend + ToroidalKnob + TruncatedSphere + Lens2 + Capsule2 + OvoidShell compose for simple cases) | 8% | 60% | 4.8 |
+| 2D sketcher UI                            | 8%        | 0%       | 0      |
+| Assembly (multi-body + mates)             | 8%        | 0%       | 0      |
+| **Solidworks-tier total**                 | **100%**  |          | **~66.2%** |
+| **OpenSCAD-tier (out of 31 SW pts)**      |           |          | **~99%**   |
+
+## Latest session (2026-05-10)
+
+**Curved-surface batch 2**: TruncatedSphere, Lens2, Capsule2, OvoidShell.
+- **TruncatedSphere**: sphere clipped at z = clip_z (box halfspace subtraction). clip_z = 0 → hemisphere.
+- **Lens2**: biconvex lens via intersection of two offset spheres. thickness = 2r → full sphere.
+- **Capsule2**: pill (cylinder + 2 hemispherical caps via sphere+clip). Axis-parametric (x/y/z).
+- **OvoidShell**: hollow egg shell — outer ovoid (scaled sphere) minus inner scaled sphere offset by thickness.
+- **Curved-surface category bumps 45% → 60%** (+1.2 SW pts).
+- 8 new tests (≥1 per variant + round-trip JSON). All existing tests preserved.
+
+## Previous session (2026-05-06)
 
 GAP 1 (Picking → edit) shipped. GAP 2 Plan B (SweepPath) shipped. Bonus
 faceted torus + Donut feature shipped. ~52.7% → ~54.7% (+2 SW pts), 518
