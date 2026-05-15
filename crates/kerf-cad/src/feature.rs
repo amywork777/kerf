@@ -4031,6 +4031,45 @@ pub enum Feature {
         segments: usize,
     },
 
+    /// TruncatedSphere: a faceted sphere of `radius` clipped at z = `clip_z`.
+    /// Everything above `clip_z` is retained. When `clip_z` = 0 the result
+    /// equals a Hemisphere (volume = 2/3 π r³). When `clip_z` = -`radius`
+    /// the full sphere is returned. Implemented as sphere_faceted minus a
+    /// half-space box cutting z < clip_z.
+    TruncatedSphere {
+        id: String,
+        radius: Scalar,
+        clip_z: Scalar,
+        segments: usize,
+    },
+
+    /// Lens2: biconvex lens shape — intersection of two faceted spheres of
+    /// equal `radius`, offset along ±z so the lens has total `thickness`.
+    /// The offset d satisfies: at x=y=0, the two sphere surfaces meet at
+    /// ±thickness/2, giving d = sqrt(r² - 0) adjusted so that the lens
+    /// half-thickness equals thickness/2. Specifically offset = sqrt(r² -
+    /// (r - thickness/2)²) along z. When thickness = 2*radius the
+    /// intersection is the full sphere (volume = 4/3 π r³).
+    Lens2 {
+        id: String,
+        radius: Scalar,
+        thickness: Scalar,
+        segments: usize,
+    },
+
+    /// Capsule2: pill shape — cylinder body of `radius` and `length` along
+    /// the chosen `axis` ("x" | "y" | "z"), capped by two hemispherical
+    /// caps of the same `radius`. Volume = π r² · length + 4/3 π r³.
+    /// Uses current best-practice idiom (sphere + box clip for each cap,
+    /// then union with body cylinder).
+    Capsule2 {
+        id: String,
+        radius: Scalar,
+        length: Scalar,
+        axis: String,
+        segments: usize,
+    },
+
     /// Triangle-soup imported from an external file (e.g. STEP, STL). The
     /// evaluator hands `vertices` and `indices` to
     /// `kerf_brep::from_triangles`, which builds a half-edge solid by
@@ -4056,6 +4095,20 @@ pub enum Feature {
         id: String,
         vertices: Vec<[f64; 3]>,
         indices: Vec<[usize; 3]>,
+    },
+
+    /// OvoidShell: hollow egg-shaped shell. Outer ovoid is built as a
+    /// sphere scaled by (1, 1, length / (2*radius_max)) so it spans
+    /// `radius_min` along x/y and `length/2` along z. Inner ovoid is the
+    /// same shape shrunk inward by `thickness`. The shell is the Difference
+    /// of outer minus inner. Very small `thickness` → near-zero volume.
+    OvoidShell {
+        id: String,
+        radius_min: Scalar,
+        radius_max: Scalar,
+        length: Scalar,
+        thickness: Scalar,
+        segments: usize,
     },
 }
 
@@ -4384,6 +4437,10 @@ impl Feature {
             | Feature::Cross3D { id, .. }
             | Feature::Chair { id, .. }
             | Feature::ImportedMesh { id, .. }
+            | Feature::TruncatedSphere { id, .. }
+            | Feature::Lens2 { id, .. }
+            | Feature::Capsule2 { id, .. }
+            | Feature::OvoidShell { id, .. }
 => id,
 
             Feature::ChamferedHole { id, .. }
@@ -4690,7 +4747,11 @@ impl Feature {
         
             Feature::TaperedPin { .. }
             | Feature::FlangedNut { .. }
-            | Feature::DowelPin { .. } => Vec::new(),
+            | Feature::DowelPin { .. }
+            | Feature::TruncatedSphere { .. }
+            | Feature::Lens2 { .. }
+            | Feature::Capsule2 { .. }
+            | Feature::OvoidShell { .. } => Vec::new(),
             Feature::EndChamfer { input, .. }
             | Feature::InternalChamfer { input, .. }
             | Feature::ConicalCounterbore { input, .. }
