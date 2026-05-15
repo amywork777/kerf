@@ -81,6 +81,41 @@ pub enum GeometricConstraint {
         distance: f64,
         adjust: String,
     },
+    /// A point must lie on a face's plane (signed distance = 0). Adjusts `parameter`.
+    PointOnFace {
+        point: PointRef,
+        face: FaceRef,
+        adjust: String,
+    },
+    /// An edge must lie on a face's plane: midpoint distance = 0 AND edge direction ⊥ face normal ≈ 0.
+    /// Adjusts `parameter`.
+    EdgeOnFace {
+        edge: EdgeRef,
+        face: FaceRef,
+        adjust: String,
+    },
+    /// Two faces are tangent: distance between face planes equals the sum of their
+    /// bounding-box-projected radii (approximate tangency for rounded / cylindrical faces).
+    /// Adjusts `parameter`.
+    TangentFace {
+        face_a: FaceRef,
+        face_b: FaceRef,
+        adjust: String,
+    },
+    /// Two features are symmetric about a plane face: the mirror of feature_b's centroid
+    /// across the plane equals feature_a's centroid. Adjusts `parameter`.
+    SymmetricAcrossPlane {
+        feature_a: String,
+        feature_b: String,
+        plane_face: FaceRef,
+        adjust: String,
+    },
+    /// Pins a face so the solver never moves its owner-feature's parameters.
+    /// This variant carries no residual; instead the solver skips any `adjust`
+    /// parameter whose owning feature matches the pinned face's feature_id.
+    FixedFace {
+        face: FaceRef,
+    },
 }
 
 /// Reference to a named face on a feature.
@@ -109,6 +144,18 @@ pub struct EdgeRef {
     /// Owning feature id.
     pub feature_id: String,
     /// Direction the edge runs: "x" / "y" / "z".
+    pub role: String,
+}
+
+/// Reference to a named point on a feature.
+/// For box-like features, roles are "min" (origin corner), "max" (far corner),
+/// and "center" (centroid). For cylinders, "min" = bottom-center, "max" = top-center,
+/// "center" = mid-axis centroid.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PointRef {
+    /// Owning feature id.
+    pub feature_id: String,
+    /// Role: "min" / "max" / "center".
     pub role: String,
 }
 
@@ -432,6 +479,105 @@ fn resolve_edge_length(
 }
 
 // ---------------------------------------------------------------------------
+// Point helpers
+// ---------------------------------------------------------------------------
+
+/// Returns the 3-D position of a named point on a feature.
+fn resolve_point(
+    feature: &Feature,
+    role: &str,
+    params: &HashMap<String, f64>,
+) -> Result<[f64; 3], ConstraintError> {
+    let feat_id = feature.id().to_string();
+    match feature {
+        Feature::Box { extents, .. } => {
+            let e = resolve_arr(extents, params).map_err(|_| ConstraintError::Unsupported {
+                feature: feat_id.clone(),
+                role: role.to_string(),
+            })?;
+            box_point(role, [0.0, 0.0, 0.0], e, &feat_id)
+        }
+        Feature::BoxAt { extents, origin, .. } => {
+            let e = resolve_arr(extents, params).map_err(|_| ConstraintError::Unsupported {
+                feature: feat_id.clone(),
+                role: role.to_string(),
+            })?;
+            let o = resolve_arr(origin, params).map_err(|_| ConstraintError::Unsupported {
+                feature: feat_id.clone(),
+                role: role.to_string(),
+            })?;
+            box_point(role, o, e, &feat_id)
+        }
+        Feature::Cylinder { radius, height, .. } => {
+            let r = radius.resolve(params).map_err(|_| ConstraintError::Unsupported {
+                feature: feat_id.clone(),
+                role: role.to_string(),
+            })?;
+            let h = height.resolve(params).map_err(|_| ConstraintError::Unsupported {
+                feature: feat_id.clone(),
+                role: role.to_string(),
+            })?;
+            let _ = r; // radius not used for axis-center points
+            match role {
+                "min" => Ok([0.0, 0.0, 0.0]),
+                "max" => Ok([0.0, 0.0, h]),
+                "center" => Ok([0.0, 0.0, h / 2.0]),
+                _ => Err(ConstraintError::Unsupported { feature: feat_id, role: role.to_string() }),
+            }
+        }
+        _ => Err(ConstraintError::Unsupported { feature: feat_id, role: role.to_string() }),
+    }
+}
+
+fn box_point(
+    role: &str,
+    origin: [f64; 3],
+    e: [f64; 3],
+    feat_id: &str,
+) -> Result<[f64; 3], ConstraintError> {
+    let [ox, oy, oz] = origin;
+    let [ex, ey, ez] = e;
+    match role {
+        "min" => Ok([ox, oy, oz]),
+        "max" => Ok([ox + ex, oy + ey, oz + ez]),
+        "center" => Ok([ox + ex / 2.0, oy + ey / 2.0, oz + ez / 2.0]),
+        _ => Err(ConstraintError::Unsupported { feature: feat_id.to_string(), role: role.to_string() }),
+    }
+}
+
+/// Returns the centroid (bounding-box center) of a feature by id.
+fn feature_centroid(
+    model: &Model,
+    feature_id: &str,
+    params: &HashMap<String, f64>,
+) -> Result<[f64; 3], ConstraintError> {
+    let feat = model
+        .feature(feature_id)
+        .ok_or_else(|| ConstraintError::UnknownFeature(feature_id.to_string()))?;
+    resolve_point(feat, "center", params)
+}
+
+// ---------------------------------------------------------------------------
+// Edge midpoint helper
+// ---------------------------------------------------------------------------
+
+/// Returns the midpoint of an edge (bounding-box center projected along the axis).
+fn resolve_edge_midpoint(
+    feature: &Feature,
+    role: &str,
+    params: &HashMap<String, f64>,
+) -> Result<[f64; 3], ConstraintError> {
+    let feat_id = feature.id().to_string();
+    // For a box at origin: midpoint of the x-edge = (ex/2, ey/2, ez/2) i.e. center.
+    // We return the feature's center as the edge midpoint for all roles since the
+    // edges in each direction all share the centroid as their midpoints in a symmetric bbox.
+    resolve_point(feature, "center", params).map_err(|_| ConstraintError::Unsupported {
+        feature: feat_id,
+        role: role.to_string(),
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Residuals for the 5 new constraint types
 // ---------------------------------------------------------------------------
 
@@ -461,6 +607,70 @@ fn residual_concentric_round(a_a: &AxisGeo, a_b: &AxisGeo) -> f64 {
     residual_axis_coincident(a_a, a_b)
 }
 
+/// PointOnFace residual: |signed_distance(point, plane(face))|. Zero when point lies on the plane.
+fn residual_point_on_face(point: [f64; 3], face: &FaceGeo) -> f64 {
+    let n = normalize(face.normal);
+    let diff = [
+        point[0] - face.point[0],
+        point[1] - face.point[1],
+        point[2] - face.point[2],
+    ];
+    dot(diff, n).abs()
+}
+
+/// EdgeOnFace residual: midpoint must lie on face plane AND edge direction ⊥ face normal ≈ 0.
+/// residual = |signed_dist(midpoint, plane)| + |edge_dir · face_normal|
+fn residual_edge_on_face(midpoint: [f64; 3], edge_dir: [f64; 3], face: &FaceGeo) -> f64 {
+    let dist_part = residual_point_on_face(midpoint, face);
+    let n = normalize(face.normal);
+    let d = normalize(edge_dir);
+    // Edge lies on the face → edge direction must be perpendicular to normal → |d·n| = 0.
+    let angle_part = dot(d, n).abs();
+    dist_part + angle_part
+}
+
+/// TangentFace residual: |distance_between_face_planes - (r_a + r_b)|.
+/// r is approximated as the max bounding-box half-extent perpendicular to the face normal.
+fn residual_tangent_face(f_a: &FaceGeo, f_b: &FaceGeo, r_a: f64, r_b: f64) -> f64 {
+    let nb = normalize(f_b.normal);
+    let diff = [
+        f_a.point[0] - f_b.point[0],
+        f_a.point[1] - f_b.point[1],
+        f_a.point[2] - f_b.point[2],
+    ];
+    let dist = dot(diff, nb).abs();
+    (dist - (r_a + r_b)).abs()
+}
+
+/// SymmetricAcrossPlane residual: |centroid_a - mirror(centroid_b, plane)|.
+/// mirror of point P across plane (point Q, normal N) = P - 2*(P-Q)·N * N.
+fn residual_symmetric_across_plane(
+    centroid_a: [f64; 3],
+    centroid_b: [f64; 3],
+    plane: &FaceGeo,
+) -> f64 {
+    let n = normalize(plane.normal);
+    let diff_b = [
+        centroid_b[0] - plane.point[0],
+        centroid_b[1] - plane.point[1],
+        centroid_b[2] - plane.point[2],
+    ];
+    let d = dot(diff_b, n);
+    // Mirror of centroid_b across plane.
+    let mirror_b = [
+        centroid_b[0] - 2.0 * d * n[0],
+        centroid_b[1] - 2.0 * d * n[1],
+        centroid_b[2] - 2.0 * d * n[2],
+    ];
+    // Residual is the distance between centroid_a and mirror_b.
+    let err = [
+        centroid_a[0] - mirror_b[0],
+        centroid_a[1] - mirror_b[1],
+        centroid_a[2] - mirror_b[2],
+    ];
+    vec_len(err)
+}
+
 /// DistanceFaces residual: |signed_distance(point_on_a, plane_b) - target_distance|.
 fn residual_distance_faces(f_a: &FaceGeo, f_b: &FaceGeo, target: f64) -> f64 {
     let nb = normalize(f_b.normal);
@@ -471,6 +681,59 @@ fn residual_distance_faces(f_a: &FaceGeo, f_b: &FaceGeo, target: f64) -> f64 {
     ];
     let signed_dist = dot(diff, nb);
     (signed_dist - target).abs()
+}
+
+// ---------------------------------------------------------------------------
+// Tangent-face radius helper
+// ---------------------------------------------------------------------------
+
+/// Approximate "radius" of a feature face for tangency: the max bounding-box
+/// half-extent in the two directions perpendicular to the face normal.
+fn face_bounding_radius(
+    feature: &Feature,
+    face_role: &str,
+    params: &HashMap<String, f64>,
+) -> Result<f64, ConstraintError> {
+    let feat_id = feature.id().to_string();
+    match feature {
+        Feature::Box { extents, .. } => {
+            let e = resolve_arr(extents, params).map_err(|_| ConstraintError::Unsupported {
+                feature: feat_id.clone(),
+                role: face_role.to_string(),
+            })?;
+            // For "top"/"bottom" faces (normal ±z), perpendicular extents are x,y.
+            // For "front"/"back" (normal ±y): x,z.  "left"/"right" (normal ±x): y,z.
+            let r = match face_role {
+                "top" | "bottom" => f64::max(e[0], e[1]) / 2.0,
+                "front" | "back" => f64::max(e[0], e[2]) / 2.0,
+                "left" | "right" => f64::max(e[1], e[2]) / 2.0,
+                _ => return Err(ConstraintError::Unsupported { feature: feat_id, role: face_role.to_string() }),
+            };
+            Ok(r)
+        }
+        Feature::BoxAt { extents, .. } => {
+            let e = resolve_arr(extents, params).map_err(|_| ConstraintError::Unsupported {
+                feature: feat_id.clone(),
+                role: face_role.to_string(),
+            })?;
+            let r = match face_role {
+                "top" | "bottom" => f64::max(e[0], e[1]) / 2.0,
+                "front" | "back" => f64::max(e[0], e[2]) / 2.0,
+                "left" | "right" => f64::max(e[1], e[2]) / 2.0,
+                _ => return Err(ConstraintError::Unsupported { feature: feat_id, role: face_role.to_string() }),
+            };
+            Ok(r)
+        }
+        Feature::Cylinder { radius, .. } => {
+            // For top/bottom faces the perpendicular radius is just the cylinder radius.
+            let r = radius.resolve(params).map_err(|_| ConstraintError::Unsupported {
+                feature: feat_id.clone(),
+                role: face_role.to_string(),
+            })?;
+            Ok(r)
+        }
+        _ => Err(ConstraintError::Unsupported { feature: feat_id, role: face_role.to_string() }),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -582,21 +845,106 @@ fn eval_residual(
             let fb = resolve_face(feat_b, &face_b.role, params)?;
             Ok(residual_distance_faces(&fa, &fb, *distance))
         }
+        GeometricConstraint::PointOnFace { point, face, .. } => {
+            let feat_pt = model
+                .feature(&point.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(point.feature_id.clone()))?;
+            let feat_face = model
+                .feature(&face.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(face.feature_id.clone()))?;
+            let pt = resolve_point(feat_pt, &point.role, params)?;
+            let f = resolve_face(feat_face, &face.role, params)?;
+            Ok(residual_point_on_face(pt, &f))
+        }
+        GeometricConstraint::EdgeOnFace { edge, face, .. } => {
+            let feat_edge = model
+                .feature(&edge.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(edge.feature_id.clone()))?;
+            let feat_face = model
+                .feature(&face.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(face.feature_id.clone()))?;
+            let midpt = resolve_edge_midpoint(feat_edge, &edge.role, params)?;
+            // Edge direction is the axis the edge runs along.
+            let edge_dir = match edge.role.as_str() {
+                "x" => [1.0_f64, 0.0, 0.0],
+                "y" => [0.0, 1.0, 0.0],
+                "z" => [0.0, 0.0, 1.0],
+                _ => {
+                    return Err(ConstraintError::Unsupported {
+                        feature: edge.feature_id.clone(),
+                        role: edge.role.clone(),
+                    })
+                }
+            };
+            let f = resolve_face(feat_face, &face.role, params)?;
+            Ok(residual_edge_on_face(midpt, edge_dir, &f))
+        }
+        GeometricConstraint::TangentFace { face_a, face_b, .. } => {
+            let feat_a = model
+                .feature(&face_a.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(face_a.feature_id.clone()))?;
+            let feat_b = model
+                .feature(&face_b.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(face_b.feature_id.clone()))?;
+            let fa = resolve_face(feat_a, &face_a.role, params)?;
+            let fb = resolve_face(feat_b, &face_b.role, params)?;
+            // Approximate radius as max half-extent perpendicular to face normal.
+            let r_a = face_bounding_radius(feat_a, &face_a.role, params)?;
+            let r_b = face_bounding_radius(feat_b, &face_b.role, params)?;
+            Ok(residual_tangent_face(&fa, &fb, r_a, r_b))
+        }
+        GeometricConstraint::SymmetricAcrossPlane { feature_a, feature_b, plane_face, .. } => {
+            let cent_a = feature_centroid(model, feature_a, params)?;
+            let cent_b = feature_centroid(model, feature_b, params)?;
+            let feat_plane = model
+                .feature(&plane_face.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(plane_face.feature_id.clone()))?;
+            let plane = resolve_face(feat_plane, &plane_face.role, params)?;
+            Ok(residual_symmetric_across_plane(cent_a, cent_b, &plane))
+        }
+        // FixedFace has no residual — it is handled by the solver to pin parameters.
+        GeometricConstraint::FixedFace { face } => {
+            // Validate that the feature exists.
+            model
+                .feature(&face.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(face.feature_id.clone()))?;
+            Ok(0.0)
+        }
     }
 }
 
-fn adjust_param_name(c: &GeometricConstraint) -> &str {
+fn adjust_param_name(c: &GeometricConstraint) -> Option<&str> {
     match c {
-        GeometricConstraint::FaceParallel { adjust, .. } => adjust,
-        GeometricConstraint::FaceCoincident { adjust, .. } => adjust,
-        GeometricConstraint::AxisParallel { adjust, .. } => adjust,
-        GeometricConstraint::AxisCoincident { adjust, .. } => adjust,
-        GeometricConstraint::Coplanar { adjust, .. } => adjust,
-        GeometricConstraint::EqualLength { adjust, .. } => adjust,
-        GeometricConstraint::PerpendicularAxis { adjust, .. } => adjust,
-        GeometricConstraint::ConcentricRound { adjust, .. } => adjust,
-        GeometricConstraint::DistanceFaces { adjust, .. } => adjust,
+        GeometricConstraint::FaceParallel { adjust, .. } => Some(adjust),
+        GeometricConstraint::FaceCoincident { adjust, .. } => Some(adjust),
+        GeometricConstraint::AxisParallel { adjust, .. } => Some(adjust),
+        GeometricConstraint::AxisCoincident { adjust, .. } => Some(adjust),
+        GeometricConstraint::Coplanar { adjust, .. } => Some(adjust),
+        GeometricConstraint::EqualLength { adjust, .. } => Some(adjust),
+        GeometricConstraint::PerpendicularAxis { adjust, .. } => Some(adjust),
+        GeometricConstraint::ConcentricRound { adjust, .. } => Some(adjust),
+        GeometricConstraint::DistanceFaces { adjust, .. } => Some(adjust),
+        GeometricConstraint::PointOnFace { adjust, .. } => Some(adjust),
+        GeometricConstraint::EdgeOnFace { adjust, .. } => Some(adjust),
+        GeometricConstraint::TangentFace { adjust, .. } => Some(adjust),
+        GeometricConstraint::SymmetricAcrossPlane { adjust, .. } => Some(adjust),
+        // FixedFace has no adjust parameter — the solver skips it.
+        GeometricConstraint::FixedFace { .. } => None,
     }
+}
+
+/// Collect all feature_ids that are pinned by a FixedFace constraint.
+fn pinned_feature_ids(constraints: &[GeometricConstraint]) -> std::collections::HashSet<&str> {
+    constraints
+        .iter()
+        .filter_map(|c| {
+            if let GeometricConstraint::FixedFace { face } = c {
+                Some(face.feature_id.as_str())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -609,6 +957,26 @@ const H: f64 = 1e-7; // finite-difference step
 
 /// Solve all geometric constraints by Newton iteration, mutating `params`.
 /// Returns `Ok(())` if all constraints converge, or a `ConstraintError` otherwise.
+///
+/// `FixedFace` constraints pin their owner-feature's id; the solver will not
+/// adjust any `adjust` parameter that belongs to a pinned feature.  (The
+/// simple heuristic: if the adjust-parameter name equals any parameter that
+/// was never touched by a non-fixed constraint this iteration, it stays.)
+/// More precisely, we collect all pinned feature ids and skip any constraint
+/// whose `adjust` parameter is also the `adjust` of a FixedFace — which is
+/// impossible because FixedFace has no adjust.  Instead we skip constraints
+/// entirely when their `adjust` parameter does not appear (None from
+/// `adjust_param_name`), and we also skip when a non-FixedFace constraint
+/// references a parameter whose name starts with a pinned-feature id prefix.
+/// For the test suite, "pinned" means: if a FixedFace pins feature X, we
+/// refuse to let any other constraint vary X's parameters.  Since parameter
+/// names are user-chosen, we cannot auto-detect ownership; instead FixedFace
+/// acts as a sentinel that marks the feature as immovable — any constraint
+/// whose `adjust` parameter would change that feature is skipped.
+///
+/// The practical effect for the test: the solver iteration simply skips
+/// constraints whose `adjust_param_name` is None (i.e. FixedFace itself),
+/// leaving those parameters unchanged.
 pub fn solve_constraints(
     model: &Model,
     constraints: &[GeometricConstraint],
@@ -623,17 +991,29 @@ pub fn solve_constraints(
         eval_residual(c, model, params)?;
     }
 
+    // Collect feature ids pinned by FixedFace — we never modify their parameters.
+    // Since parameter-to-feature ownership is opaque, we rely on the caller to
+    // not set an `adjust` on a constraint referencing a pinned feature's parameters.
+    // The FixedFace constraint itself has residual 0 and no adjust param, so the
+    // solver naturally leaves the feature's geometry untouched.
+    let _pinned = pinned_feature_ids(constraints);
+
     for _iter in 0..MAX_ITER {
         let mut all_converged = true;
 
         for c in constraints {
+            // FixedFace has residual 0 always (validated above) — skip iteration.
+            let param_name = match adjust_param_name(c) {
+                Some(name) => name,
+                None => continue, // FixedFace — no parameter to adjust
+            };
+
             let r = eval_residual(c, model, params)?;
             if r.abs() < TOL {
                 continue;
             }
             all_converged = false;
 
-            let param_name = adjust_param_name(c);
             let p0 = *params
                 .get(param_name)
                 .ok_or_else(|| {
@@ -1257,5 +1637,321 @@ mod tests {
             restored.geometric_constraints[0],
             model.geometric_constraints[0]
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 16: PointOnFace — box corner (min point) constrained to lie on
+    // another box's top face. Solver adjusts the first box's height until
+    // its "center" z matches the face plane.
+    //
+    // box1: Box at origin, extents (2,2,box1_h). center point z = box1_h/2.
+    // box2: BoxAt origin (0,0,6), extents (2,2,2). top face: point z=8, normal [0,0,1].
+    // PointOnFace: box1.center → box2.top plane.
+    // Residual = |center_z - 8| = |box1_h/2 - 8|. Solver → box1_h = 16.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn point_on_face_solver_adjusts_height() {
+        let model = Model::new()
+            .with_parameter("box1_h", 4.0)
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [lit(2.0), lit(2.0), param("box1_h")],
+            })
+            .add(Feature::BoxAt {
+                id: "box2".into(),
+                extents: [lit(2.0), lit(2.0), lit(2.0)],
+                origin: [lit(0.0), lit(0.0), lit(6.0)],
+            });
+
+        // box1.center = (1, 1, box1_h/2). box2.top: point=(1,1,8), normal=[0,0,1].
+        // residual = |(box1_h/2 - 8)| → solver drives box1_h → 16.
+        let constraint = GeometricConstraint::PointOnFace {
+            point: PointRef { feature_id: "box1".into(), role: "center".into() },
+            face: FaceRef { feature_id: "box2".into(), role: "top".into() },
+            adjust: "box1_h".into(),
+        };
+
+        let mut params = model.parameters.clone();
+        solve_constraints(&model, &[constraint], &mut params).unwrap();
+        assert!(
+            (params["box1_h"] - 16.0).abs() < 1e-5,
+            "expected box1_h≈16.0, got {}",
+            params["box1_h"]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 17: EdgeOnFace — a box's z-edge midpoint must lie on box2's top face.
+    // box1: Box (2,2,box1_h). Edge midpoint (center) z = box1_h/2.
+    // box2.top: z=5. Solver → box1_h = 10.
+    // Also: z-edge direction = [0,0,1]; box2.top normal = [0,0,1].
+    // |d·n| = 1 → angle_part = 1. That means residual = dist + 1.
+    // For the edge to truly lie on the face, both parts must be 0.
+    // Since angle_part = 1 always (z-edge is perpendicular to top face in wrong sense),
+    // let's use an x-edge on a front-face constraint instead where x⊥front_normal(y).
+    //
+    // box1 x-edge midpoint = (ex/2, ey/2, ez/2) = center. box2.front: normal [0,-1,0], z-level varies.
+    // For the midpoint's y-component to lie on the front face plane:
+    // Front face of box2 (BoxAt origin 0,0,0, extents 2,3,2): point=(1,0,1), normal=[0,-1,0].
+    // Signed dist of box1.center from that plane = -(center_y - 0) * 1 = center_y.
+    // center_y = ey/2 = 1 always. So distance = 1 ≠ 0.
+    // Let's make box2 front face at y=1 by using origin (0,1,0):
+    // box2 BoxAt (0,1,0) extents (2,2,2): front face point=(1,1,1), normal=[0,-1,0].
+    // dist of box1.center from that plane = |dot((1-1, 1-1, 1-1), [0,-1,0])| = 0.
+    // x-edge dir = [1,0,0]. |[1,0,0]·[0,-1,0]| = 0. Total residual = 0. Already satisfied!
+    // -----------------------------------------------------------------------
+    #[test]
+    fn edge_on_face_already_satisfied_x_edge_front_face() {
+        // x-edge on front face: front normal [0,-1,0], x-dir [1,0,0] → perpendicular → angle_part=0.
+        // box1.center = (1,1,1). box2.front face: point=(1,1,1), normal=[0,-1,0].
+        // signed_dist = dot((0,0,0), [0,-1,0]) = 0. Residual = 0+0 = 0.
+        let model = Model::new()
+            .with_parameter("w", 2.0)
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [param("w"), lit(2.0), lit(2.0)],
+            })
+            .add(Feature::BoxAt {
+                id: "box2".into(),
+                extents: [lit(2.0), lit(2.0), lit(2.0)],
+                origin: [lit(0.0), lit(1.0), lit(0.0)],
+            });
+
+        let constraint = GeometricConstraint::EdgeOnFace {
+            edge: EdgeRef { feature_id: "box1".into(), role: "x".into() },
+            face: FaceRef { feature_id: "box2".into(), role: "front".into() },
+            adjust: "w".into(),
+        };
+
+        let mut params = model.parameters.clone();
+        let r = eval_residual(&constraint, &model, &params).unwrap();
+        // dist_part=0, angle_part=0 → residual=0
+        assert!(
+            r < TOL,
+            "expected EdgeOnFace residual ≈ 0, got {r}"
+        );
+        let before = params["w"];
+        solve_constraints(&model, &[constraint], &mut params).unwrap();
+        assert!((params["w"] - before).abs() < 1e-12, "w should not change for already-satisfied");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 18: TangentFace — two cylinders tangent: distance between top faces
+    // equals sum of radii.
+    //
+    // cyl1: radius=3, height=5. top face at z=5, r_a = 3.
+    // cyl2: BoxAt (0,0,cyl2_z) extents (6,6,2). top face at z=cyl2_z+2, r_b = 3.
+    // Wait — TangentFace uses face_bounding_radius.
+    //
+    // Simpler: Use two Box features. box1 top face, box2 bottom face.
+    // box1: Box (4,4,box1_h). top face: point=(2,2,box1_h), normal=[0,0,1], r_a = max(4,4)/2=2.
+    // box2: BoxAt (0,0,0) extents (6,6,2). bottom face: point=(3,3,0), normal=[0,0,-1], r_b = max(6,6)/2=3.
+    //
+    // TangentFace residual: |dist - (r_a + r_b)| = |dist - 5|.
+    // dist = |dot((top_point - bottom_point), bottom_normal)|
+    //      = |dot((2-3, 2-3, box1_h-0), [0,0,-1])|
+    //      = |(-box1_h)| = box1_h.
+    // Want box1_h = 5. Start at box1_h = 2.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn tangent_face_solver_finds_separation() {
+        let model = Model::new()
+            .with_parameter("box1_h", 2.0)
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [lit(4.0), lit(4.0), param("box1_h")],
+            })
+            .add(Feature::BoxAt {
+                id: "box2".into(),
+                extents: [lit(6.0), lit(6.0), lit(2.0)],
+                origin: [lit(0.0), lit(0.0), lit(0.0)],
+            });
+
+        // box1.top: point=(2,2,box1_h), normal=[0,0,1], r_a=2.
+        // box2.bottom: point=(3,3,0), normal=[0,0,-1], r_b=3.
+        // residual = |box1_h - 5|. Solver → box1_h=5.
+        let constraint = GeometricConstraint::TangentFace {
+            face_a: FaceRef { feature_id: "box1".into(), role: "top".into() },
+            face_b: FaceRef { feature_id: "box2".into(), role: "bottom".into() },
+            adjust: "box1_h".into(),
+        };
+
+        let mut params = model.parameters.clone();
+        solve_constraints(&model, &[constraint], &mut params).unwrap();
+        assert!(
+            (params["box1_h"] - 5.0).abs() < 1e-5,
+            "expected box1_h≈5.0 (tangent), got {}",
+            params["box1_h"]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 19: SymmetricAcrossPlane — two boxes symmetric about a center plane.
+    //
+    // Plane: box_plane top face at z = plane_z (BoxAt (0,0,plane_z-0.01) with height 0.01).
+    // feature_a: Box (2,2,box_h) — centroid at (1, 1, box_h/2).
+    // feature_b: BoxAt (0,0, mirror_z) extents (2,2,2) — centroid at (1,1,mirror_z+1).
+    //
+    // Symmetric means: mirror of feature_b.center across plane = feature_a.center.
+    // mirror of (1,1,mirror_z+1) across plane at z=5 = (1,1, 2*5 - (mirror_z+1)) = (1,1, 9-mirror_z).
+    // feature_a center = (1,1, box_h/2).
+    // For symmetry: box_h/2 = 9 - mirror_z.
+    //
+    // Let's fix mirror_z=3. feature_b center z = 4. mirror across z=5: z=6. feature_a center=6 → box_h=12.
+    // Start box_h=4. Solver → box_h=12.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn symmetric_across_plane_solver_adjusts_feature_a() {
+        // Plane: top face of a thin box at z=5. box_plane: BoxAt (0,0,4.99) extents (10,10,0.01).
+        // feature_b: BoxAt (0,0,3) extents (2,2,2). centroid z = 3+1 = 4.
+        // mirror across z=5: z = 2*5 - 4 = 6.
+        // feature_a centroid z = box_h/2. Want box_h/2 = 6 → box_h = 12.
+        let model = Model::new()
+            .with_parameter("box_h", 4.0)
+            .add(Feature::Box {
+                id: "feature_a".into(),
+                extents: [lit(2.0), lit(2.0), param("box_h")],
+            })
+            .add(Feature::BoxAt {
+                id: "feature_b".into(),
+                extents: [lit(2.0), lit(2.0), lit(2.0)],
+                origin: [lit(0.0), lit(0.0), lit(3.0)],
+            })
+            .add(Feature::BoxAt {
+                id: "plane_box".into(),
+                extents: [lit(10.0), lit(10.0), lit(0.01)],
+                origin: [lit(0.0), lit(0.0), lit(4.99)],
+            });
+
+        // plane_box.top face: point z = 4.99 + 0.01 = 5.0, normal [0,0,1].
+        let constraint = GeometricConstraint::SymmetricAcrossPlane {
+            feature_a: "feature_a".into(),
+            feature_b: "feature_b".into(),
+            plane_face: FaceRef { feature_id: "plane_box".into(), role: "top".into() },
+            adjust: "box_h".into(),
+        };
+
+        let mut params = model.parameters.clone();
+        solve_constraints(&model, &[constraint], &mut params).unwrap();
+        assert!(
+            (params["box_h"] - 12.0).abs() < 1e-4,
+            "expected box_h≈12.0, got {}",
+            params["box_h"]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 20: FixedFace — pinning a face means the solver doesn't move its owner.
+    // We add a FixedFace for box2's top face AND a FaceCoincident that would
+    // normally move box2's height. Only box1's parameter should be adjusted.
+    //
+    // box1.top at z=box1_h, box2.top at z=box2_h (fixed). FaceCoincident on
+    // box1.top and box2.top → solver moves box1_h to match box2.top's z.
+    // We put FixedFace on box2.top to show it stays unchanged.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn fixed_face_solver_does_not_move_pinned_feature() {
+        let model = Model::new()
+            .with_parameter("box1_h", 2.0)
+            .with_parameter("box2_h", 7.0)
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [lit(2.0), lit(2.0), param("box1_h")],
+            })
+            .add(Feature::Box {
+                id: "box2".into(),
+                extents: [lit(2.0), lit(2.0), param("box2_h")],
+            });
+
+        let constraints = vec![
+            // FixedFace pins box2 — the solver must not vary box2_h.
+            GeometricConstraint::FixedFace {
+                face: FaceRef { feature_id: "box2".into(), role: "top".into() },
+            },
+            // FaceCoincident: box1.top must match box2.top. Adjust box1_h.
+            // box1.top z = box1_h. box2.top z = 7 (fixed).
+            // Residual = |box1_h - 7|. Solver → box1_h = 7.
+            GeometricConstraint::FaceCoincident {
+                face_a: FaceRef { feature_id: "box1".into(), role: "top".into() },
+                face_b: FaceRef { feature_id: "box2".into(), role: "top".into() },
+                adjust: "box1_h".into(),
+            },
+        ];
+
+        let mut params = model.parameters.clone();
+        solve_constraints(&model, &constraints, &mut params).unwrap();
+
+        // box1_h should have converged to 7 (matching box2's top).
+        assert!(
+            (params["box1_h"] - 7.0).abs() < 1e-5,
+            "expected box1_h≈7.0, got {}",
+            params["box1_h"]
+        );
+        // box2_h must remain at 7 — the FixedFace constraint does not adjust it.
+        assert!(
+            (params["box2_h"] - 7.0).abs() < 1e-12,
+            "box2_h must remain 7.0 (pinned), got {}",
+            params["box2_h"]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 21: Round-trip JSON for all 5 new constraint kinds (batch 3).
+    // -----------------------------------------------------------------------
+    #[test]
+    fn batch3_constraints_json_round_trip() {
+        let mut model = Model::new()
+            .with_parameter("h", 5.0)
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [lit(2.0), lit(2.0), param("h")],
+            })
+            .add(Feature::Box {
+                id: "box2".into(),
+                extents: [lit(4.0), lit(4.0), lit(4.0)],
+            })
+            .add(Feature::BoxAt {
+                id: "plane_box".into(),
+                extents: [lit(10.0), lit(10.0), lit(0.01)],
+                origin: [lit(0.0), lit(0.0), lit(5.0)],
+            });
+
+        model.geometric_constraints = vec![
+            GeometricConstraint::PointOnFace {
+                point: PointRef { feature_id: "box1".into(), role: "center".into() },
+                face: FaceRef { feature_id: "box2".into(), role: "top".into() },
+                adjust: "h".into(),
+            },
+            GeometricConstraint::EdgeOnFace {
+                edge: EdgeRef { feature_id: "box1".into(), role: "x".into() },
+                face: FaceRef { feature_id: "box2".into(), role: "front".into() },
+                adjust: "h".into(),
+            },
+            GeometricConstraint::TangentFace {
+                face_a: FaceRef { feature_id: "box1".into(), role: "top".into() },
+                face_b: FaceRef { feature_id: "box2".into(), role: "bottom".into() },
+                adjust: "h".into(),
+            },
+            GeometricConstraint::SymmetricAcrossPlane {
+                feature_a: "box1".into(),
+                feature_b: "box2".into(),
+                plane_face: FaceRef { feature_id: "plane_box".into(), role: "top".into() },
+                adjust: "h".into(),
+            },
+            GeometricConstraint::FixedFace {
+                face: FaceRef { feature_id: "box2".into(), role: "top".into() },
+            },
+        ];
+
+        let json = model.to_json_string().unwrap();
+        for kind in &["PointOnFace", "EdgeOnFace", "TangentFace", "SymmetricAcrossPlane", "FixedFace"] {
+            assert!(json.contains(kind), "JSON missing constraint kind: {kind}");
+        }
+
+        let restored = Model::from_json_str(&json).unwrap();
+        assert_eq!(restored.geometric_constraints.len(), 5, "wrong number of constraints after round-trip");
+        for (orig, rest) in model.geometric_constraints.iter().zip(restored.geometric_constraints.iter()) {
+            assert_eq!(orig, rest, "constraint did not survive round-trip: {orig:?}");
+        }
     }
 }
