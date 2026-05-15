@@ -30,7 +30,10 @@ use kerf_brep::{
     tessellate::{tessellate, tessellate_with_face_index},
     Solid,
 };
-use kerf_cad::{import_step_to_model as cad_import_step_to_model, EvalCache, Fingerprint, Model};
+use kerf_cad::{
+    assembly_bom, import_step_to_model as cad_import_step_to_model, BomInput, EvalCache,
+    Fingerprint, Model,
+};
 
 // ---------------------------------------------------------------------------
 // Module-local persistent caches.
@@ -363,6 +366,22 @@ pub fn cache_stats() -> Vec<u32> {
     let eval_n = EVAL_CACHE.with(|c| c.borrow().len()) as u32;
     let mesh_n = MESH_CACHE.with(|c| c.borrow().len()) as u32;
     vec![eval_n, mesh_n]
+}
+
+/// Compute the Bill of Materials for a `BomInput` JSON. `BomInput` is the
+/// BOM-specific assembly tree (parts + sub-assemblies with model_id
+/// dedup); not the kerf-native [`kerf_cad::Assembly`]. A future PR will
+/// reconcile the two.
+///
+/// Returns a JS array of BOM row objects. Each object has fields: name,
+/// quantity, material, volume_each, volume_total, mass_each, mass_total,
+/// depth. On parse error returns a JS `Error`.
+#[wasm_bindgen]
+pub fn assembly_bom_of(json: &str) -> Result<JsValue, JsError> {
+    let bom_input: BomInput = serde_json::from_str(json)
+        .map_err(|e| JsError::new(&format!("parse BomInput: {e}")))?;
+    let rows = assembly_bom(&bom_input);
+    serde_wasm_bindgen::to_value(&rows).map_err(|e| JsError::new(&e.to_string()))
 }
 
 // ---------------------------------------------------------------------------

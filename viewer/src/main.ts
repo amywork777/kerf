@@ -9,6 +9,7 @@ import init, {
   mass_properties_of,
   parameters_of,
   target_ids_of,
+  assembly_bom_of,
 } from "./wasm/kerf_cad_wasm.js";
 import { exportThreeViewPng } from "./drawings.js";
 import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js";
@@ -16,8 +17,13 @@ import { mountPropertyManager, type PropertyManagerHandle } from "./property-man
 import { mountToolbar } from "./toolbar.js";
 import { mountMassProperties, type MassPropertiesData } from "./mass-properties.js";
 import { mountConfigDropdown, mountDesignTable } from "./configurations.js";
+import { mountBom, type BomEntry } from "./bom.js";
 
 await init();
+
+// --- BOM panel ---
+const bomEl = document.getElementById("bom")!;
+const bomPanel = mountBom(bomEl);
 
 const stage = document.getElementById("stage")!;
 const status = document.getElementById("status")!;
@@ -566,6 +572,14 @@ function rebuild(fit: boolean = false) {
       }
     } else {
       massPropertiesPanel.update(null);
+    }
+    // Attempt BOM — only works if the loaded JSON is an Assembly; for plain
+    // Model files this will fail gracefully and we pass null to the panel.
+    try {
+      const bomRows = assembly_bom_of(model.json) as BomEntry[];
+      bomPanel.update(Array.isArray(bomRows) && bomRows.length > 0 ? bomRows : null);
+    } catch {
+      bomPanel.update(null);
     }
   } catch (e) {
     err(String(e));
