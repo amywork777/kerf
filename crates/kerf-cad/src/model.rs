@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::feature::Feature;
+use crate::geometric::GeometricConstraint;
 
 #[derive(Debug, Error)]
 pub enum ModelError {
@@ -34,15 +35,11 @@ pub struct Model {
     /// feature fields. Empty by default.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub parameters: HashMap<String, f64>,
-    /// Cross-parameter constraint equations. Maps target parameter name to an
-    /// arithmetic expression string (same syntax as `Scalar::Expr`). At
-    /// evaluation time each equation is resolved in topological order against
-    /// `parameters`, and the result replaces/adds the named parameter for the
-    /// duration of feature evaluation (without mutating `parameters`).
-    ///
-    /// BTreeMap for deterministic JSON serialization order.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub equations: BTreeMap<String, String>,
+    /// Part-level geometric constraints between feature outputs. The solver
+    /// runs after parameter resolution and adjusts top-level parameters to
+    /// satisfy. Empty by default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub geometric_constraints: Vec<GeometricConstraint>,
     /// Features keyed by id, kept in insertion order so the JSON/file form
     /// matches what the user wrote.
     pub(crate) features: Vec<Feature>,
