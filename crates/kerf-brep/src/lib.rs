@@ -35,6 +35,7 @@ pub use primitives::{
     box_, box_at, cone, cylinder, extrude_polygon, extrude_polygon_with_holes, frustum,
     revolve_polyline, sphere, torus, PolygonWithHolesError,
 };
+pub use primitives::cylinder_faceted::{cylinder_faceted, CYLINDER_CAP_TAG};
 pub use serde_io::{read_json, write_json};
 pub use solid::{try_boolean_solid, BooleanError, Solid};
 pub use step::write_step;

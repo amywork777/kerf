@@ -7,17 +7,36 @@
 //! cylinder against a box only fails when the n-gon edges pierce the box face
 //! in its interior (the M11 phase-B limit). Configurations where lateral edges
 //! cross box edges, or where the prism is fully nested, do work.
+//!
+//! ## Cap face tagging
+//!
+//! The two circular end caps (bottom at z = 0, top at z = h) are tagged with
+//! `face_owner_tag = "cylinder_cap"`. This hint survives boolean operations
+//! (the stitch pipeline propagates owner tags through kept faces) and lets
+//! downstream code (section view, mass properties, drawing projection) identify
+//! which flat faces originated as circular cylinder ends rather than as
+//! intersection-produced planar cuts.
 
 use kerf_geom::{Point3, Vec3};
 
+use crate::geometry::SurfaceKind;
 use crate::primitives::extrude_polygon;
 use crate::Solid;
+
+/// Tag applied to the top and bottom cap faces of a `cylinder_faceted` solid.
+/// Downstream consumers (section view, mass properties, drawings) can pattern-
+/// match on this string to distinguish circular caps from arbitrary planar cuts.
+pub const CYLINDER_CAP_TAG: &str = "cylinder_cap";
 
 /// Build an `n`-gon prism inscribed in a cylinder of radius `r` and height `h`.
 ///
 /// The base is a regular `n`-gon centered on the origin in the xy-plane,
 /// extruded along `+z`. Higher `n` ⇒ closer to a true cylinder; the result has
 /// `2n` vertices, `3n` edges, and `n + 2` faces.
+///
+/// The two cap faces (bottom at z = 0, top at z = h) are tagged with
+/// [`CYLINDER_CAP_TAG`] in `face_owner_tag` so section views and mass-property
+/// integrators can identify them without polygon-vertex counting.
 ///
 /// # Panics
 /// In debug builds: if `r <= 0`, `h <= 0`, or `n < 3`.
@@ -36,7 +55,21 @@ pub fn cylinder_faceted(r: f64, h: f64, n: usize) -> Solid {
             Point3::new(r * theta.cos(), r * theta.sin(), 0.0)
         })
         .collect();
-    extrude_polygon(&profile, Vec3::new(0.0, 0.0, h))
+    let mut solid = extrude_polygon(&profile, Vec3::new(0.0, 0.0, h));
+
+    // Tag cap faces: faces whose surface normal is axis-aligned (|nz| ≈ 1).
+    // For a prism extruded along +z, the two cap planes have normals ±(0,0,1);
+    // all lateral quad faces have normals in the xy-plane (nz ≈ 0).
+    let face_ids: Vec<_> = solid.topo.face_ids().collect();
+    for fid in face_ids {
+        if let Some(SurfaceKind::Plane(plane)) = solid.face_geom.get(fid) {
+            if plane.frame.z.z.abs() > 0.99 {
+                solid.face_owner_tag.insert(fid, CYLINDER_CAP_TAG.to_string());
+            }
+        }
+    }
+
+    solid
 }
 
 #[cfg(test)]
