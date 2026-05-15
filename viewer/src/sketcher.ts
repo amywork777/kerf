@@ -18,6 +18,16 @@
 // host page via `onValidate` (which wraps the WASM evaluator). Extruding a
 // sketch likewise calls `onExtrude` with a constructed Model JSON; the host
 // loads it into the 3D viewer.
+//
+// Undo/redo: history is managed by SketchHistory (sketcher-history.ts).
+// Cmd+Z / Ctrl+Z = undo; Shift+Cmd+Z / Ctrl+Y = redo.
+//
+// Dimension entry: when the user adds a Distance constraint via the context
+// menu an inline numeric input (sketcher-dim-entry.ts) appears near the
+// anchor so the user can type an exact value.
+
+import { SketchHistory } from "./sketcher-history.js";
+import { promptDistance } from "./sketcher-dim-entry.js";
 
 import { findSnap, type SnapResult } from "./sketcher-snap.js";
 import { computeDof, formatDof } from "./sketcher-dof.js";
@@ -192,6 +202,31 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
   // Auto-id counter — reset on clear/load so ids are predictable.
   let nextSeq = 1;
 
+  // ---- undo/redo ----
+  const history = new SketchHistory(50);
+
+  /** Snapshot the current sketch state onto the undo stack. Call this
+   *  immediately BEFORE each mutation so undo can restore the prior state. */
+  function pushHistory() {
+    history.push(toSketch());
+  }
+
+  function applySketch(sk: Sketch) {
+    primitives.clear();
+    for (const prim of sk.primitives) primitives.set(prim.id, prim);
+    constraints = [...(sk.constraints ?? [])];
+    plane = sk.plane;
+    // Recalibrate nextSeq to avoid id collisions.
+    let maxSeq = 0;
+    for (const id of primitives.keys()) {
+      const m = id.match(/(\d+)$/);
+      if (m) maxSeq = Math.max(maxSeq, Number(m[1]));
+    }
+    nextSeq = maxSeq + 1;
+    redraw();
+    refreshPrimsList();
+  }
+
   // ---- coordinate transforms ----
   const worldToCanvas = (x: number, y: number): [number, number] => [
     view.ox + x * view.scale,
@@ -316,6 +351,7 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
 
   // ---- mutations ----
   function addPrim(prim: SketchPrim) {
+    pushHistory(); // snapshot before mutation
     primitives.set(prim.id, prim);
     redraw();
     refreshPrimsList();
@@ -337,6 +373,7 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
   function deletePrim(id: string) {
     const prim = primitives.get(id);
     if (!prim) return;
+    pushHistory(); // snapshot before mutation
     primitives.delete(id);
     // Cascade: delete any line/arc/circle that references this point.
     for (const [other_id, other] of Array.from(primitives.entries())) {
@@ -357,6 +394,7 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
   }
 
   function clearSketch() {
+    pushHistory(); // snapshot before clearing
     primitives.clear();
     constraints = [];
     nextSeq = 1;
@@ -620,6 +658,7 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
       const world = canvasToWorld(cx, cy);
       const id = pickNearestPointId(world, 10);
       if (id) {
+        pushHistory(); // snapshot before drag-move mutation
         dragPointId = id;
         return;
       }
@@ -998,6 +1037,26 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
       items.push(
         { label: "constrain fixed", act: () => addConstraint({ kind: "FixedPoint", point: primId }) },
       );
+      // Distance to another Point: iterate existing points for quick picks.
+      for (const other of primitives.values()) {
+        if (other.kind !== "Point" || other.id === primId) continue;
+        const label = `distance to ${other.id}`;
+        const otherId = other.id;
+        items.push({
+          label,
+          act: () => {
+            // Canvas-space midpoint between the two points as the anchor.
+            const pa = prim;
+            const pb = other;
+            const [ax, ay] = worldToCanvas((pa.x + pb.x) / 2, (pa.y + pb.y) / 2);
+            const canvasRect = canvas.getBoundingClientRect();
+            addDistanceConstraint(primId, otherId, {
+              x: canvasRect.left + ax,
+              y: canvasRect.top + ay,
+            });
+          },
+        });
+      }
     }
     for (const it of items) {
       const b = document.createElement("div");
@@ -1029,10 +1088,34 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
   }
 
   function addConstraint(c: SketchConstraint) {
+    pushHistory(); // snapshot before mutation
     constraints.push(c);
     redraw();
     refreshPrimsList();
     updateDofStatus();
+  }
+
+  /**
+   * Add a Distance constraint between two Points, prompting the user for a
+   * value via the inline dimension-entry widget. The anchor is the canvas-space
+   * midpoint between the two points. If the user cancels, the constraint is
+   * created with `value = current measured distance` (locks current geometry).
+   */
+  async function addDistanceConstraint(
+    idA: string,
+    idB: string,
+    anchorCanvas: { x: number; y: number },
+  ) {
+    const pA = primitives.get(idA);
+    const pB = primitives.get(idB);
+    const measured =
+      pA?.kind === "Point" && pB?.kind === "Point"
+        ? Math.hypot(pB.x - pA.x, pB.y - pA.y)
+        : 0;
+
+    const entered = await promptDistance(anchorCanvas, measured);
+    const value = entered !== null ? entered : measured;
+    addConstraint({ kind: "Distance", a: idA, b: idB, value });
   }
 
   // ---- buttons ----
@@ -1151,6 +1234,30 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
     // Only when sketcher panel is focused-ish: skip if user is typing in an input.
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) return;
+
+    const meta = e.metaKey || e.ctrlKey;
+
+    // Undo: Cmd+Z / Ctrl+Z
+    if (meta && !e.shiftKey && e.key === "z") {
+      e.preventDefault();
+      const prev = history.undo(toSketch());
+      if (prev) {
+        applySketch(prev);
+        setStatus("undo");
+      }
+      return;
+    }
+    // Redo: Shift+Cmd+Z / Ctrl+Y
+    if ((meta && e.shiftKey && e.key === "z") || (e.ctrlKey && e.key === "y")) {
+      e.preventDefault();
+      const next = history.redo(toSketch());
+      if (next) {
+        applySketch(next);
+        setStatus("redo");
+      }
+      return;
+    }
+
     if (e.key === "p" || e.key === "P") setTool("point");
     else if (e.key === "l" || e.key === "L") setTool("line");
     else if (e.key === "c" || e.key === "C") setTool("circle");
@@ -1186,6 +1293,8 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
     clear: clearSketch,
     handleKey,
     redraw,
+    /** Undo/redo controller (for programmatic access). */
+    history,
   };
 }
 
