@@ -92,6 +92,13 @@ fn analytic_edge_to_json(face_idx: u32, ae: &AnalyticEdge) -> String {
                 pts.join(",")
             )
         }
+        AnalyticEdge::Viviani { radius, frame, origin } => format!(
+            r#"{{"face_index":{face_idx},"kind":"viviani","radius":{radius},"frame":[[{},{},{}],[{},{},{}],[{},{},{}]],"origin":[{},{},{}]}}"#,
+            frame[0][0], frame[0][1], frame[0][2],
+            frame[1][0], frame[1][1], frame[1][2],
+            frame[2][0], frame[2][1], frame[2][2],
+            origin[0], origin[1], origin[2]
+        ),
     }
 }
 
