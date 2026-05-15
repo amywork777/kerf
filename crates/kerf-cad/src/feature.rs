@@ -4535,6 +4535,9 @@ pub enum Feature {
         neck_radius: Scalar,
         neck_height: Scalar,
         stacks: usize,
+        segments: usize,
+    },
+
     // -------------------------------------------------------------------
     // Reference geometry batch 4 (5 features) — ship 2026-05-10.
     // -------------------------------------------------------------------
