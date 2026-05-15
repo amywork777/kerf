@@ -3344,6 +3344,62 @@ pub enum Feature {
         back_height: Scalar,
     },
 
+    /// PetalCluster: N teardrop petals arranged radially around the +z axis,
+    /// forming a flower-like cluster. Each petal is a scaled sphere (elongated
+    /// along the radial direction) positioned at radius `petal_length/2` from
+    /// the origin. `petal_count` petals are spaced evenly by angle. The base
+    /// of each petal (flat side of the sphere) overlaps at the origin so the
+    /// cluster is one connected solid. `petal_length` is the tip-to-base
+    /// extent; `petal_width` is the lateral diameter of the petal.
+    /// `segments` controls tessellation quality.
+    PetalCluster {
+        id: String,
+        petal_count: usize,
+        petal_length: Scalar,
+        petal_width: Scalar,
+        segments: usize,
+    },
+
+    /// HeartSolid: a parametric 3D heart built from two sphere lobes and a
+    /// downward cone. `lobe_radius` is the radius of each upper sphere; the two
+    /// lobes are placed at x = ±`lobe_radius`*0.7 at height z =
+    /// `total_height`*0.5. A frustum cone tapers from lobe_radius at z =
+    /// total_height*0.5 down to a point at z = 0. All parts are unioned with a
+    /// small overlap to guarantee connectivity. `segments` controls tessellation.
+    HeartSolid {
+        id: String,
+        lobe_radius: Scalar,
+        total_height: Scalar,
+        segments: usize,
+    },
+
+    /// Whisker: a single curved wire-like tube whose centreline follows an
+    /// S-curve in the XZ plane. The path is sampled at `segments` points
+    /// using a parametric sine curve: x(t) = amplitude*sin(π*t), z(t) = t*length,
+    /// for t ∈ [0, 1]. At each sample point a small disk (radius `wire_radius`)
+    /// is extruded along the tangent, producing a chain of cylinder segments
+    /// that approximate the S-curved pipe. `length` is the total Z extent;
+    /// `amplitude` is the peak lateral displacement.
+    Whisker {
+        id: String,
+        length: Scalar,
+        amplitude: Scalar,
+        wire_radius: Scalar,
+        segments: usize,
+    },
+
+    /// CrossShape: a 3D Greek cross — two perpendicular rectangular boxes
+    /// intersecting at the origin in the XY plane, extruded by `arm_thickness`
+    /// in Z. One box spans x ∈ [-arm_length/2, arm_length/2], y ∈ [-arm_thickness/2,
+    /// arm_thickness/2]. The other spans x ∈ [-arm_thickness/2, arm_thickness/2],
+    /// y ∈ [-arm_length/2, arm_length/2]. Both are unioned. The result is a
+    /// flat Greek cross symbol, centered on the origin.
+    CrossShape {
+        id: String,
+        arm_length: Scalar,
+        arm_thickness: Scalar,
+    },
+
     /// Tube (hollow cylinder) at an axis-aligned position with chosen
     /// edge axis. Same orientation rules as `CylinderAt`. Inner cylinder
     /// is automatically extended past both caps so the bore is a clean
@@ -4619,6 +4675,10 @@ impl Feature {
             | Feature::BoltPattern { id, .. }
             | Feature::SquareDrive { id, .. }
             | Feature::RaisedBoss { id, .. }
+            | Feature::PetalCluster { id, .. }
+            | Feature::HeartSolid { id, .. }
+            | Feature::Whisker { id, .. }
+            | Feature::CrossShape { id, .. }
 => id,
 }
     }
@@ -4968,6 +5028,10 @@ impl Feature {
             | Feature::WaspWaist { .. }
             | Feature::Flask { .. }
             | Feature::Pear { .. }
+            | Feature::PetalCluster { .. }
+            | Feature::HeartSolid { .. }
+            | Feature::Whisker { .. }
+            | Feature::CrossShape { .. }
 => Vec::new(),
 
             Feature::ChamferedHole { input, .. }
