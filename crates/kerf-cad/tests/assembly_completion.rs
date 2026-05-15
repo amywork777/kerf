@@ -42,7 +42,9 @@ fn parallel_plane_mate() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "lid".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
@@ -52,7 +54,9 @@ fn parallel_plane_mate() {
                 rotation_axis: lits([0.0, 1.0, 0.0]),
                 rotation_angle: Scalar::lit(std::f64::consts::FRAC_PI_2),
             },
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::ParallelPlane {
             instance_a: "base".into(),
             plane_a_origin: lits([0.0, 0.0, 0.0]),
@@ -88,13 +92,17 @@ fn parallel_plane_zero_offset_is_coplanar() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(0.0, 0.0, 5.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::ParallelPlane {
             instance_a: "a".into(),
             plane_a_origin: lits([0.0, 0.0, 0.0]),
@@ -127,13 +135,17 @@ fn angle_mate_90deg() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(3.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::AngleMate {
             instance_a: "a".into(),
             axis_a: AxisRef {
@@ -169,13 +181,17 @@ fn angle_mate_45deg_with_param() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(0.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::AngleMate {
             instance_a: "a".into(),
             axis_a: AxisRef {
@@ -211,13 +227,17 @@ fn angle_mate_already_satisfied_no_op() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(2.0, 3.0, 4.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::AngleMate {
             instance_a: "a".into(),
             axis_a: AxisRef {
@@ -252,13 +272,17 @@ fn tangent_mate_cylinder_on_plane() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "rod".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(2.0, 1.0, 5.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::TangentMate {
             instance_a: "table".into(),
             surface_a: SurfaceRef::Plane {
@@ -301,13 +325,17 @@ fn tangent_mate_sphere_on_plane() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "ball".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(3.0, -2.0, 7.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::TangentMate {
             instance_a: "floor".into(),
             surface_a: SurfaceRef::Plane {
@@ -347,13 +375,17 @@ fn tangent_mate_sphere_on_sphere() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "small".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(10.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::TangentMate {
             instance_a: "big".into(),
             surface_a: SurfaceRef::Sphere {
@@ -386,13 +418,17 @@ fn tangent_mate_unsupported_combo_returns_not_implemented() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(5.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::TangentMate {
             instance_a: "a".into(),
             surface_a: SurfaceRef::Cylinder {
@@ -447,19 +483,25 @@ fn cycle_three_instances_converges() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(0.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(10.0, -3.0, 4.0), // far from the truth
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "c".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(-5.0, 7.0, 2.0), // also far
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Coincident {
             instance_a: "a".into(),
             point_a: lits([1.0, 0.0, 0.0]),
@@ -525,19 +567,25 @@ fn cycle_overconstrained_rejects() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(0.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(1.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "c".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(2.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Coincident {
             instance_a: "a".into(),
             point_a: lits([0.0, 0.0, 0.0]),
@@ -582,13 +630,17 @@ fn cycle_two_instances_self_consistent() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(7.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Coincident {
             instance_a: "a".into(),
             point_a: lits([1.0, 0.0, 0.0]),
@@ -617,13 +669,17 @@ fn parallel_plane_round_trip_json() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "lid".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(2.0, 3.0, 4.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::ParallelPlane {
             instance_a: "base".into(),
             plane_a_origin: lits([0.0, 0.0, 0.0]),
@@ -657,13 +713,17 @@ fn angle_mate_invalid_negative_angle_rejected() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::identity(),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::AngleMate {
             instance_a: "a".into(),
             axis_a: AxisRef {

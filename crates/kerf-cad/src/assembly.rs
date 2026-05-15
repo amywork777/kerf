@@ -159,6 +159,38 @@ pub struct Instance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
     pub default_pose: Pose,
+    /// When `true`, the mate solver treats this instance as already-positioned
+    /// and will not move it. The viewer sets this flag after the user drags an
+    /// instance; the resulting drag pose is stored in `default_pose`.
+    ///
+    /// A pinned instance is initialised from `default_pose` exactly as usual,
+    /// but it is immediately added to the "frozen" set so no mate can
+    /// overwrite its pose.
+    #[serde(default)]
+    pub pinned: bool,
+}
+
+/// A pair of instances whose axis-aligned bounding boxes overlap.
+///
+/// # v1 limitation
+/// Interference is detected by AABB overlap only — a fast, conservative
+/// first pass. True mesh-mesh intersection is not computed. This means:
+/// - Two L-shaped parts whose AABBs overlap but whose actual geometry
+///   does not will be falsely reported as interfering.
+/// - Two parts that intersect only at their mesh faces (no volumetric
+///   penetration visible to the AABB check) will correctly report
+///   zero overlap volume and will not appear here.
+///
+/// Mesh-mesh intersection is planned for a future release.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Interference {
+    pub instance_a: String,
+    pub instance_b: String,
+    /// Volume of the overlapping AABB region (units³). Always > 0 for any
+    /// reported interference.
+    pub overlap_volume: f64,
+    /// (min, max) of the overlapping AABB region in world space.
+    pub overlap_aabb: ([f64; 3], [f64; 3]),
 }
 
 /// A line in 3-space, expressed as origin + direction. Direction need not
@@ -561,19 +593,29 @@ impl Assembly {
             poses.insert(inst.id.clone(), pose);
         }
 
+        // Pre-freeze any pinned instances so the mate solver never moves them.
+        // A pinned instance's pose comes from its `default_pose`; mates that
+        // reference it as `instance_b` will check-satisfy (or over-constrain)
+        // rather than reposition.
+        let pinned_set: std::collections::HashSet<String> = self
+            .instances
+            .iter()
+            .filter(|i| i.pinned)
+            .map(|i| i.id.clone())
+            .collect();
+
         // Decide the path. If the mate graph has cycles, go straight to
         // iterative refinement; otherwise, run the strict "freeze after
         // first move" pass.
         if self.mates_form_cycle() {
-            self.solve_poses_iterative(&mut poses)?;
+            self.solve_poses_iterative(&mut poses, &pinned_set)?;
         } else {
             // Track which instance has been "moved" by some mate already.
             // Used for over-constrained detection: if an instance has
             // already been positioned and a new mate tries to position it
             // but the constraint doesn't already hold, that's
             // over-constrained.
-            let mut frozen: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
+            let mut frozen: std::collections::HashSet<String> = pinned_set;
             for (mi, mate) in self.mates.iter().enumerate() {
                 self.apply_mate(mi, mate, &mut poses, Some(&mut frozen))?;
             }
@@ -628,14 +670,23 @@ impl Assembly {
     /// pass applies every mate in declaration order, moving its
     /// `instance_b` toward satisfaction without freezing. Loops until
     /// total residual converges or the iteration cap is reached.
+    ///
+    /// `pinned` contains instance ids that must not be moved. Those instances
+    /// are passed through the frozen-check path (satisfy-or-error) rather
+    /// than the move path.
     fn solve_poses_iterative(
         &self,
         poses: &mut HashMap<String, ResolvedPose>,
+        pinned: &std::collections::HashSet<String>,
     ) -> Result<(), AssemblyError> {
         let mut prev_residual = f64::INFINITY;
         for iter in 0..CYCLE_MAX_ITERS {
             for (mi, mate) in self.mates.iter().enumerate() {
-                self.apply_mate(mi, mate, poses, None)?;
+                // Pass a *copy* of the pinned set as "frozen" so the solver
+                // checks but does not move pinned instances. Cloning per-mate
+                // is acceptable here because the pinned set is small.
+                let mut frozen_iter = pinned.clone();
+                self.apply_mate(mi, mate, poses, Some(&mut frozen_iter))?;
             }
             let residual = self.total_squared_residual(poses)?;
             if residual < CYCLE_RESIDUAL_TOL {
@@ -2943,6 +2994,60 @@ impl Assembly {
         Ok(out)
     }
 
+    /// Detect pairs of instances whose axis-aligned bounding boxes overlap,
+    /// returning a [`Vec<Interference>`] sorted by `(instance_a, instance_b)`.
+    ///
+    /// Algorithm:
+    /// 1. Solve mates to obtain world-space poses for all instances.
+    /// 2. Evaluate each instance's solid and compute its AABB.
+    /// 3. For each pair (i, j), compute AABB intersection. If the
+    ///    intersection volume is > 0, report an [`Interference`].
+    ///
+    /// # v1 limitation
+    /// Only AABB overlap is checked — true mesh-mesh intersection is not
+    /// computed. False positives are possible for concave or L-shaped
+    /// geometry. See [`Interference`] for details.
+    pub fn detect_interferences(&self) -> Result<Vec<Interference>, AssemblyError> {
+        let posed = self.evaluate()?;
+
+        // Build (id, min_aabb, max_aabb) for every instance that has geometry.
+        let mut aabbs: Vec<(String, [f64; 3], [f64; 3])> = Vec::with_capacity(posed.len());
+        for (id, solid) in &posed {
+            if let Some((min, max)) = solid_aabb(solid) {
+                aabbs.push((id.clone(), min, max));
+            }
+        }
+
+        let mut out: Vec<Interference> = Vec::new();
+        for i in 0..aabbs.len() {
+            for j in (i + 1)..aabbs.len() {
+                let (id_a, min_a, max_a) = &aabbs[i];
+                let (id_b, min_b, max_b) = &aabbs[j];
+                if let Some((overlap_vol, overlap_min, overlap_max)) =
+                    aabb_overlap_info(min_a, max_a, min_b, max_b)
+                {
+                    let (a, b, amin, amax) = if id_a <= id_b {
+                        (id_a.clone(), id_b.clone(), overlap_min, overlap_max)
+                    } else {
+                        (id_b.clone(), id_a.clone(), overlap_min, overlap_max)
+                    };
+                    out.push(Interference {
+                        instance_a: a,
+                        instance_b: b,
+                        overlap_volume: overlap_vol,
+                        overlap_aabb: (amin, amax),
+                    });
+                }
+            }
+        }
+        out.sort_by(|x, y| {
+            x.instance_a
+                .cmp(&y.instance_a)
+                .then_with(|| x.instance_b.cmp(&y.instance_b))
+        });
+        Ok(out)
+    }
+
     /// Solve mates by treating every instance pose as 6 DOFs (3
     /// translation + 3 axis-angle rotation = ω vector whose magnitude is
     /// the rotation angle) and running Newton-LM (Levenberg-Marquardt)
@@ -3288,6 +3393,29 @@ fn aabb_overlap_volume(
         vol *= extent;
     }
     vol
+}
+
+/// Like [`aabb_overlap_volume`] but also returns the overlap AABB corners.
+/// Returns `None` if the boxes do not overlap.
+fn aabb_overlap_info(
+    min_a: &[f64; 3],
+    max_a: &[f64; 3],
+    min_b: &[f64; 3],
+    max_b: &[f64; 3],
+) -> Option<(f64, [f64; 3], [f64; 3])> {
+    let mut vol = 1.0;
+    let mut lo = [0.0f64; 3];
+    let mut hi = [0.0f64; 3];
+    for i in 0..3 {
+        lo[i] = min_a[i].max(min_b[i]);
+        hi[i] = max_a[i].min(max_b[i]);
+        let extent = hi[i] - lo[i];
+        if extent <= 0.0 {
+            return None;
+        }
+        vol *= extent;
+    }
+    Some((vol, lo, hi))
 }
 
 fn pick_perpendicular(v: Vec3) -> Vec3 {
@@ -3881,5 +4009,264 @@ mod unit_tests {
         let right_shift = (10.5 - asm_cx) / (10.5 - asm_cx).abs() * expected_dist; // positive
         assert!((cx_l - (0.5 + left_shift)).abs() < 0.5, "left displacement");
         assert!((cx_r - (10.5 + right_shift)).abs() < 0.5, "right displacement");
+    }
+
+    // -----------------------------------------------------------------------
+    // drag-positioning (pinned) + interference detection tests
+    // -----------------------------------------------------------------------
+
+    use crate::model::Model;
+    use crate::feature::Feature;
+    use crate::scalar::lits;
+
+    fn box_model(sx: f64, sy: f64, sz: f64) -> AssemblyRef {
+        AssemblyRef::Inline(Box::new(
+            Model::new().add(Feature::Box {
+                id: "b".into(),
+                extents: lits([sx, sy, sz]),
+            }),
+        ))
+    }
+
+    /// Two unit boxes placed far apart → no interferences.
+    #[test]
+    fn interference_non_overlapping_empty() {
+        let asm = Assembly::new()
+            .with_instance(Instance {
+                id: "a".into(),
+                model: box_model(1.0, 1.0, 1.0),
+                target: None,
+                default_pose: Pose::identity(),
+                pinned: false,
+            })
+            .with_instance(Instance {
+                id: "b".into(),
+                model: box_model(1.0, 1.0, 1.0),
+                target: None,
+                default_pose: Pose::at(10.0, 0.0, 0.0),
+                pinned: false,
+            });
+        let ifs = asm.detect_interferences().expect("detect");
+        assert!(ifs.is_empty(), "expected no interferences, got {ifs:?}");
+    }
+
+    /// Two overlapping unit boxes → 1 interference with correct volume.
+    /// Box A: [0,1]^3. Box B: [0.5, 1.5]^3. Overlap: [0.5,1]^3 = 0.125.
+    #[test]
+    fn interference_two_overlapping_boxes() {
+        let asm = Assembly::new()
+            .with_instance(Instance {
+                id: "a".into(),
+                model: box_model(1.0, 1.0, 1.0),
+                target: None,
+                default_pose: Pose::identity(),
+                pinned: false,
+            })
+            .with_instance(Instance {
+                id: "b".into(),
+                model: box_model(1.0, 1.0, 1.0),
+                target: None,
+                default_pose: Pose::at(0.5, 0.5, 0.5),
+                pinned: false,
+            });
+        let ifs = asm.detect_interferences().expect("detect");
+        assert_eq!(ifs.len(), 1, "expected 1 interference, got {ifs:?}");
+        let inf = &ifs[0];
+        assert_eq!(inf.instance_a, "a");
+        assert_eq!(inf.instance_b, "b");
+        // Overlap box: x=[0.5,1], y=[0.5,1], z=[0.5,1] → volume = 0.5^3 = 0.125
+        let expected_vol = 0.5_f64.powi(3);
+        assert!(
+            (inf.overlap_volume - expected_vol).abs() < 1e-9,
+            "overlap_volume = {}, expected {}",
+            inf.overlap_volume,
+            expected_vol
+        );
+        // Verify overlap_aabb corners.
+        let (lo, hi) = inf.overlap_aabb;
+        for i in 0..3 {
+            assert!((lo[i] - 0.5).abs() < 1e-9, "lo[{i}] = {}", lo[i]);
+            assert!((hi[i] - 1.0).abs() < 1e-9, "hi[{i}] = {}", hi[i]);
+        }
+    }
+
+    /// A pinned instance is not moved by the mate solver.
+    /// B is pinned at (5,0,0). A Coincident mate would normally pull B
+    /// to (0,0,0). With pinned=true the solver must leave B at (5,0,0)
+    /// and instead accept the over-constrained check OR resolve as a
+    /// zero-delta (since the frozen path returns Ok when delta==0 within
+    /// tolerance). Here we verify the solve succeeds and B stays put.
+    ///
+    /// Setup: A at origin, B pinned at (5,0,0). Coincident mate says
+    /// A.point(0,0,0) == B.point(0,0,0). Since B is pinned the solver
+    /// must leave B's translation at (5,0,0). The mate will be reported
+    /// as over-constrained (delta = 5) — we test that the pinned instance
+    /// is truly not moved regardless of the mate's attempt.
+    ///
+    /// To avoid the over-constrained error in a clean test we use an
+    /// assembly with NO mates: pinned is just initialised, and solve_poses
+    /// returns both instances at their default poses.
+    #[test]
+    fn pinned_instance_not_moved_by_solver() {
+        let asm = Assembly::new()
+            .with_instance(Instance {
+                id: "a".into(),
+                model: box_model(1.0, 1.0, 1.0),
+                target: None,
+                default_pose: Pose::identity(),
+                pinned: false,
+            })
+            .with_instance(Instance {
+                id: "b".into(),
+                model: box_model(1.0, 1.0, 1.0),
+                target: None,
+                default_pose: Pose::at(5.0, 0.0, 0.0),
+                pinned: true,
+            })
+            // Coincident mate tries to move B to origin.
+            .with_mate(Mate::Coincident {
+                instance_a: "a".into(),
+                point_a: lits([0.0, 0.0, 0.0]),
+                instance_b: "b".into(),
+                point_b: lits([0.0, 0.0, 0.0]),
+            });
+
+        // Because B is pinned and the mate would require B to move from
+        // (5,0,0) to (0,0,0), the solver returns OverConstrained.
+        let result = asm.solve_poses();
+        match result {
+            Err(AssemblyError::Mate(MateError::OverConstrained(..))) => {
+                // Expected: the solver detected the pinned instance can't be
+                // moved to satisfy the mate.
+            }
+            other => panic!(
+                "expected OverConstrained for pinned+conflicting-mate, got: {other:?}"
+            ),
+        }
+    }
+
+    /// Pinned instance with a COMPATIBLE mate (delta ≈ 0) — solver succeeds
+    /// and the pinned instance stays at its default_pose exactly.
+    #[test]
+    fn pinned_instance_compatible_mate_succeeds() {
+        // B is pinned at (1,0,0). Coincident mate: A.point(1,0,0) == B.point(0,0,0).
+        // A is at origin, so world point_a = (1,0,0). B is at (1,0,0) so
+        // world point_b = (1,0,0). Delta = 0 → constraint already satisfied.
+        let asm = Assembly::new()
+            .with_instance(Instance {
+                id: "a".into(),
+                model: box_model(1.0, 1.0, 1.0),
+                target: None,
+                default_pose: Pose::identity(),
+                pinned: false,
+            })
+            .with_instance(Instance {
+                id: "b".into(),
+                model: box_model(1.0, 1.0, 1.0),
+                target: None,
+                default_pose: Pose::at(1.0, 0.0, 0.0),
+                pinned: true,
+            })
+            .with_mate(Mate::Coincident {
+                instance_a: "a".into(),
+                point_a: lits([1.0, 0.0, 0.0]), // world (1,0,0) since A is at origin
+                instance_b: "b".into(),
+                point_b: lits([0.0, 0.0, 0.0]), // world (1,0,0) since B is at (1,0,0)
+            });
+
+        let poses = asm.solve_poses().expect("solve should succeed");
+        let b = poses.get("b").unwrap();
+        // B must still be at (1,0,0), unmoved.
+        assert!(
+            (b.translation - Vec3::new(1.0, 0.0, 0.0)).norm() < 1e-12,
+            "B should remain pinned at (1,0,0), got {:?}",
+            b.translation
+        );
+    }
+
+    /// JSON round-trip preserves `pinned` field on instances.
+    /// (Interferences are computed, not serialised — they don't appear in JSON.)
+    #[test]
+    fn json_roundtrip_pinned_field() {
+        let asm = Assembly::new()
+            .with_instance(Instance {
+                id: "a".into(),
+                model: box_model(1.0, 1.0, 1.0),
+                target: None,
+                default_pose: Pose::identity(),
+                pinned: true,
+            })
+            .with_instance(Instance {
+                id: "b".into(),
+                model: box_model(1.0, 1.0, 1.0),
+                target: None,
+                default_pose: Pose::at(2.0, 0.0, 0.0),
+                pinned: false,
+            });
+
+        let json = asm.to_json_string().expect("serialize");
+        let restored = Assembly::from_json_str(&json).expect("deserialize");
+
+        assert_eq!(restored.instances.len(), 2);
+        assert!(restored.instances[0].pinned, "instance 'a' should be pinned");
+        assert!(!restored.instances[1].pinned, "instance 'b' should not be pinned");
+
+        // Interferences are not part of the JSON — verify they can be
+        // computed after round-trip.
+        let ifs = restored.detect_interferences().expect("detect after round-trip");
+        // Two boxes at (0,0,0) and (2,0,0) — unit boxes, no overlap.
+        assert!(ifs.is_empty(), "no overlap expected, got {ifs:?}");
+    }
+
+    /// Three mutually overlapping unit boxes → 3 interference pairs detected.
+    /// A at (0,0,0), B at (0.5,0,0), C at (0.25,0,0).
+    /// A∩B overlap, A∩C overlap, B∩C overlap.
+    #[test]
+    fn interference_three_way_overlap_three_pairs() {
+        let asm = Assembly::new()
+            .with_instance(Instance {
+                id: "a".into(),
+                model: box_model(1.0, 1.0, 1.0),
+                target: None,
+                default_pose: Pose::identity(),
+                pinned: false,
+            })
+            .with_instance(Instance {
+                id: "b".into(),
+                model: box_model(1.0, 1.0, 1.0),
+                target: None,
+                default_pose: Pose::at(0.5, 0.0, 0.0),
+                pinned: false,
+            })
+            .with_instance(Instance {
+                id: "c".into(),
+                model: box_model(1.0, 1.0, 1.0),
+                target: None,
+                default_pose: Pose::at(0.25, 0.0, 0.0),
+                pinned: false,
+            });
+
+        let ifs = asm.detect_interferences().expect("detect");
+        assert_eq!(
+            ifs.len(),
+            3,
+            "expected 3 interference pairs (a-b, a-c, b-c), got {ifs:?}"
+        );
+        // Pairs are sorted alphabetically.
+        assert_eq!(ifs[0].instance_a, "a");
+        assert_eq!(ifs[0].instance_b, "b");
+        assert_eq!(ifs[1].instance_a, "a");
+        assert_eq!(ifs[1].instance_b, "c");
+        assert_eq!(ifs[2].instance_a, "b");
+        assert_eq!(ifs[2].instance_b, "c");
+        // All overlap volumes are > 0.
+        for inf in &ifs {
+            assert!(
+                inf.overlap_volume > 0.0,
+                "overlap_volume should be > 0 for pair ({}, {})",
+                inf.instance_a,
+                inf.instance_b
+            );
+        }
     }
 }

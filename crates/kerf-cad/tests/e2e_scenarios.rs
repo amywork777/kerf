@@ -189,14 +189,18 @@ fn scenario_02_gear_assembly() {
                 rotation_axis: lits([0.0, 0.0, 1.0]),
                 rotation_angle: Scalar::lit(std::f64::consts::FRAC_PI_4),
             },
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "driven".into(),
             model: AssemblyRef::Inline(Box::new(gear_model("g", 5.0, 4.0, 12))),
             target: None,
             // Driven lives at +x, slightly off-axis so Concentric has work to do.
             default_pose: Pose::at(10.0, 1.0, 0.0),
-        })
+        
+
+            pinned: false,})
         // Both gears have axes along +z. Concentric aligns driven's axis with
         // the line through (10, 0, 0) parallel to +z (so it sits at x = 10
         // on its own axis, not the drive's centerline).
@@ -344,13 +348,17 @@ fn scenario_04_sub_assembly_loaded_via_loader() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(0.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "core_b".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(2.0, 0.0, 0.0),
-        });
+        
+
+            pinned: false,});
     let sub_json = sub.to_json_string().expect("sub to_json");
 
     let mut fs: HashMap<String, String> = HashMap::new();
@@ -363,13 +371,17 @@ fn scenario_04_sub_assembly_loaded_via_loader() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(0.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "carriage".into(),
             model: AssemblyRef::Path("sub.json".into()),
             target: None,
             default_pose: Pose::at(0.0, 5.0, 0.0),
-        });
+        
+
+            pinned: false,});
 
     let loader = |path: &str| -> Result<Assembly, AssemblyError> {
         match fs.get(path) {
@@ -597,19 +609,25 @@ fn scenario_07_gear_train() {
                 rotation_axis: lits([0.0, 0.0, 1.0]),
                 rotation_angle: Scalar::lit(drive_angle),
             },
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "g1".into(),
             model: AssemblyRef::Inline(Box::new(gear_model())),
             target: None,
             default_pose: Pose::at(4.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "g2".into(),
             model: AssemblyRef::Inline(Box::new(gear_model())),
             target: None,
             default_pose: Pose::at(8.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_mate(Mate::Gear {
             instance_a: "g0".into(),
             axis_a: AxisRef {
@@ -979,14 +997,18 @@ fn scenario_10_assembly_interference_resolved_by_mate() {
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             default_pose: Pose::at(0.0, 0.0, 0.0),
-        })
+        
+
+            pinned: false,})
         .with_instance(Instance {
             id: "right".into(),
             model: AssemblyRef::Inline(Box::new(unit_cube_model())),
             target: None,
             // Default position OVERLAPS left (both at the origin).
             default_pose: Pose::at(0.5, 0.0, 0.0),
-        });
+        
+
+            pinned: false,});
     // Without mates, AABBs overlap → interference detected.
     let overlaps = asm
         .detect_interference(&HashMap::new())
