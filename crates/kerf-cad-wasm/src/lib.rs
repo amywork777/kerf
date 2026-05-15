@@ -30,7 +30,7 @@ use kerf_brep::{
     tessellate::{tessellate, tessellate_with_face_index},
     Solid,
 };
-use kerf_cad::{assembly_bom, BomInput, EvalCache, Fingerprint, Model};
+use kerf_cad::{import_step_to_model as cad_import_step_to_model, EvalCache, Fingerprint, Model};
 
 // ---------------------------------------------------------------------------
 // Module-local persistent caches.
@@ -231,53 +231,29 @@ pub fn evaluate_with_face_ids(
     .map_err(|e| JsError::new(&e.to_string()))
 }
 
-/// Compute mass properties for the model's target. Assumes uniform unit
-/// density. Returns a JS object with: volume, surface_area, centroid (3-tuple),
-/// inertia_tensor (3×3 array), principal_moments (3-tuple),
-/// principal_axes (3×3 array), aabb_min (3-tuple), aabb_max (3-tuple).
+/// Parse a STEP (ISO 10303-21) AP203/AP214 file and return a kerf-cad
+/// `Model` JSON containing a single `ImportedMesh` feature with id
+/// `"imported"`.
+///
+/// The viewer's existing JSON-loading flow can then take this string and
+/// drive the rest of the pipeline (parameter sliders, target-id picker,
+/// face-id picking) unchanged. STEP geometry has no parameters, so the
+/// parameters panel will simply be empty.
+///
+/// Only the planar-faceted polyhedral subset of STEP is supported; curved
+/// surfaces (cylinders, spheres, NURBS, …) return a JS error mentioning
+/// the specific entity type encountered.
 #[wasm_bindgen]
-pub fn mass_properties_of(
-    json: &str,
-    target_id: &str,
-    params_json: &str,
-    segments: usize,
-) -> Result<JsValue, JsError> {
-    let mut model =
-        Model::from_json_str(json).map_err(|e| JsError::new(&format!("parse model: {e}")))?;
-    let overrides: HashMap<String, f64> = serde_json::from_str(params_json)
-        .map_err(|e| JsError::new(&format!("parse params: {e}")))?;
-    for (k, v) in overrides {
-        model.parameters.insert(k, v);
-    }
-    let solid = EVAL_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        model.evaluate_cached(target_id, &mut cache)
-    })
-    .map_err(|e| JsError::new(&format!("evaluate '{target_id}': {e}")))?;
-    let mp = mass_properties(&solid);
+pub fn import_step_to_model(step_text: &str) -> Result<String, JsError> {
+    let model = import_step_to_model_internal(step_text)?;
+    model
+        .to_json_string()
+        .map_err(|e| JsError::new(&format!("serialize imported model: {e}")))
+}
 
-    #[derive(serde::Serialize)]
-    struct MassPropertiesOut {
-        volume: f64,
-        surface_area: f64,
-        centroid: [f64; 3],
-        inertia_tensor: [[f64; 3]; 3],
-        principal_moments: [f64; 3],
-        principal_axes: [[f64; 3]; 3],
-        aabb_min: [f64; 3],
-        aabb_max: [f64; 3],
-    }
-    serde_wasm_bindgen::to_value(&MassPropertiesOut {
-        volume: mp.volume,
-        surface_area: mp.surface_area,
-        centroid: mp.centroid,
-        inertia_tensor: mp.inertia_tensor,
-        principal_moments: mp.principal_moments,
-        principal_axes: mp.principal_axes,
-        aabb_min: mp.aabb_min,
-        aabb_max: mp.aabb_max,
-    })
-    .map_err(|e| JsError::new(&e.to_string()))
+fn import_step_to_model_internal(step_text: &str) -> Result<Model, JsError> {
+    cad_import_step_to_model(step_text, "imported")
+        .map_err(|e| JsError::new(&format!("import STEP: {e}")))
 }
 
 /// Drop both the eval cache and the tessellation cache.

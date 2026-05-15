@@ -2,15 +2,12 @@
 //!
 //! This module scans a freshly-produced boolean result and attaches
 //! [`AnalyticEdge`] descriptions to faces whose outer-loop polygon represents
-//! a known closed-form curve. The detector handles two cases:
+//! a known closed-form curve. The current detector handles **one** case:
 //!
-//! > **Circle:** A faceted cylinder cut by an axis-perpendicular plane produces
-//! > a planar face whose outer loop is a regular N-gon inscribed in a true
-//! > circle. Attach `AnalyticEdge::Circle { center, radius, normal }`.
-//!
-//! > **Ellipse:** A faceted cylinder cut by an oblique plane produces a planar
-//! > face whose outer loop is an N-gon inscribed in an ellipse. Attach
-//! > `AnalyticEdge::Ellipse { center, major_axis, minor_axis, ... }`.
+//! > A faceted cylinder cut by an axis-perpendicular plane produces a
+//! > planar face whose outer loop is a regular N-gon inscribed in a true
+//! > circle. Attach `AnalyticEdge::Circle { center, radius, normal }` to
+//! > that face.
 //!
 //! ## Why post-processing instead of edge-attachment inside the engine
 //!
@@ -30,24 +27,9 @@
 //!    `Cylinder1 - Cylinder2` (concentric bore). All three produce regular
 //!    N-gon planar boundaries; one detector covers all three.
 //!
-//! ## Ellipse detection algorithm
-//!
-//! After failing the circle test (radii not uniform within `CIRCLE_FIT_TOL`),
-//! a 2×2 PCA is performed on the in-plane coordinates of the polygon vertices:
-//!
-//! 1. Project each vertex onto the face plane's (x, y) frame.
-//! 2. Form the 2×2 covariance matrix of the projected (centroid-relative)
-//!    points.
-//! 3. Compute eigenvalues / eigenvectors of that 2×2 matrix analytically.
-//! 4. The eigenvectors give the major and minor axis directions in 3-D.
-//! 5. The semi-major and semi-minor lengths are the max and min distances from
-//!    the centroid to the vertices, measured along their respective axes.
-//! 6. Each vertex is verified: the sum `(dot(v, u_major)/a)² + (dot(v, u_minor)/b)²`
-//!    must be within `ELLIPSE_FIT_TOL` of 1.0 (where `v` is the centroid-relative
-//!    vertex, `a` and `b` are the fitted semi-axes, and the tolerance is expressed
-//!    as a fraction of the major axis length — `ELLIPSE_VERTEX_TOL * a`).
-//!
-//! Polygons that fail both tests fall through with no analytic edge attached.
+//! Future PRs that detect *non-cap* curves (ellipses from oblique cuts,
+//! ruled-surface curves from cylinder × cylinder) can plug into the same
+//! scanning loop.
 
 use kerf_geom::{Point3, Vec3};
 use kerf_topo::FaceId;
@@ -64,14 +46,6 @@ use crate::Solid;
 /// for centroid-coplanarity and centroid-on-axis checks.
 const CIRCLE_FIT_TOL: f64 = 1e-6;
 
-/// Fraction of the ellipse major-axis length used as the vertex-fit tolerance.
-///
-/// The brief specifies 1e-4 of major-axis length. For each vertex `v` (relative
-/// to centroid), we check that `|(v·u_maj/a)² + (v·u_min/b)² − 1|` is small,
-/// which after scaling amounts to requiring each vertex is within
-/// `ELLIPSE_VERTEX_TOL * a` of the fitted ellipse.
-const ELLIPSE_VERTEX_TOL: f64 = 1e-4;
-
 /// Minimum number of polygon edges to even attempt circle detection. Below
 /// 6 we'd hit too many false positives (squares, hexagons inscribed in
 /// fake circles); the realistic `cylinder_faceted` calls in kerf-cad use
@@ -82,31 +56,18 @@ const ELLIPSE_VERTEX_TOL: f64 = 1e-4;
 /// pentagons / squares.
 const MIN_POLYGON_VERTICES: usize = 6;
 
-/// Scan `solid` and attach `AnalyticEdge::Circle` or `AnalyticEdge::Ellipse`
-/// to every face whose outer-loop polygon is inscribed in a conic section.
+/// Scan `solid` and attach `AnalyticEdge::Circle` to every face that looks
+/// like a faceted-cylinder cap.
 ///
 /// **Additive**: every face's existing polyline outer loop is untouched.
-/// **Safe**: faces that don't match any conic signature are skipped.
-///
-/// The name is kept for backwards compatibility; the function now also
-/// detects ellipses from oblique cuts.
+/// **Safe**: faces that don't match the cap signature are skipped.
 pub fn attach_analytic_circles(solid: &mut Solid) {
     let face_ids: Vec<FaceId> = solid.topo.face_ids().collect();
     for face_id in face_ids {
-        if let Some(conic) = detect_conic_cap(solid, face_id) {
-            solid.set_face_analytic_edge(face_id, conic);
+        if let Some(circle) = detect_circular_cap(solid, face_id) {
+            solid.set_face_analytic_edge(face_id, circle);
         }
     }
-}
-
-/// Detect whether `face_id`'s outer loop is inscribed in a circle or ellipse.
-///
-/// Tries circle first (all vertices equidistant from centroid); if that fails,
-/// tries an ellipse fit via 2×2 PCA of the in-plane vertex coordinates.
-/// Returns `None` if neither test passes or if the polygon has too few vertices.
-pub fn detect_conic_cap(solid: &Solid, face_id: FaceId) -> Option<AnalyticEdge> {
-    detect_circular_cap(solid, face_id)
-        .or_else(|| detect_elliptic_cap(solid, face_id))
 }
 
 /// Test whether `face_id`'s outer loop is a regular N-gon inscribed in a
@@ -166,169 +127,6 @@ pub fn detect_circular_cap(solid: &Solid, face_id: FaceId) -> Option<AnalyticEdg
         center: [centroid.x, centroid.y, centroid.z],
         radius: mean_dist,
         normal: [normal.x, normal.y, normal.z],
-        start_angle: 0.0,
-        sweep_angle: std::f64::consts::TAU,
-    })
-}
-
-/// Test whether `face_id`'s outer loop is an N-gon inscribed in an ellipse
-/// (for oblique cylinder cuts), and if so return the corresponding
-/// `AnalyticEdge::Ellipse`.
-///
-/// Algorithm:
-/// 1. Project vertices into the face plane's (x, y) frame.
-/// 2. Compute the 2×2 covariance matrix of the centered in-plane points.
-/// 3. Find eigenvectors analytically (2×2 symmetric matrix).
-/// 4. The major axis direction maximises variance; measure semi-major and
-///    semi-minor as the maximum and minimum extents in those directions.
-/// 5. Require semi_major > semi_minor (would be a circle otherwise) and
-///    verify every vertex lies within `ELLIPSE_VERTEX_TOL * semi_major` of
-///    the fitted ellipse.
-///
-/// Returns `None` for non-planar faces, degenerate polygons, polygons with
-/// too few vertices, or polygons that don't fit an ellipse within tolerance.
-pub fn detect_elliptic_cap(solid: &Solid, face_id: FaceId) -> Option<AnalyticEdge> {
-    // 1. Surface must be a plane.
-    let plane = match solid.face_geom.get(face_id)? {
-        SurfaceKind::Plane(p) => p,
-        _ => return None,
-    };
-
-    // 2. Outer-loop polygon must have enough vertices.
-    let polygon = face_polygon(solid, face_id)?;
-    if polygon.len() < MIN_POLYGON_VERTICES {
-        return None;
-    }
-
-    // 3. Compute centroid.
-    let n = polygon.len();
-    let mut sum = Vec3::new(0.0, 0.0, 0.0);
-    for p in &polygon {
-        sum += p.coords;
-    }
-    let centroid = Point3::from(sum / n as f64);
-
-    // 4. Project vertices onto the face plane's (u, v) axes.
-    //    plane.frame.x and plane.frame.y span the face plane.
-    let u_ax = plane.frame.x; // in-plane x direction
-    let v_ax = plane.frame.y; // in-plane y direction
-    let pts2: Vec<(f64, f64)> = polygon
-        .iter()
-        .map(|p| {
-            let d = *p - centroid;
-            (d.dot(&u_ax), d.dot(&v_ax))
-        })
-        .collect();
-
-    // 5. Build the 2×2 covariance matrix (symmetric):
-    //    C = [[cxx, cxy], [cxy, cyy]]
-    let (mut cxx, mut cxy, mut cyy) = (0.0f64, 0.0f64, 0.0f64);
-    for &(u, v) in &pts2 {
-        cxx += u * u;
-        cxy += u * v;
-        cyy += v * v;
-    }
-    let fn64 = n as f64;
-    cxx /= fn64;
-    cxy /= fn64;
-    cyy /= fn64;
-
-    // 6. Eigenvalues of [[cxx, cxy],[cxy, cyy]] analytically.
-    //    trace = cxx + cyy, det = cxx*cyy - cxy^2
-    //    eigenvalues = (trace ± sqrt(trace^2 - 4*det)) / 2
-    let trace = cxx + cyy;
-    let det = cxx * cyy - cxy * cxy;
-    let disc = (trace * trace - 4.0 * det).max(0.0).sqrt();
-    let lam1 = (trace + disc) / 2.0; // larger eigenvalue → major axis
-
-    // Degenerate: both eigenvalues near zero (all points at centroid).
-    if lam1 < 1e-14 {
-        return None;
-    }
-
-    // 7. Eigenvectors (in-plane):
-    //    For the larger eigenvalue lam1: e1 = normalize([cxy, lam1 - cxx])
-    //    or [lam1 - cyy, cxy] (whichever is non-degenerate).
-    let (e1u, e1v) = if cxy.abs() > 1e-14 {
-        let ux = cxy;
-        let uy = lam1 - cxx;
-        let len = (ux * ux + uy * uy).sqrt();
-        (ux / len, uy / len)
-    } else {
-        // Diagonal covariance: eigenvectors are aligned with (u, v).
-        if cxx >= cyy {
-            (1.0_f64, 0.0_f64)
-        } else {
-            (0.0_f64, 1.0_f64)
-        }
-    };
-    // Second eigenvector is perpendicular (2-D rotation by 90°).
-    let (e2u, e2v) = (-e1v, e1u);
-
-    // 8. Lift eigenvectors back to 3-D world space.
-    let major_dir: Vec3 = e1u * u_ax + e1v * v_ax;
-    let minor_dir: Vec3 = e2u * u_ax + e2v * v_ax;
-
-    // 9. Derive semi-axis lengths from the eigenvalues.
-    //
-    //    For a set of N uniformly-sampled points on an ellipse
-    //    p_i = (a·cos θ_i, b·sin θ_i), the sample covariance eigenvalues
-    //    converge to (a²/2, b²/2) as N→∞, and are exact to O(1/N²) for N≥4.
-    //    This gives a numerically stable estimate even when the farthest
-    //    inscribed vertex is offset from the true apex by up to 2π/N radians.
-    //    (Using max-projection gives an underestimate of ≈ a·(1 − cos(π/N)).)
-    //
-    //    We need both eigenvalues: lam1 ≥ lam2.
-    let lam2 = (trace - disc) / 2.0; // smaller eigenvalue
-    if lam2 < 1e-14 {
-        return None; // degenerate
-    }
-    let semi_major = (2.0 * lam1).sqrt(); // from eigenvalue b² = 2·lam (larger)
-    let semi_minor = (2.0 * lam2).sqrt(); // from eigenvalue a² = 2·lam (smaller)
-
-    // Degenerate or circular? If radii are uniform, detect_circular_cap
-    // should have matched already; skip here to avoid emitting an ellipse
-    // that is actually a circle (and to satisfy the constraint semi_major ≠ semi_minor).
-    if (semi_major - semi_minor).abs() < CIRCLE_FIT_TOL {
-        return None; // circle — handled by detect_circular_cap
-    }
-
-    // 10. Verify every vertex lies on the fitted ellipse within tolerance.
-    //     Point is on ellipse iff (d·u/a)² + (d·v/b)² ≈ 1.
-    //
-    //     Tolerance: ELLIPSE_VERTEX_TOL * semi_major (per brief: 1e-4 of major).
-    //     In the normalised quadratic form this translates to:
-    //       |δ| ≤ tol  →  |(d·u/a)² + (d·v/b)² − 1| ≤ ~2·tol/a
-    //     We check the absolute normalised residual directly.
-    let tol_normalised = 2.0 * ELLIPSE_VERTEX_TOL;
-    for p in &polygon {
-        let d = *p - centroid;
-        let du = d.dot(&major_dir) / semi_major;
-        let dv = d.dot(&minor_dir) / semi_minor;
-        let residual = (du * du + dv * dv - 1.0).abs();
-        if residual > tol_normalised {
-            return None;
-        }
-    }
-
-    // 11. Build AnalyticEdge::Ellipse. major_axis and minor_axis are the
-    //     axis *vectors* (length = semi-axis), matching AnalyticEdge::point_at
-    //     which does: center + cos(θ)*major_axis + sin(θ)*minor_axis.
-    let center = [centroid.x, centroid.y, centroid.z];
-    let major_axis = [
-        major_dir.x * semi_major,
-        major_dir.y * semi_major,
-        major_dir.z * semi_major,
-    ];
-    let minor_axis = [
-        minor_dir.x * semi_minor,
-        minor_dir.y * semi_minor,
-        minor_dir.z * semi_minor,
-    ];
-    Some(AnalyticEdge::Ellipse {
-        center,
-        major_axis,
-        minor_axis,
         start_angle: 0.0,
         sweep_angle: std::f64::consts::TAU,
     })
@@ -646,277 +444,6 @@ mod tests {
                     "radius mismatch: {radius}"
                 );
             }
-        }
-    }
-
-    // =========================================================================
-    // Ellipse tests (PR "feat/sw-ellipse-edges")
-    // =========================================================================
-
-    /// Build a slab-cutter by extruding a large rectangle that lies in the
-    /// tilted plane through `center` with in-plane axes `u_ax` and `v_ax`.
-    /// The extrusion direction is `normal` (pointing "upward" from the plane).
-    /// The slab is big enough to completely engulf any cylinder with
-    /// radius ≤ 50 and height ≤ 100.
-    fn oblique_slab_cutter(
-        center: Point3,
-        u_ax: Vec3,
-        v_ax: Vec3,
-        normal: Vec3,
-    ) -> crate::Solid {
-        use crate::primitives::extrude_polygon;
-        let half = 60.0_f64; // half-size in u and v directions
-        let depth = 80.0_f64; // extrusion depth along normal
-        // Four corners of the rectangle in the tilted plane.
-        let profile = vec![
-            center + half * u_ax + half * v_ax,
-            center - half * u_ax + half * v_ax,
-            center - half * u_ax - half * v_ax,
-            center + half * u_ax - half * v_ax,
-        ];
-        extrude_polygon(&profile, depth * normal)
-    }
-
-    // -------------------------------------------------------------------------
-    // New test A: z-axis cylinder cut at 45° → Ellipse, major/minor = √2
-    // -------------------------------------------------------------------------
-    #[test]
-    fn oblique_45deg_cut_emits_ellipse_with_sqrt2_ratio() {
-        use std::f64::consts::{FRAC_PI_4, SQRT_2};
-        // Cylinder r=10, h=40 along z-axis, centred at z=[0,40].
-        let cyl = cylinder_faceted(10.0, 40.0, 64);
-
-        // Cut plane: tilted 45° from horizontal, passing through z=20.
-        // Normal of cut plane: tilt 45° in XZ → n = (sin45, 0, cos45).
-        let (s, c) = FRAC_PI_4.sin_cos(); // s=c=√2/2
-        let normal = Vec3::new(s, 0.0, c);
-        // In-plane axes of the cut:
-        let u_ax = Vec3::new(c, 0.0, -s); // ≈(0.707, 0, -0.707)
-        let v_ax = Vec3::new(0.0, 1.0, 0.0);
-        let center = Point3::new(0.0, 0.0, 20.0);
-
-        let cutter = oblique_slab_cutter(center, u_ax, v_ax, normal);
-        let result = match cyl.try_difference(&cutter) {
-            Ok(s) => s,
-            Err(e) => panic!("oblique 45° difference failed: {e}"),
-        };
-
-        // Find the oblique cap face (must be AnalyticEdge::Ellipse).
-        let mut found = false;
-        for fid in result.topo.face_ids() {
-            if let Some(AnalyticEdge::Ellipse {
-                major_axis,
-                minor_axis,
-                ..
-            }) = result.face_analytic_edge(fid)
-            {
-                let a = (major_axis[0] * major_axis[0]
-                    + major_axis[1] * major_axis[1]
-                    + major_axis[2] * major_axis[2])
-                    .sqrt();
-                let b = (minor_axis[0] * minor_axis[0]
-                    + minor_axis[1] * minor_axis[1]
-                    + minor_axis[2] * minor_axis[2])
-                    .sqrt();
-                // semi-major should be ≈ 10*√2, semi-minor ≈ 10.
-                let ratio = a / b;
-                if (b - 10.0).abs() < 0.1 {
-                    // Found the oblique cap.
-                    assert!(
-                        a > b,
-                        "major axis ({a:.4}) must be larger than minor ({b:.4})"
-                    );
-                    assert!(
-                        (ratio - SQRT_2).abs() < 0.05,
-                        "expected ratio ≈√2={:.4}, got {ratio:.4}",
-                        SQRT_2
-                    );
-                    found = true;
-                    break;
-                }
-            }
-        }
-        assert!(
-            found,
-            "expected an AnalyticEdge::Ellipse from 45° oblique cut"
-        );
-    }
-
-    // -------------------------------------------------------------------------
-    // New test B: z-axis cylinder cut at 30° → correct major/minor ratio
-    // -------------------------------------------------------------------------
-    #[test]
-    fn oblique_30deg_cut_emits_ellipse_with_correct_ratio() {
-        use std::f64::consts::PI;
-        // Cylinder r=10, h=40 along z-axis.
-        let cyl = cylinder_faceted(10.0, 40.0, 64);
-
-        // Cut plane: tilted 30° from horizontal through z=20.
-        // Normal tilted 30° from z in XZ plane: n = (sin30, 0, cos30).
-        let angle = PI / 6.0; // 30°
-        let (s, c) = angle.sin_cos(); // s=0.5, c=√3/2
-        let normal = Vec3::new(s, 0.0, c);
-        let u_ax = Vec3::new(c, 0.0, -s);
-        let v_ax = Vec3::new(0.0, 1.0, 0.0);
-        let center = Point3::new(0.0, 0.0, 20.0);
-
-        let cutter = oblique_slab_cutter(center, u_ax, v_ax, normal);
-        let result = match cyl.try_difference(&cutter) {
-            Ok(s) => s,
-            Err(e) => panic!("oblique 30° difference failed: {e}"),
-        };
-
-        // Expected: semi-major = 10 / cos(30°) = 10 * 2/√3 ≈ 11.547
-        //           semi-minor = 10
-        //           ratio = 2/√3 ≈ 1.1547
-        let expected_ratio = 1.0_f64 / c; // 1/cos(30°) = 2/√3
-        let mut found = false;
-        for fid in result.topo.face_ids() {
-            if let Some(AnalyticEdge::Ellipse {
-                major_axis,
-                minor_axis,
-                ..
-            }) = result.face_analytic_edge(fid)
-            {
-                let a = (major_axis[0] * major_axis[0]
-                    + major_axis[1] * major_axis[1]
-                    + major_axis[2] * major_axis[2])
-                    .sqrt();
-                let b = (minor_axis[0] * minor_axis[0]
-                    + minor_axis[1] * minor_axis[1]
-                    + minor_axis[2] * minor_axis[2])
-                    .sqrt();
-                if (b - 10.0).abs() < 0.1 {
-                    let ratio = a / b;
-                    assert!(
-                        (ratio - expected_ratio).abs() < 0.05,
-                        "expected ratio ≈{expected_ratio:.4}, got {ratio:.4}"
-                    );
-                    found = true;
-                    break;
-                }
-            }
-        }
-        assert!(
-            found,
-            "expected an AnalyticEdge::Ellipse from 30° oblique cut"
-        );
-    }
-
-    // -------------------------------------------------------------------------
-    // New test C: oblique cut on x-axis cylinder → Ellipse with major/minor = √2
-    // -------------------------------------------------------------------------
-    #[test]
-    fn oblique_cut_x_axis_cylinder_emits_ellipse() {
-        use crate::primitives::extrude_polygon;
-        use std::f64::consts::{FRAC_PI_4, PI, SQRT_2};
-        // Build a cylinder along the x-axis, r=8, length=40.
-        let r = 8.0_f64;
-        let h = 40.0_f64;
-        let n_seg = 48usize;
-        let phase = PI / n_seg as f64;
-        // Profile in the yz-plane (x=0).
-        let profile: Vec<Point3> = (0..n_seg)
-            .map(|i| {
-                let theta = phase + 2.0 * PI * i as f64 / n_seg as f64;
-                Point3::new(0.0, r * theta.cos(), r * theta.sin())
-            })
-            .collect();
-        let cyl = extrude_polygon(&profile, Vec3::new(h, 0.0, 0.0));
-
-        // Cut the x-axis cylinder at 45° in the xz-plane, through x=20.
-        // Cut plane normal tilted 45° in xz: n=(cos45, 0, sin45).
-        let (s, c) = FRAC_PI_4.sin_cos();
-        // Normal (away from x<20 region): n = (cos45, 0, sin45) roughly "positive x"
-        let normal = Vec3::new(c, 0.0, s); // tilts cut plane 45° in xz
-        let u_ax = Vec3::new(-s, 0.0, c); // in-plane x-dir
-        let v_ax = Vec3::new(0.0, 1.0, 0.0);
-        let center = Point3::new(20.0, 0.0, 0.0);
-
-        let cutter = oblique_slab_cutter(center, u_ax, v_ax, normal);
-        let result = match cyl.try_difference(&cutter) {
-            Ok(s) => s,
-            Err(e) => panic!("x-axis oblique difference failed: {e}"),
-        };
-
-        // Look for an Ellipse with a≈r√2, b≈r.
-        let mut found = false;
-        for fid in result.topo.face_ids() {
-            if let Some(AnalyticEdge::Ellipse {
-                major_axis,
-                minor_axis,
-                ..
-            }) = result.face_analytic_edge(fid)
-            {
-                let a = (major_axis[0] * major_axis[0]
-                    + major_axis[1] * major_axis[1]
-                    + major_axis[2] * major_axis[2])
-                    .sqrt();
-                let b = (minor_axis[0] * minor_axis[0]
-                    + minor_axis[1] * minor_axis[1]
-                    + minor_axis[2] * minor_axis[2])
-                    .sqrt();
-                if (b - r).abs() < 0.15 {
-                    let ratio = a / b;
-                    assert!(
-                        (ratio - SQRT_2).abs() < 0.05,
-                        "expected ratio ≈√2={SQRT_2:.4}, got {ratio:.4}"
-                    );
-                    found = true;
-                    break;
-                }
-            }
-        }
-        assert!(
-            found,
-            "expected an AnalyticEdge::Ellipse from 45° oblique cut on x-axis cylinder"
-        );
-    }
-
-    // -------------------------------------------------------------------------
-    // New test D: perpendicular cut still emits Circle (regression guard)
-    // -------------------------------------------------------------------------
-    #[test]
-    fn perpendicular_cut_still_emits_circle_not_ellipse() {
-        // Identical to the existing cylinder_z_axis_cap_attaches_circle test
-        // but now validates that detect_conic_cap returns Circle, not Ellipse.
-        let cyl = cylinder_faceted(10.0, 20.0, 32);
-        let cutter = box_at(
-            Vec3::new(40.0, 40.0, 20.0),
-            Point3::new(-20.0, -20.0, 10.0),
-        );
-        let result = cyl.try_difference(&cutter).expect("difference");
-
-        let mut circle_count = 0;
-        let mut ellipse_count = 0;
-        for fid in result.topo.face_ids() {
-            match result.face_analytic_edge(fid) {
-                Some(AnalyticEdge::Circle { .. }) => circle_count += 1,
-                Some(AnalyticEdge::Ellipse { .. }) => ellipse_count += 1,
-                _ => {}
-            }
-        }
-        assert!(circle_count >= 1, "expected at least one Circle cap");
-        assert_eq!(
-            ellipse_count, 0,
-            "perpendicular cut must not produce any Ellipse edges"
-        );
-    }
-
-    // -------------------------------------------------------------------------
-    // New test E: non-conic polygon → no analytic edge attached
-    // -------------------------------------------------------------------------
-    #[test]
-    fn non_conic_polygon_gets_no_analytic_edge() {
-        // A pure box has 6 rectangular faces — not inscribed in any conic.
-        // After calling detect_conic_cap on each face, none should return Some.
-        let b = crate::primitives::box_(Vec3::new(5.0, 3.0, 7.0));
-        for fid in b.topo.face_ids() {
-            let result = detect_conic_cap(&b, fid);
-            assert!(
-                result.is_none(),
-                "expected None for rectangular face {fid:?}, got {result:?}"
-            );
         }
     }
 }

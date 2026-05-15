@@ -110,10 +110,11 @@ const KNOWN_EXEMPT: &[(&str, &str)] = &[
     ("PaperLantern", "evaluation >5s — cylinder + 2 hemisphere caps"),
     // Stitch trip on default sweep-with-twist parameters.
     ("SweepWithTwist", "stitch: non-manifold on segment-1 union of twisted-profile sweep"),
-    // Batch 6 additions.
-    ("PetalCluster", "evaluation >5s — N anisotropic sphere unions"),
-    ("HeartSolid", "evaluation >5s — sphere ∪ sphere ∪ cone"),
-    ("Whisker", "evaluation >5s — chained cylinder S-curve chain"),
+    // ImportedMesh's fields (Vec<[f64;3]>, Vec<[usize;3]>) are not modelled by
+    // the catalog default-value extractor — it emits string placeholders for
+    // those types. The variant is exercised end-to-end by the step_import
+    // tests instead.
+    ("ImportedMesh", "Vec<[f64;3]> and Vec<[usize;3]> fields — extractor emits string placeholder"),
 ];
 
 /// Parse feature.rs once at the top of every test (cheap — feature.rs is ~3k

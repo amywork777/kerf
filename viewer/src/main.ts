@@ -6,7 +6,7 @@ import init, {
   evaluate_to_mesh,
   evaluate_with_params,
   evaluate_with_face_ids,
-  mass_properties_of,
+  import_step_to_model,
   parameters_of,
   target_ids_of,
   assembly_bom_of,
