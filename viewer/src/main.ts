@@ -5,6 +5,7 @@ import init, {
   evaluate_to_mesh,
   evaluate_with_params,
   evaluate_with_face_ids,
+  import_step_to_model,
   parameters_of,
   target_ids_of,
 } from "./wasm/kerf_cad_wasm.js";
@@ -795,10 +796,32 @@ window.addEventListener("keydown", (e) => {
 });
 
 // --- file drop / picker ---
+
+// Route a dropped/picked file through either the JSON loader or the STEP
+// importer based on its extension. STEP files are converted to a kerf-cad
+// Model JSON via WASM, then handed to the same `loadJson` flow as a
+// hand-authored JSON model — this keeps the rest of the pipeline (params
+// panel, target picker, picking) unchanged.
+async function handleFile(f: File) {
+  const text = await f.text();
+  const lower = f.name.toLowerCase();
+  if (lower.endsWith(".step") || lower.endsWith(".stp")) {
+    try {
+      const json = import_step_to_model(text);
+      loadJson(json);
+    } catch (e) {
+      err(`STEP import failed: ${e}`);
+    }
+    return;
+  }
+  // Default: treat as model JSON.
+  loadJson(text);
+}
+
 fileInput.addEventListener("change", () => {
   const f = fileInput.files?.[0];
   if (!f) return;
-  f.text().then(loadJson);
+  void handleFile(f);
 });
 ["dragenter", "dragover"].forEach((evt) =>
   dropZone.addEventListener(evt, (e) => {
@@ -816,7 +839,7 @@ fileInput.addEventListener("change", () => {
 dropZone.addEventListener("drop", (e) => {
   const f = (e as DragEvent).dataTransfer?.files?.[0];
   if (!f) return;
-  f.text().then(loadJson);
+  void handleFile(f);
 });
 
 // --- example loader ---

@@ -9826,6 +9826,48 @@ fn build(
                 message: e.message,
             })
         }
+
+        Feature::ImportedMesh { vertices, indices, .. } => {
+            // Reconstruct triangles from the stored mesh data and hand off
+            // to from_triangles, which dedups vertices on a 1µm grid and
+            // pairs half-edges. Validation of indices in range happens here
+            // so we surface a clean EvalError instead of a generic panic.
+            if vertices.len() < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "ImportedMesh needs at least 3 vertices (got {})",
+                        vertices.len()
+                    ),
+                });
+            }
+            if indices.is_empty() {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "ImportedMesh needs at least one triangle".into(),
+                });
+            }
+            let n = vertices.len();
+            let mut tris: Vec<[Point3; 3]> = Vec::with_capacity(indices.len());
+            for (i, [a, b, c]) in indices.iter().enumerate() {
+                if *a >= n || *b >= n || *c >= n {
+                    return Err(EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!(
+                            "ImportedMesh tri {i} out of range: indices ({a},{b},{c}) into {n} vertices"
+                        ),
+                    });
+                }
+                let pa = Point3::new(vertices[*a][0], vertices[*a][1], vertices[*a][2]);
+                let pb = Point3::new(vertices[*b][0], vertices[*b][1], vertices[*b][2]);
+                let pc = Point3::new(vertices[*c][0], vertices[*c][1], vertices[*c][2]);
+                tris.push([pa, pb, pc]);
+            }
+            kerf_brep::from_triangles(&tris).map_err(|e| EvalError::Invalid {
+                id: id.into(),
+                reason: format!("ImportedMesh from_triangles: {e}"),
+            })
+        }
 }
 }
 

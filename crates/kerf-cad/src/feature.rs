@@ -4029,7 +4029,35 @@ pub enum Feature {
         wire_radius: Scalar,
         axis: String,
         segments: usize,
-    },}
+    },
+
+    /// Triangle-soup imported from an external file (e.g. STEP, STL). The
+    /// evaluator hands `vertices` and `indices` to
+    /// `kerf_brep::from_triangles`, which builds a half-edge solid by
+    /// pairing directed edges with their twins.
+    ///
+    /// `vertices` is a flat list of distinct 3D positions; `indices` is one
+    /// `[a, b, c]` per triangle, indexing into `vertices`. Why this and not
+    /// a stored `Solid`? Models are JSON-serializable Features; carrying
+    /// raw triangle data round-trips through serde cleanly, and the
+    /// evaluator reconstructs the B-rep on the fly. Vertex dedup happens
+    /// inside `from_triangles`, so callers don't need to dedup themselves.
+    ///
+    /// Used by `kerf_cad::step_import::import_step` to wrap the imported
+    /// solid into a Model.
+    ///
+    /// **Limitation (v1):** an ImportedMesh has no input dependencies and
+    /// cannot currently participate as the input of another feature
+    /// (boolean operands, transforms, fillets) because its evaluator
+    /// reports an empty dep list. To compose with kerf-native features,
+    /// re-author the geometry through the catalog or extend the evaluator
+    /// to expose ImportedMesh as a referenceable Solid.
+    ImportedMesh {
+        id: String,
+        vertices: Vec<[f64; 3]>,
+        indices: Vec<[usize; 3]>,
+    },
+}
 
 impl Feature {
     pub fn id(&self) -> &str {
@@ -4355,6 +4383,7 @@ impl Feature {
             | Feature::Star3D { id, .. }
             | Feature::Cross3D { id, .. }
             | Feature::Chair { id, .. }
+            | Feature::ImportedMesh { id, .. }
 => id,
 
             Feature::ChamferedHole { id, .. }
@@ -4694,6 +4723,7 @@ impl Feature {
             | Feature::Star3D { .. }
             | Feature::Cross3D { .. }
             | Feature::Chair { .. }
+            | Feature::ImportedMesh { .. }
 => Vec::new(),
 
             Feature::ChamferedHole { input, .. }

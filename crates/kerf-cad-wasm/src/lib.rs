@@ -29,7 +29,7 @@ use kerf_brep::{
     tessellate::{tessellate, tessellate_with_face_index},
     Solid,
 };
-use kerf_cad::{EvalCache, Fingerprint, Model};
+use kerf_cad::{import_step_to_model as cad_import_step_to_model, EvalCache, Fingerprint, Model};
 
 // ---------------------------------------------------------------------------
 // Module-local persistent caches.
@@ -243,6 +243,31 @@ pub fn evaluate_equations(json: &str, params_json: &str) -> Result<JsValue, JsEr
         .resolve_params()
         .map_err(|e| JsError::new(&format!("equations: {e}")))?;
     serde_wasm_bindgen::to_value(&resolved).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Parse a STEP (ISO 10303-21) AP203/AP214 file and return a kerf-cad
+/// `Model` JSON containing a single `ImportedMesh` feature with id
+/// `"imported"`.
+///
+/// The viewer's existing JSON-loading flow can then take this string and
+/// drive the rest of the pipeline (parameter sliders, target-id picker,
+/// face-id picking) unchanged. STEP geometry has no parameters, so the
+/// parameters panel will simply be empty.
+///
+/// Only the planar-faceted polyhedral subset of STEP is supported; curved
+/// surfaces (cylinders, spheres, NURBS, …) return a JS error mentioning
+/// the specific entity type encountered.
+#[wasm_bindgen]
+pub fn import_step_to_model(step_text: &str) -> Result<String, JsError> {
+    let model = import_step_to_model_internal(step_text)?;
+    model
+        .to_json_string()
+        .map_err(|e| JsError::new(&format!("serialize imported model: {e}")))
+}
+
+fn import_step_to_model_internal(step_text: &str) -> Result<Model, JsError> {
+    cad_import_step_to_model(step_text, "imported")
+        .map_err(|e| JsError::new(&format!("import STEP: {e}")))
 }
 
 /// Drop both the eval cache and the tessellation cache.
