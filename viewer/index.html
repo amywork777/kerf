@@ -190,6 +190,17 @@
   #design-table table.dt-grid input::placeholder { color: var(--muted); opacity: 0.4; }
   #design-table .dt-footer-row td { padding: 4px; }
   #design-table .dt-add-config { width: 100%; padding: 4px 8px; font-size: 11px; }
+  /* --- pick-mode group --- */
+  #pick-mode-group { margin-top: 14px; }
+  .pick-label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 12px; }
+  .pick-row { display: flex; gap: 4px; }
+  .pick-row button { flex: 1; }
+  .pick-row button.active { border-color: var(--accent); color: var(--accent); }
+  .filter-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .filter-label { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  #pick-filter { flex: 1; padding: 5px 8px; background: var(--bg);
+    color: var(--fg); border: 1px solid var(--line); border-radius: 4px;
+    font: inherit; font-size: 12px; }
 
   /* --- sketcher panel --- */
   #sketcher-toggle { margin-top: 14px; }
@@ -305,6 +316,20 @@
     </div>
     <div id="config-dropdown"></div>
     <div id="design-table"></div>
+    <div id="pick-mode-group">
+      <label class="pick-label">Pick mode</label>
+      <div class="pick-row">
+        <button data-pick="face" class="active">Face</button>
+        <button data-pick="edge">Edge</button>
+        <button data-pick="vertex">Vertex</button>
+      </div>
+      <div class="filter-row">
+        <label for="pick-filter" class="filter-label">Filter</label>
+        <select id="pick-filter">
+          <option value="All">All</option>
+        </select>
+      </div>
+    </div>
     <div id="views" hidden>
       <label>View</label>
       <div class="view-row">
@@ -319,7 +344,8 @@
       </label>
       <div class="hotkeys">
         <code>1</code>iso <code>2</code>front <code>3</code>top <code>4</code>side<br>
-        <code>W</code>wireframe <code>R</code>reset <code>D</code>drawing <code>S</code>save
+        <code>W</code>wireframe <code>R</code>reset <code>D</code>drawing <code>S</code>save<br>
+        <code>F</code>face <code>E</code>edge <code>V</code>vertex mode
       </div>
     </div>
     <div id="mass-properties"></div>
