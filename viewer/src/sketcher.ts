@@ -1,10 +1,7 @@
 // Interactive 2D sketcher panel.
-<<<<<<< HEAD
-// Import edit ops (copy/paste, mirror, pattern).
+// Import edit ops (copy/paste, mirror, pattern). Glyph rendering is
+// delegated to sketcher-glyphs.ts.
 import { copySelection, pasteFragment, mirrorSelection, patternRect } from "./sketcher-edit-ops.js";
-=======
-// Glyph rendering is delegated to sketcher-glyphs.ts.
->>>>>>> 6f76b06 (feat(viewer): visual constraint glyphs in the 2D sketcher)
 //
 // Self-contained module: renders a `<canvas>` for sketch authoring, drives a
 // tool state machine (Point / Line / Circle / Arc / Pan / Select / Delete),
@@ -34,12 +31,9 @@ import { copySelection, pasteFragment, mirrorSelection, patternRect } from "./sk
 import { SketchHistory } from "./sketcher-history.js";
 import { promptDistance } from "./sketcher-dim-entry.js";
 
-<<<<<<< HEAD
 import { renderConstraintGlyphs } from "./sketcher-glyphs.js";
-=======
 import { findSnap, type SnapResult } from "./sketcher-snap.js";
 import { computeDof, formatDof } from "./sketcher-dof.js";
->>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
 
 export type SketchPlane =
   | "Xy"
@@ -1328,36 +1322,6 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) return;
 
-<<<<<<< HEAD
-    // Cmd+C / Ctrl+C: copy the current selection to the internal clipboard.
-    if ((e.metaKey || e.ctrlKey) && (e.key === "c" || e.key === "C")) {
-      const ids = selectedId ? [selectedId] : Array.from(primitives.keys());
-      const frag = copySelection(toSketch(), ids);
-      clipboardPrims = frag.primitives;
-      lastPasteOffset = { x: 10, y: 10 };
-      setStatus(`copied ${clipboardPrims.length} primitive(s)`);
-      e.preventDefault();
-      return;
-    }
-    // Cmd+V / Ctrl+V: paste the clipboard at the last paste offset.
-    if ((e.metaKey || e.ctrlKey) && (e.key === "v" || e.key === "V")) {
-      if (clipboardPrims.length === 0) {
-        setStatus("paste: clipboard empty", true);
-        e.preventDefault();
-        return;
-      }
-      const frag = { primitives: clipboardPrims };
-      const result = pasteFragment(toSketch(), frag, lastPasteOffset);
-      // Add only the new prims (those absent from current primitives).
-      const existingBefore = new Set(primitives.keys());
-      for (const p of result.primitives) {
-        if (!existingBefore.has(p.id)) addPrim(p);
-      }
-      // Shift the next paste offset so repeated pastes cascade.
-      lastPasteOffset = { x: lastPasteOffset.x + 10, y: lastPasteOffset.y + 10 };
-      setStatus(`pasted ${clipboardPrims.length} primitive(s)`);
-      e.preventDefault();
-=======
     const meta = e.metaKey || e.ctrlKey;
 
     // Undo: Cmd+Z / Ctrl+Z
@@ -1378,7 +1342,37 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
         applySketch(next);
         setStatus("redo");
       }
->>>>>>> 582a0c7 (feat(sketcher): add undo/redo history stack + inline dimension entry)
+      return;
+    }
+
+    // Cmd+C / Ctrl+C: copy the current selection to the internal clipboard.
+    if (meta && (e.key === "c" || e.key === "C")) {
+      const ids = selectedId ? [selectedId] : Array.from(primitives.keys());
+      const frag = copySelection(toSketch(), ids);
+      clipboardPrims = frag.primitives;
+      lastPasteOffset = { x: 10, y: 10 };
+      setStatus(`copied ${clipboardPrims.length} primitive(s)`);
+      e.preventDefault();
+      return;
+    }
+    // Cmd+V / Ctrl+V: paste the clipboard at the last paste offset.
+    if (meta && (e.key === "v" || e.key === "V")) {
+      if (clipboardPrims.length === 0) {
+        setStatus("paste: clipboard empty", true);
+        e.preventDefault();
+        return;
+      }
+      const frag = { primitives: clipboardPrims };
+      const result = pasteFragment(toSketch(), frag, lastPasteOffset);
+      // Add only the new prims (those absent from current primitives).
+      const existingBefore = new Set(primitives.keys());
+      for (const p of result.primitives) {
+        if (!existingBefore.has(p.id)) addPrim(p);
+      }
+      // Shift the next paste offset so repeated pastes cascade.
+      lastPasteOffset = { x: lastPasteOffset.x + 10, y: lastPasteOffset.y + 10 };
+      setStatus(`pasted ${clipboardPrims.length} primitive(s)`);
+      e.preventDefault();
       return;
     }
 
