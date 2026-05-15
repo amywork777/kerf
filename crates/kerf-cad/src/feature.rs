@@ -4048,31 +4048,64 @@ pub enum Feature {
         thickness: Scalar,
     },
 
-    /// Triangle-soup imported from an external file (e.g. STEP, STL). The
-    /// evaluator hands `vertices` and `indices` to
-    /// `kerf_brep::from_triangles`, which builds a half-edge solid by
-    /// pairing directed edges with their twins.
-    ///
-    /// `vertices` is a flat list of distinct 3D positions; `indices` is one
-    /// `[a, b, c]` per triangle, indexing into `vertices`. Why this and not
-    /// a stored `Solid`? Models are JSON-serializable Features; carrying
-    /// raw triangle data round-trips through serde cleanly, and the
-    /// evaluator reconstructs the B-rep on the fly. Vertex dedup happens
-    /// inside `from_triangles`, so callers don't need to dedup themselves.
-    ///
-    /// Used by `kerf_cad::step_import::import_step` to wrap the imported
-    /// solid into a Model.
-    ///
-    /// **Limitation (v1):** an ImportedMesh has no input dependencies and
-    /// cannot currently participate as the input of another feature
-    /// (boolean operands, transforms, fillets) because its evaluator
-    /// reports an empty dep list. To compose with kerf-native features,
-    /// re-author the geometry through the catalog or extend the evaluator
-    /// to expose ImportedMesh as a referenceable Solid.
-    ImportedMesh {
+    // -------------------------------------------------------------------
+    // Reference geometry batch 4 (5 features) — ship 2026-05-10.
+    // -------------------------------------------------------------------
+
+    /// Centerline: a thin cylinder rod between two world-space points.
+    /// Used for visualizing axes-of-rotation in drawings. The rod runs
+    /// from `from` to `to` along an arbitrary direction; `radius` sets
+    /// the rod thickness.
+    Centerline {
         id: String,
-        vertices: Vec<[f64; 3]>,
-        indices: Vec<[usize; 3]>,
+        from: [Scalar; 3],
+        to: [Scalar; 3],
+        radius: Scalar,
+    },
+
+    /// MidPlane: a thin slab centered at the midpoint between two
+    /// world-space points, oriented by a `normal` vector. Used for
+    /// symmetry references. `extent` is the half-size of the slab in
+    /// the two directions perpendicular to `normal`; thickness along
+    /// `normal` is 0.05 (fixed visual marker thickness).
+    MidPlane {
+        id: String,
+        point_a: [Scalar; 3],
+        point_b: [Scalar; 3],
+        normal: [Scalar; 3],
+        extent: Scalar,
+    },
+
+    /// ConstructionAxis: a thin rod through a named point in a named
+    /// direction. `origin` is the center of the rod; `direction` is the
+    /// axis vector (need not be unit); `length` is the total rod length;
+    /// `radius` is the rod cross-section radius.
+    ConstructionAxis {
+        id: String,
+        origin: [Scalar; 3],
+        direction: [Scalar; 3],
+        length: Scalar,
+        radius: Scalar,
+    },
+
+    /// AnchorPoint: a small cube marker at a named point. For visual
+    /// reference points. The cube has side length `size` and is centered
+    /// at `position`.
+    AnchorPoint2 {
+        id: String,
+        position: [Scalar; 3],
+        size: Scalar,
+    },
+
+    /// BoundingSphere: a sphere fitted to the bounding box of an input
+    /// feature. Evaluates `input`, computes its AABB, builds a faceted
+    /// sphere whose radius = half the AABB diagonal length, centered at
+    /// the AABB center. `segments` controls the latitude/longitude
+    /// resolution (stacks = segments, slices = 2*segments).
+    BoundingSphere {
+        id: String,
+        input: String,
+        segments: usize,
     },
 }
 
@@ -4366,7 +4399,11 @@ impl Feature {
             | Feature::GearBlank2 { id, .. }
             | Feature::PaperClipShape { id, .. }
             | Feature::Caltrops { id, .. }
-            | Feature::Helix { id, .. }
+            | Feature::Centerline { id, .. }
+            | Feature::MidPlane { id, .. }
+            | Feature::ConstructionAxis { id, .. }
+            | Feature::AnchorPoint2 { id, .. }
+            | Feature::BoundingSphere { id, .. }
             | Feature::Translate { id, .. }
             | Feature::Scale { id, .. }
             | Feature::ScaleXYZ { id, .. }
@@ -4684,13 +4721,17 @@ impl Feature {
             | Feature::GearBlank2 { .. }
             | Feature::PaperClipShape { .. }
             | Feature::Caltrops { .. }
-            | Feature::Helix { .. } => Vec::new(),
+            | Feature::Centerline { .. }
+            | Feature::MidPlane { .. }
+            | Feature::ConstructionAxis { .. }
+            | Feature::AnchorPoint2 { .. } => Vec::new(),
             Feature::HoleArray { input, .. }
             | Feature::BoltCircle { input, .. }
             | Feature::HexHole { input, .. }
             | Feature::SquareHole { input, .. }
             | Feature::BoundingBoxRef { input, .. }
-            | Feature::CentroidPoint { input, .. } => vec![input.as_str()],
+            | Feature::CentroidPoint { input, .. }
+            | Feature::BoundingSphere { input, .. } => vec![input.as_str()],
             Feature::Translate { input, .. }
             | Feature::Scale { input, .. }
             | Feature::ScaleXYZ { input, .. }

@@ -319,14 +319,11 @@ pub fn categorize(name: &str) -> Category {
             | "Marker3D"
             | "VectorArrow"
             | "Arrow"
-            | "MidPlaneRef"
-            | "PerpRefPlane"
-            | "OffsetRefPlane"
-            | "CoordinateAxes"
-            | "OriginPoint"
-            | "CenterMarker"
-            | "AxisLabel"
-            | "DistanceMarker"
+            | "Centerline"
+            | "MidPlane"
+            | "ConstructionAxis"
+            | "AnchorPoint2"
+            | "BoundingSphere"
     ) {
         return Category::Reference;
     }
@@ -1612,44 +1609,34 @@ fn curated_override(variant: &str) -> Option<serde_json::Map<String, serde_json:
             m.insert("back_height".into(), num(12.0));
             Some(m)
         }
-        "SpinalLoft" => {
-            m.insert(
-                "sections".into(),
-                json!([
-                    {"points": [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]},
-                    {"points": [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]},
-                    {"points": [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]}
-                ]),
-            );
-            m.insert("spacing".into(), num(5.0));
-            m.insert("twist".into(), num(90.0));
-            m.insert("axis".into(), json!("z"));
+        "Centerline" => {
+            m.insert("from".into(), json!([0.0, 0.0, 0.0]));
+            m.insert("to".into(), json!([0.0, 0.0, 10.0]));
+            m.insert("radius".into(), num(0.1));
             Some(m)
         }
-        "RailedSweep" => {
-            m.insert(
-                "profile".into(),
-                json!({"points": [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]}),
-            );
-            m.insert(
-                "path".into(),
-                json!([[0.0, 0.0, 0.0], [0.0, 0.0, 5.0], [0.0, 0.0, 10.0]]),
-            );
-            m.insert(
-                "rail".into(),
-                json!([[2.0, 0.0, 0.0], [2.0, 0.0, 5.0], [2.0, 0.0, 10.0]]),
-            );
+        "MidPlane" => {
+            m.insert("point_a".into(), json!([0.0, 0.0, 0.0]));
+            m.insert("point_b".into(), json!([0.0, 0.0, 10.0]));
+            m.insert("normal".into(), json!([0.0, 0.0, 1.0]));
+            m.insert("extent".into(), num(5.0));
             Some(m)
         }
-        "ScaledExtrude" => {
-            m.insert(
-                "profile".into(),
-                json!({"points": [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]}),
-            );
+        "ConstructionAxis" => {
+            m.insert("origin".into(), json!([0.0, 0.0, 0.0]));
             m.insert("direction".into(), json!([0.0, 0.0, 1.0]));
             m.insert("length".into(), num(10.0));
-            m.insert("scale_at_end".into(), num(2.0));
-            m.insert("segments".into(), json!(4));
+            m.insert("radius".into(), num(0.1));
+            Some(m)
+        }
+        "AnchorPoint2" => {
+            m.insert("position".into(), json!([0.0, 0.0, 0.0]));
+            m.insert("size".into(), num(1.0));
+            Some(m)
+        }
+        "BoundingSphere" => {
+            m.insert("input".into(), Value::String("body".into()));
+            m.insert("segments".into(), json!(8));
             Some(m)
         }
         _ => None,
