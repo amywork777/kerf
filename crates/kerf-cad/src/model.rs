@@ -49,18 +49,11 @@ pub struct Model {
     /// feature fields. Empty by default.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub parameters: HashMap<String, f64>,
-    /// Named parameter overlays. Each value is a sparse map: param-name →
-    /// override-value. A configuration is "applied" by overlaying its
-    /// entries onto `parameters` before evaluation. The "default" config
-    /// is implicit (no entries) — evaluating Model without selecting a
-    /// configuration uses `parameters` as-is.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub configurations: BTreeMap<String, HashMap<String, f64>>,
-    /// Currently active configuration name, or None for the implicit
-    /// default. When Some(name), `configurations[name]` is overlaid onto
-    /// `parameters` at evaluation time.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_configuration: Option<String>,
+    /// Part-level geometric constraints between feature outputs. The solver
+    /// runs after parameter resolution and adjusts top-level parameters to
+    /// satisfy. Empty by default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub geometric_constraints: Vec<GeometricConstraint>,
     /// Features keyed by id, kept in insertion order so the JSON/file form
     /// matches what the user wrote.
     pub(crate) features: Vec<Feature>,

@@ -49,6 +49,38 @@ pub enum GeometricConstraint {
         axis_b: GeoAxisRef,
         adjust: String,
     },
+    /// Two faces must be coplanar (parallel AND sharing the same plane). Adjusts `parameter`.
+    Coplanar {
+        face_a: FaceRef,
+        face_b: FaceRef,
+        adjust: String,
+    },
+    /// Two edges must have equal length. Adjusts `parameter`.
+    EqualLength {
+        edge_a: EdgeRef,
+        edge_b: EdgeRef,
+        adjust: String,
+    },
+    /// Two axes must be perpendicular. Adjusts `parameter`.
+    PerpendicularAxis {
+        axis_a: GeoAxisRef,
+        axis_b: GeoAxisRef,
+        adjust: String,
+    },
+    /// Two round features (cylinders) must be concentric: axes parallel and
+    /// coincident. Adjusts `parameter`.
+    ConcentricRound {
+        axis_a: GeoAxisRef,
+        axis_b: GeoAxisRef,
+        adjust: String,
+    },
+    /// Two faces must maintain a specific signed distance. Adjusts `parameter`.
+    DistanceFaces {
+        face_a: FaceRef,
+        face_b: FaceRef,
+        distance: f64,
+        adjust: String,
+    },
 }
 
 /// Reference to a named face on a feature.
@@ -66,6 +98,17 @@ pub struct GeoAxisRef {
     /// Owning feature id.
     pub feature_id: String,
     /// "x" / "y" / "z" / "axis" (default axis, e.g. cylinder's centerline).
+    pub role: String,
+}
+
+/// Reference to a named edge on a feature.
+/// Edge "length" is approximated as the bounding-box extent along the edge's
+/// primary direction (role: "x" / "y" / "z").
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct EdgeRef {
+    /// Owning feature id.
+    pub feature_id: String,
+    /// Direction the edge runs: "x" / "y" / "z".
     pub role: String,
 }
 
@@ -329,6 +372,108 @@ fn residual_axis_coincident(a_a: &AxisGeo, a_b: &AxisGeo) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
+// Edge helpers
+// ---------------------------------------------------------------------------
+
+/// Returns the scalar edge length (bounding-box projection along the role axis).
+fn resolve_edge_length(
+    feature: &Feature,
+    role: &str,
+    params: &HashMap<String, f64>,
+) -> Result<f64, ConstraintError> {
+    let feat_id = feature.id().to_string();
+    match feature {
+        Feature::Box { extents, .. } => {
+            let e = resolve_arr(extents, params).map_err(|_| ConstraintError::Unsupported {
+                feature: feat_id.clone(),
+                role: role.to_string(),
+            })?;
+            match role {
+                "x" => Ok(e[0]),
+                "y" => Ok(e[1]),
+                "z" => Ok(e[2]),
+                _ => Err(ConstraintError::Unsupported { feature: feat_id, role: role.to_string() }),
+            }
+        }
+        Feature::BoxAt { extents, .. } => {
+            let e = resolve_arr(extents, params).map_err(|_| ConstraintError::Unsupported {
+                feature: feat_id.clone(),
+                role: role.to_string(),
+            })?;
+            match role {
+                "x" => Ok(e[0]),
+                "y" => Ok(e[1]),
+                "z" => Ok(e[2]),
+                _ => Err(ConstraintError::Unsupported { feature: feat_id, role: role.to_string() }),
+            }
+        }
+        Feature::Cylinder { radius, height, .. } => {
+            // For a cylinder: x/y edges span the diameter (2r), z edge is the height.
+            match role {
+                "x" | "y" => {
+                    let r = radius.resolve(params).map_err(|_| ConstraintError::Unsupported {
+                        feature: feat_id.clone(),
+                        role: role.to_string(),
+                    })?;
+                    Ok(2.0 * r)
+                }
+                "z" => {
+                    let h = height.resolve(params).map_err(|_| ConstraintError::Unsupported {
+                        feature: feat_id.clone(),
+                        role: role.to_string(),
+                    })?;
+                    Ok(h)
+                }
+                _ => Err(ConstraintError::Unsupported { feature: feat_id, role: role.to_string() }),
+            }
+        }
+        _ => Err(ConstraintError::Unsupported { feature: feat_id, role: role.to_string() }),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Residuals for the 5 new constraint types
+// ---------------------------------------------------------------------------
+
+/// Coplanar residual: same as FaceCoincident — faces must be parallel AND on the
+/// same plane. Residual = (1 - |n_a · n_b|) + |signed_distance(point_a, plane_b)|.
+fn residual_coplanar(f_a: &FaceGeo, f_b: &FaceGeo) -> f64 {
+    // Coplanar is identical to FaceCoincident in terms of its mathematical residual.
+    residual_face_coincident(f_a, f_b)
+}
+
+/// EqualLength residual: |length_a - length_b|.
+fn residual_equal_length(len_a: f64, len_b: f64) -> f64 {
+    (len_a - len_b).abs()
+}
+
+/// PerpendicularAxis residual: |d_a · d_b|. Zero when perpendicular.
+fn residual_perpendicular_axis(a_a: &AxisGeo, a_b: &AxisGeo) -> f64 {
+    let da = normalize(a_a.direction);
+    let db = normalize(a_b.direction);
+    dot(da, db).abs()
+}
+
+/// ConcentricRound residual: axes must be parallel + coincident (same line).
+/// Residual = (1 - |d_a · d_b|) + perpendicular_distance_between_axes.
+fn residual_concentric_round(a_a: &AxisGeo, a_b: &AxisGeo) -> f64 {
+    // Same formula as AxisCoincident.
+    residual_axis_coincident(a_a, a_b)
+}
+
+/// DistanceFaces residual: |signed_distance(point_on_a, plane_b) - target_distance|.
+fn residual_distance_faces(f_a: &FaceGeo, f_b: &FaceGeo, target: f64) -> f64 {
+    let nb = normalize(f_b.normal);
+    let diff = [
+        f_a.point[0] - f_b.point[0],
+        f_a.point[1] - f_b.point[1],
+        f_a.point[2] - f_b.point[2],
+    ];
+    let signed_dist = dot(diff, nb);
+    (signed_dist - target).abs()
+}
+
+// ---------------------------------------------------------------------------
 // Evaluate one constraint's residual
 // ---------------------------------------------------------------------------
 
@@ -382,6 +527,61 @@ fn eval_residual(
             let ab = resolve_axis(feat_b, &axis_b.role, params)?;
             Ok(residual_axis_coincident(&aa, &ab))
         }
+        GeometricConstraint::Coplanar { face_a, face_b, .. } => {
+            let feat_a = model
+                .feature(&face_a.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(face_a.feature_id.clone()))?;
+            let feat_b = model
+                .feature(&face_b.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(face_b.feature_id.clone()))?;
+            let fa = resolve_face(feat_a, &face_a.role, params)?;
+            let fb = resolve_face(feat_b, &face_b.role, params)?;
+            Ok(residual_coplanar(&fa, &fb))
+        }
+        GeometricConstraint::EqualLength { edge_a, edge_b, .. } => {
+            let feat_a = model
+                .feature(&edge_a.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(edge_a.feature_id.clone()))?;
+            let feat_b = model
+                .feature(&edge_b.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(edge_b.feature_id.clone()))?;
+            let len_a = resolve_edge_length(feat_a, &edge_a.role, params)?;
+            let len_b = resolve_edge_length(feat_b, &edge_b.role, params)?;
+            Ok(residual_equal_length(len_a, len_b))
+        }
+        GeometricConstraint::PerpendicularAxis { axis_a, axis_b, .. } => {
+            let feat_a = model
+                .feature(&axis_a.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(axis_a.feature_id.clone()))?;
+            let feat_b = model
+                .feature(&axis_b.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(axis_b.feature_id.clone()))?;
+            let aa = resolve_axis(feat_a, &axis_a.role, params)?;
+            let ab = resolve_axis(feat_b, &axis_b.role, params)?;
+            Ok(residual_perpendicular_axis(&aa, &ab))
+        }
+        GeometricConstraint::ConcentricRound { axis_a, axis_b, .. } => {
+            let feat_a = model
+                .feature(&axis_a.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(axis_a.feature_id.clone()))?;
+            let feat_b = model
+                .feature(&axis_b.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(axis_b.feature_id.clone()))?;
+            let aa = resolve_axis(feat_a, &axis_a.role, params)?;
+            let ab = resolve_axis(feat_b, &axis_b.role, params)?;
+            Ok(residual_concentric_round(&aa, &ab))
+        }
+        GeometricConstraint::DistanceFaces { face_a, face_b, distance, .. } => {
+            let feat_a = model
+                .feature(&face_a.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(face_a.feature_id.clone()))?;
+            let feat_b = model
+                .feature(&face_b.feature_id)
+                .ok_or_else(|| ConstraintError::UnknownFeature(face_b.feature_id.clone()))?;
+            let fa = resolve_face(feat_a, &face_a.role, params)?;
+            let fb = resolve_face(feat_b, &face_b.role, params)?;
+            Ok(residual_distance_faces(&fa, &fb, *distance))
+        }
     }
 }
 
@@ -391,6 +591,11 @@ fn adjust_param_name(c: &GeometricConstraint) -> &str {
         GeometricConstraint::FaceCoincident { adjust, .. } => adjust,
         GeometricConstraint::AxisParallel { adjust, .. } => adjust,
         GeometricConstraint::AxisCoincident { adjust, .. } => adjust,
+        GeometricConstraint::Coplanar { adjust, .. } => adjust,
+        GeometricConstraint::EqualLength { adjust, .. } => adjust,
+        GeometricConstraint::PerpendicularAxis { adjust, .. } => adjust,
+        GeometricConstraint::ConcentricRound { adjust, .. } => adjust,
+        GeometricConstraint::DistanceFaces { adjust, .. } => adjust,
     }
 }
 
@@ -758,6 +963,263 @@ mod tests {
             matches!(result, Err(ConstraintError::Unsupported { .. })),
             "expected Unsupported, got {:?}", result
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 10: EqualLength — two boxes with mismatched widths (x dimension).
+    // Solver adjusts box2_width so that edge lengths match.
+    //
+    // box1 x-edge = 4.0, box2 x-edge = param("box2_width") starting at 2.0.
+    // Residual = |4 - box2_width|. Solver → box2_width = 4.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn equal_length_adjusts_second_box_width() {
+        let model = Model::new()
+            .with_parameter("box2_width", 2.0)
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [lit(4.0), lit(3.0), lit(2.0)],
+            })
+            .add(Feature::Box {
+                id: "box2".into(),
+                extents: [param("box2_width"), lit(3.0), lit(2.0)],
+            });
+
+        let constraint = GeometricConstraint::EqualLength {
+            edge_a: EdgeRef { feature_id: "box1".into(), role: "x".into() },
+            edge_b: EdgeRef { feature_id: "box2".into(), role: "x".into() },
+            adjust: "box2_width".into(),
+        };
+
+        let mut params = model.parameters.clone();
+        solve_constraints(&model, &[constraint], &mut params).unwrap();
+        assert!(
+            (params["box2_width"] - 4.0).abs() < 1e-5,
+            "expected box2_width≈4.0, got {}",
+            params["box2_width"]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 11: Coplanar — two faces already parallel but offset; solver brings
+    // them to the same plane by adjusting the height of box1.
+    //
+    // box1.top at z = box1_height, box2.top at z = 6 (box2 has origin z=3, height=3).
+    // Residual (coplanar) = (1-|n·n|) + |z_a - z_b| = |box1_height - 6|.
+    // Solver → box1_height = 6.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn coplanar_adjusts_height_to_match_plane() {
+        let model = Model::new()
+            .with_parameter("box1_height", 3.0)
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [lit(2.0), lit(2.0), param("box1_height")],
+            })
+            .add(Feature::BoxAt {
+                id: "box2".into(),
+                extents: [lit(2.0), lit(2.0), lit(3.0)],
+                origin: [lit(5.0), lit(0.0), lit(3.0)],
+            });
+
+        // box1.top: normal [0,0,1], point z = box1_height.
+        // box2.top: normal [0,0,1], point z = 3+3 = 6.
+        let constraint = GeometricConstraint::Coplanar {
+            face_a: FaceRef { feature_id: "box1".into(), role: "top".into() },
+            face_b: FaceRef { feature_id: "box2".into(), role: "top".into() },
+            adjust: "box1_height".into(),
+        };
+
+        let mut params = model.parameters.clone();
+        solve_constraints(&model, &[constraint], &mut params).unwrap();
+        assert!(
+            (params["box1_height"] - 6.0).abs() < 1e-5,
+            "expected box1_height≈6.0, got {}",
+            params["box1_height"]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 12: PerpendicularAxis — x-axis and y-axis of two boxes are already
+    // perpendicular (dot = 0), residual = 0, solver terminates immediately.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn perpendicular_axis_x_y_trivially_satisfied() {
+        let model = Model::new()
+            .with_parameter("w", 3.0)
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [param("w"), lit(2.0), lit(2.0)],
+            })
+            .add(Feature::Box {
+                id: "box2".into(),
+                extents: [lit(2.0), lit(3.0), lit(2.0)],
+            });
+
+        // x-axis direction = [1,0,0], y-axis direction = [0,1,0] → dot = 0 → already ⊥.
+        let constraint = GeometricConstraint::PerpendicularAxis {
+            axis_a: GeoAxisRef { feature_id: "box1".into(), role: "x".into() },
+            axis_b: GeoAxisRef { feature_id: "box2".into(), role: "y".into() },
+            adjust: "w".into(),
+        };
+
+        let mut params = model.parameters.clone();
+        let r = eval_residual(&constraint, &model, &params).unwrap();
+        assert!(r < TOL, "expected perpendicular residual ~0, got {r}");
+
+        let before = params["w"];
+        solve_constraints(&model, &[constraint], &mut params).unwrap();
+        assert!((params["w"] - before).abs() < 1e-12, "parameter should not change");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 13: ConcentricRound — two cylinders at origin are already concentric;
+    // solver is trivially satisfied.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn concentric_round_same_axis_trivially_satisfied() {
+        let model = Model::new()
+            .with_parameter("r1", 2.0)
+            .add(Feature::Cylinder {
+                id: "cyl1".into(),
+                radius: param("r1"),
+                height: lit(10.0),
+                segments: 32,
+            })
+            .add(Feature::Cylinder {
+                id: "cyl2".into(),
+                radius: lit(1.0),
+                height: lit(5.0),
+                segments: 32,
+            });
+
+        // Both cylinder axes: direction [0,0,1], point (0,0,0) → coincident → residual 0.
+        let constraint = GeometricConstraint::ConcentricRound {
+            axis_a: GeoAxisRef { feature_id: "cyl1".into(), role: "axis".into() },
+            axis_b: GeoAxisRef { feature_id: "cyl2".into(), role: "axis".into() },
+            adjust: "r1".into(),
+        };
+
+        let mut params = model.parameters.clone();
+        let r = eval_residual(&constraint, &model, &params).unwrap();
+        assert!(r < TOL, "expected concentric residual ~0, got {r}");
+        solve_constraints(&model, &[constraint], &mut params).unwrap();
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 14: DistanceFaces — maintain a 5 mm gap between box1.top and
+    // box2.bottom. box2 at z=0 (origin), so box2.bottom at z=0.
+    // box1.top at z = box1_height. Signed distance from box1.top to box2.bottom
+    // plane (normal [0,0,-1]) = box1_height - 0 projected onto [0,0,-1].
+    //
+    // Let's use box2 at origin z=8; box2.bottom at z=8.
+    // box1.top at z = box1_h. Signed dist of box1.top point from box2.bottom plane:
+    //   plane: point=(1,1,8), normal=[0,0,-1]
+    //   diff = (box1.top.point - plane.point) · normal
+    //        = (0,0,box1_h-8)·(0,0,-1) = -(box1_h - 8) = 8 - box1_h
+    // We want this = 5 (target), so box1_h = 3.
+    // Starting at box1_h = 6.0, solver should converge to 3.0.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn distance_faces_maintains_gap() {
+        let model = Model::new()
+            .with_parameter("box1_h", 6.0)
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [lit(2.0), lit(2.0), param("box1_h")],
+            })
+            .add(Feature::BoxAt {
+                id: "box2".into(),
+                extents: [lit(2.0), lit(2.0), lit(2.0)],
+                origin: [lit(0.0), lit(0.0), lit(8.0)],
+            });
+
+        let constraint = GeometricConstraint::DistanceFaces {
+            face_a: FaceRef { feature_id: "box1".into(), role: "top".into() },
+            face_b: FaceRef { feature_id: "box2".into(), role: "bottom".into() },
+            distance: 5.0,
+            adjust: "box1_h".into(),
+        };
+
+        let mut params = model.parameters.clone();
+        solve_constraints(&model, &[constraint], &mut params).unwrap();
+        // box2.bottom: normal [0,0,-1], point z=8.
+        // box1.top: point z = box1_h. signed_dist = (box1_h - 8) * (-1) = 8 - box1_h.
+        // 8 - box1_h = 5 → box1_h = 3.
+        assert!(
+            (params["box1_h"] - 3.0).abs() < 1e-5,
+            "expected box1_h≈3.0, got {}",
+            params["box1_h"]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 15: Round-trip JSON for all 5 new constraint kinds.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn new_constraints_json_round_trip() {
+        let mut model = Model::new()
+            .with_parameter("w", 3.0)
+            .add(Feature::Box {
+                id: "box1".into(),
+                extents: [param("w"), lit(2.0), lit(2.0)],
+            })
+            .add(Feature::Box {
+                id: "box2".into(),
+                extents: [lit(3.0), lit(2.0), lit(2.0)],
+            })
+            .add(Feature::Cylinder {
+                id: "cyl1".into(),
+                radius: lit(1.0),
+                height: lit(5.0),
+                segments: 16,
+            })
+            .add(Feature::Cylinder {
+                id: "cyl2".into(),
+                radius: lit(1.0),
+                height: lit(5.0),
+                segments: 16,
+            });
+
+        model.geometric_constraints = vec![
+            GeometricConstraint::Coplanar {
+                face_a: FaceRef { feature_id: "box1".into(), role: "top".into() },
+                face_b: FaceRef { feature_id: "box2".into(), role: "top".into() },
+                adjust: "w".into(),
+            },
+            GeometricConstraint::EqualLength {
+                edge_a: EdgeRef { feature_id: "box1".into(), role: "x".into() },
+                edge_b: EdgeRef { feature_id: "box2".into(), role: "x".into() },
+                adjust: "w".into(),
+            },
+            GeometricConstraint::PerpendicularAxis {
+                axis_a: GeoAxisRef { feature_id: "box1".into(), role: "x".into() },
+                axis_b: GeoAxisRef { feature_id: "box2".into(), role: "y".into() },
+                adjust: "w".into(),
+            },
+            GeometricConstraint::ConcentricRound {
+                axis_a: GeoAxisRef { feature_id: "cyl1".into(), role: "axis".into() },
+                axis_b: GeoAxisRef { feature_id: "cyl2".into(), role: "axis".into() },
+                adjust: "w".into(),
+            },
+            GeometricConstraint::DistanceFaces {
+                face_a: FaceRef { feature_id: "box1".into(), role: "top".into() },
+                face_b: FaceRef { feature_id: "box2".into(), role: "bottom".into() },
+                distance: 5.0,
+                adjust: "w".into(),
+            },
+        ];
+
+        let json = model.to_json_string().unwrap();
+        for kind in &["Coplanar", "EqualLength", "PerpendicularAxis", "ConcentricRound", "DistanceFaces"] {
+            assert!(json.contains(kind), "JSON missing constraint kind: {kind}");
+        }
+
+        let restored = Model::from_json_str(&json).unwrap();
+        assert_eq!(restored.geometric_constraints.len(), 5);
+        for (orig, rest) in model.geometric_constraints.iter().zip(restored.geometric_constraints.iter()) {
+            assert_eq!(orig, rest, "constraint did not survive round-trip");
+        }
     }
 
     // -----------------------------------------------------------------------
