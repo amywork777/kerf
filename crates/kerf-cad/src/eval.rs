@@ -10575,104 +10575,150 @@ fn build(
             Ok(acc)
         }
 
-        Feature::Onion { base_radius, mid_height, point_height, segments, .. } => {
-            let br = resolve_one(id, base_radius, params)?;
-            let mh = resolve_one(id, mid_height, params)?;
-            let ph = resolve_one(id, point_height, params)?;
-            if br <= 0.0 || mh <= 0.0 || ph <= 0.0 || *segments < 6 {
+        Feature::PetalCluster { petal_count, petal_length, petal_width, segments, .. } => {
+            let pl = resolve_one(id, petal_length, params)?;
+            let pw = resolve_one(id, petal_width, params)?;
+            let n = *petal_count;
+            let segs = *segments;
+            if pl <= 0.0 || pw <= 0.0 || n < 2 || segs < 3 || pw > pl {
                 return Err(EvalError::Invalid {
                     id: id.into(),
-                    reason: format!("Onion requires positive base_radius, mid_height, point_height, segments>=6 (got br={br}, mh={mh}, ph={ph})"),
+                    reason: format!("PetalCluster requires n>=2, segs>=3, petal_width<petal_length (got n={n}, pw={pw}, pl={pl})"),
                 });
             }
-            // Lower hemisphere of radius br at z=0 (bottom hemisphere sits below z=0,
-            // upper hemisphere forms the bulge up to z=br).
-            // Clip lower half: remove z < 0 from sphere.
-            let sph = sphere_faceted(br, *segments, *segments);
-            let cutter = box_at(
-                Vec3::new(4.0 * br, 4.0 * br, 2.0 * br),
-                Point3::new(-2.0 * br, -2.0 * br, -2.0 * br),
-            );
-            let lower_hemi = sph
-                .try_difference(&cutter)
-                .map_err(|e| EvalError::Boolean { id: id.into(), op: "onion_clip", message: e.message })?;
-            // Frustum collar from sphere top (z=br) tapering down to a narrow radius,
-            // then a cone spire.
-            let collar_r = br * 0.5;
-            let collar = frustum_faceted(collar_r, br, mh, *segments);
-            let collar_t = translate_solid(&collar, Vec3::new(0.0, 0.0, br - 1e-3));
-            // Cone spire sitting atop the collar.
-            let spire_r = collar_r * 0.8;
-            let spire = cone_faceted(spire_r, ph, *segments);
-            let spire_t = translate_solid(&spire, Vec3::new(0.0, 0.0, br + mh - 1e-3));
-            let with_collar = lower_hemi
-                .try_union(&collar_t)
-                .map_err(|e| EvalError::Boolean { id: id.into(), op: "onion_collar", message: e.message })?;
-            with_collar.try_union(&spire_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "onion_spire", message: e.message })
+            use std::f64::consts::PI;
+            // Build each petal: a unit sphere scaled to (pl x pw x pw) and placed
+            // with its centre at (pl/2, 0, 0), then rotated to the i-th angle.
+            // Petals all originate near z=0 so they overlap at the centre.
+            let mut acc: Option<kerf_brep::Solid> = None;
+            for i in 0..n {
+                let angle = 2.0 * PI * i as f64 / n as f64;
+                let tx = (pl / 2.0) * angle.cos();
+                let ty = (pl / 2.0) * angle.sin();
+                let raw = sphere_faceted(1.0, segs, segs * 2);
+                // Scale anisotropically: pl/2 along the radial direction, pw/2 in the other two.
+                // Because rotate is expensive, instead scale uniformly in local space then translate.
+                // Simple approach: scale x=pl/2, y=pw/2, z=pw/2, then rotate the whole thing.
+                let scaled = scale_xyz_solid(&raw, pl / 2.0, pw / 2.0, pw / 2.0);
+                // Translate to radial position before rotating: centre at (pl/2, 0, 0) in local frame.
+                let at_x = translate_solid(&scaled, Vec3::new(pl / 2.0, 0.0, 0.0));
+                // Rotate around z by the petal angle (rotates the position AND the ellipsoid).
+                let petal = rotate_solid(&at_x, Vec3::new(0.0, 0.0, 1.0), angle, Point3::origin());
+                let _ = (tx, ty); // tx/ty calculated via rotate instead
+                match acc {
+                    None => acc = Some(petal),
+                    Some(ref prev) => {
+                        let merged = prev.try_union(&petal).map_err(|e| EvalError::Boolean {
+                            id: id.into(), op: "petal_cluster_union", message: e.message,
+                        })?;
+                        acc = Some(merged);
+                    }
+                }
+            }
+            Ok(acc.unwrap())
         }
 
-        Feature::WaspWaist { top_radius, waist_radius, total_height, segments, .. } => {
-            let tr = resolve_one(id, top_radius, params)?;
-            let wr = resolve_one(id, waist_radius, params)?;
+        Feature::HeartSolid { lobe_radius, total_height, segments, .. } => {
+            let lr = resolve_one(id, lobe_radius, params)?;
             let th = resolve_one(id, total_height, params)?;
-            if tr <= 0.0 || wr <= 0.0 || th <= 0.0 || wr > tr || *segments < 6 {
+            let segs = *segments;
+            if lr <= 0.0 || th <= 0.0 || segs < 3 || 2.0 * lr > th {
                 return Err(EvalError::Invalid {
                     id: id.into(),
-                    reason: format!("WaspWaist requires waist_radius<=top_radius, positive dims (got tr={tr}, wr={wr}, th={th})"),
+                    reason: format!("Heart requires positive dims and 2*lobe_radius<=total_height (got lr={lr}, th={th})"),
                 });
             }
-            // Two frustums back-to-back: bottom half tapers from top_radius at z=0
-            // down to waist_radius at z=th/2, then top half tapers back up to
-            // top_radius at z=th.
-            let half_h = th / 2.0;
-            let bottom = frustum_faceted(wr, tr, half_h, *segments);
-            let top_frust = frustum_faceted(tr, wr, half_h, *segments);
-            let top_t = translate_solid(&top_frust, Vec3::new(0.0, 0.0, half_h - 1e-3));
-            bottom.try_union(&top_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "wasp_waist_join", message: e.message })
+            // Cone from apex (z=0) to base (z = th/2, radius = lr).
+            let cone_solid = frustum_faceted(1e-3 * lr, lr, th / 2.0, segs);
+            let lobe_offset = lr * 0.7;
+            let lobe_z = th / 2.0 - 1e-3;
+            let left_raw = sphere_faceted(lr, segs, segs * 2);
+            let right_raw = sphere_faceted(lr, segs, segs * 2);
+            let left = translate_solid(&left_raw, Vec3::new(-lobe_offset, 0.0, lobe_z));
+            let right = translate_solid(&right_raw, Vec3::new(lobe_offset, 0.0, lobe_z));
+            let with_left = cone_solid.try_union(&left).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "heart_left_lobe", message: e.message,
+            })?;
+            with_left.try_union(&right).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "heart_right_lobe", message: e.message,
+            })
         }
 
-        Feature::Flask { body_radius, body_height, neck_radius, neck_height, shoulder_height, segments, .. } => {
-            let br = resolve_one(id, body_radius, params)?;
-            let bh = resolve_one(id, body_height, params)?;
-            let nr = resolve_one(id, neck_radius, params)?;
-            let nh = resolve_one(id, neck_height, params)?;
-            let sh = resolve_one(id, shoulder_height, params)?;
-            if br <= 0.0 || bh <= 0.0 || nr <= 0.0 || nr >= br || nh <= 0.0 || sh <= 0.0 || *segments < 6 {
+        Feature::Whisker { length, amplitude, wire_radius, segments, .. } => {
+            use std::f64::consts::PI;
+            let len = resolve_one(id, length, params)?;
+            let amp = resolve_one(id, amplitude, params)?;
+            let wr = resolve_one(id, wire_radius, params)?;
+            let n = *segments;
+            if len <= 0.0 || wr <= 0.0 || n < 3 {
                 return Err(EvalError::Invalid {
                     id: id.into(),
-                    reason: format!("Flask requires neck_radius<body_radius, positive dims (got br={br}, nr={nr}, bh={bh})"),
+                    reason: format!("Whisker requires positive length/wire_radius and segments>=3 (got len={len}, wr={wr}, n={n})"),
                 });
             }
-            // Body cylinder from z=0 to bh, then frustum shoulder from br down
-            // to nr over shoulder_height, then thin neck cylinder.
-            let body = cylinder_faceted(br, bh, *segments);
-            let shoulder = frustum_faceted(nr, br, sh, *segments);
-            let shoulder_t = translate_solid(&shoulder, Vec3::new(0.0, 0.0, bh - 1e-3));
-            let neck = cylinder_faceted(nr, nh, *segments);
-            let neck_t = translate_solid(&neck, Vec3::new(0.0, 0.0, bh + sh - 1e-3));
-            let with_shoulder = body
-                .try_union(&shoulder_t)
-                .map_err(|e| EvalError::Boolean { id: id.into(), op: "flask_shoulder", message: e.message })?;
-            with_shoulder.try_union(&neck_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "flask_neck", message: e.message })
+            // Sample n+1 points along x(t)=amp*sin(π*t), z(t)=t*len for t∈[0,1].
+            // Between consecutive sample points build a small cylinder segment.
+            let mut acc: Option<kerf_brep::Solid> = None;
+            for i in 0..n {
+                let t0 = i as f64 / n as f64;
+                let t1 = (i + 1) as f64 / n as f64;
+                let x0 = amp * (PI * t0).sin();
+                let z0 = t0 * len;
+                let x1 = amp * (PI * t1).sin();
+                let z1 = t1 * len;
+                let dx = x1 - x0;
+                let dz = z1 - z0;
+                let seg_len = (dx * dx + dz * dz).sqrt().max(1e-9);
+                // Build a cylinder along +z, then rotate and translate.
+                let cyl = cylinder_faceted(wr, seg_len, 6);
+                // Direction vector (dx, 0, dz) normalised.
+                let nx = dx / seg_len;
+                let nz = dz / seg_len;
+                // Rotation from +z to (nx, 0, nz) lies in the XZ plane, so axis = +Y.
+                // Angle = acos(nz); sign: +Y rotation tilts +X, so positive angle tilts toward +X.
+                let angle_from_z = nz.clamp(-1.0, 1.0).acos();
+                // nx > 0 → tilt toward +x → negative rotation around +y (right-hand rule).
+                let signed_angle = if nx >= 0.0 { -angle_from_z } else { angle_from_z };
+                let rotated = rotate_solid(&cyl, Vec3::new(0.0, 1.0, 0.0), signed_angle, Point3::origin());
+                // Translate to midpoint between p0 and p1.
+                // Base of cylinder is at local z=0, apex at z=seg_len.
+                // After rotation the base maps to p0.
+                let placed = translate_solid(&rotated, Vec3::new(x0, 0.0, z0));
+                match acc {
+                    None => acc = Some(placed),
+                    Some(ref prev) => {
+                        let merged = prev.try_union(&placed).map_err(|e| EvalError::Boolean {
+                            id: id.into(), op: "whisker_seg", message: e.message,
+                        })?;
+                        acc = Some(merged);
+                    }
+                }
+            }
+            Ok(acc.unwrap())
         }
 
-        Feature::Pear { body_radius, neck_radius, neck_height, stacks, segments, .. } => {
-            let br = resolve_one(id, body_radius, params)?;
-            let nr = resolve_one(id, neck_radius, params)?;
-            let nh = resolve_one(id, neck_height, params)?;
-            if br <= 0.0 || nr <= 0.0 || nr >= br || nh <= 0.0 || *stacks < 2 || *segments < 6 {
+        Feature::CrossShape { arm_length, arm_thickness, .. } => {
+            let al = resolve_one(id, arm_length, params)?;
+            let at = resolve_one(id, arm_thickness, params)?;
+            if al <= 0.0 || at <= 0.0 || at >= al {
                 return Err(EvalError::Invalid {
                     id: id.into(),
-                    reason: format!("Pear requires neck_radius<body_radius, positive dims (got br={br}, nr={nr}, nh={nh})"),
+                    reason: format!("CrossShape requires positive dims, arm_thickness<arm_length (got al={al}, at={at})"),
                 });
             }
-            // Sphere body at origin (centered at z=0 so hemisphere forms the
-            // bottom half). Frustum neck tapers from br at z=br (sphere top) down to
-            // nr over neck_height.
-            let body = sphere_faceted(br, *stacks, *segments);
-            let neck = frustum_faceted(nr, br, nh, *segments);
-            let neck_t = translate_solid(&neck, Vec3::new(0.0, 0.0, br - 1e-3));
-            body.try_union(&neck_t).map_err(|e| EvalError::Boolean { id: id.into(), op: "pear_neck_join", message: e.message })
+            // Horizontal arm: x ∈ [-al/2, al/2], y ∈ [-at/2, at/2], z ∈ [-at/2, at/2].
+            let h_arm = box_at(
+                Vec3::new(al, at, at),
+                Point3::new(-al / 2.0, -at / 2.0, -at / 2.0),
+            );
+            // Vertical arm: x ∈ [-at/2, at/2], y ∈ [-al/2, al/2], z ∈ [-at/2, at/2].
+            let v_arm = box_at(
+                Vec3::new(at, al, at),
+                Point3::new(-at / 2.0, -al / 2.0, -at / 2.0),
+            );
+            h_arm.try_union(&v_arm).map_err(|e| EvalError::Boolean {
+                id: id.into(), op: "cross_shape_union", message: e.message,
+            })
         }
 }
 }

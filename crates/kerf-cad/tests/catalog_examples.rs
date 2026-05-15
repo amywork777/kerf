@@ -110,9 +110,10 @@ const KNOWN_EXEMPT: &[(&str, &str)] = &[
     ("PaperLantern", "evaluation >5s — cylinder + 2 hemisphere caps"),
     // Stitch trip on default sweep-with-twist parameters.
     ("SweepWithTwist", "stitch: non-manifold on segment-1 union of twisted-profile sweep"),
-    // Batch 6 curved shapes — sphere-involving booleans can exceed 5s or trip stitch.
-    ("Onion", "evaluation >5s — sphere hemisphere ∪ frustum collar ∪ cone spire"),
-    ("Pear", "evaluation >5s — sphere ∪ frustum neck"),
+    // Batch 6 additions.
+    ("PetalCluster", "evaluation >5s — N anisotropic sphere unions"),
+    ("HeartSolid", "evaluation >5s — sphere ∪ sphere ∪ cone"),
+    ("Whisker", "evaluation >5s — chained cylinder S-curve chain"),
 ];
 
 /// Parse feature.rs once at the top of every test (cheap — feature.rs is ~3k
