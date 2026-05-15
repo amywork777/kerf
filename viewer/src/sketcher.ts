@@ -19,7 +19,8 @@
 // sketch likewise calls `onExtrude` with a constructed Model JSON; the host
 // loads it into the 3D viewer.
 
-import { renderConstraintGlyphs } from "./sketcher-glyphs.js";
+import { findSnap, type SnapResult } from "./sketcher-snap.js";
+import { computeDof, formatDof } from "./sketcher-dof.js";
 
 export type SketchPlane =
   | "Xy"
@@ -182,6 +183,8 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
   // when no Point is nearby (e.g. hovering over a line's interior).
   let hoverPrimId: string | null = null;
   let mouseWorld: Pt | null = null;
+  // Active snap result updated on every mousemove while drawing.
+  let activeSnap: SnapResult | null = null;
 
   // View transform.
   const view: View = { ox: 200, oy: 200, scale: 30 };
@@ -658,6 +661,19 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
     } else {
       hoverPrimId = null;
     }
+
+    // Compute snap while a drawing tool is active.
+    const drawingTools = ["point", "line", "circle", "arc"];
+    if (drawingTools.includes(currentTool) && snapInput.checked) {
+      activeSnap = findSnap(mouseWorld, toSketch(), {
+        scale: view.scale,
+        gridSpacing: Number(gridInput.value) || 1,
+        gridVisible: (view.scale * (Number(gridInput.value) || 1)) >= 6,
+      });
+    } else {
+      activeSnap = null;
+    }
+
     redraw();
   });
 
@@ -834,8 +850,22 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
 
   function drawCursorPreview() {
     if (!mouseWorld) return;
-    const snapped = snapInput.checked ? snapWorld(mouseWorld) : mouseWorld;
+    // If an active snap is present use its point; otherwise fall back to grid snap.
+    const snapped = activeSnap
+      ? activeSnap.point
+      : snapInput.checked
+        ? snapWorld(mouseWorld)
+        : mouseWorld;
     const [cx, cy] = worldToCanvas(snapped.x, snapped.y);
+
+    // Draw snap indicator (small square) when a snap is active.
+    if (activeSnap) {
+      const sq = 6;
+      ctx.strokeStyle = "#ffd700";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(cx - sq, cy - sq, sq * 2, sq * 2);
+    }
+
     // Crosshair.
     ctx.strokeStyle = "#58a6ff";
     ctx.lineWidth = 1;
@@ -845,10 +875,11 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
     ctx.moveTo(cx, cy - 5);
     ctx.lineTo(cx, cy + 5);
     ctx.stroke();
-    // Coords readout.
+    // Coords readout + snap kind.
     ctx.fillStyle = "#8b949e";
     ctx.font = "10px ui-monospace,Menlo,monospace";
-    ctx.fillText(`(${snapped.x.toFixed(2)}, ${snapped.y.toFixed(2)})`, cx + 8, cy + 14);
+    const snapLabel = activeSnap ? `  [${activeSnap.kind}]` : "";
+    ctx.fillText(`(${snapped.x.toFixed(2)}, ${snapped.y.toFixed(2)})${snapLabel}`, cx + 8, cy + 14);
 
     // Tool-specific previews.
     if (currentTool === "line" && pendingStartId) {
@@ -1001,7 +1032,7 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
     constraints.push(c);
     redraw();
     refreshPrimsList();
-    setStatus(`+constraint ${constraintTag(c)}`);
+    updateDofStatus();
   }
 
   // ---- buttons ----
@@ -1092,11 +1123,18 @@ export function mountSketcher(host: HTMLElement, opts: SketcherOptions = {}) {
     nextSeq = maxSeq + 1;
     redraw();
     refreshPrimsList();
+    updateDofStatus();
   }
 
   function setStatus(msg: string, isErr = false) {
     status.textContent = msg;
     status.style.color = isErr ? "#ff7b72" : "var(--muted)";
+  }
+
+  /** Append the DOF readout to the status bar text. */
+  function updateDofStatus() {
+    const dof = computeDof(toSketch());
+    setStatus(formatDof(dof));
   }
 
   function refreshPrimsList() {
