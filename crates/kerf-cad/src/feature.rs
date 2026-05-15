@@ -4221,6 +4221,54 @@ pub enum Feature {
         corner_radius: Scalar,
         segments: usize,
     },
+
+    /// Onion: onion-dome shape — hemispherical lower body transitioning via
+    /// a frustum collar into a pointed conical spire on top. Evokes
+    /// Russian-orthodox / Mughal architectural cupolas.
+    Onion {
+        id: String,
+        base_radius: Scalar,
+        mid_height: Scalar,
+        point_height: Scalar,
+        segments: usize,
+    },
+
+    /// WaspWaist: pinched-middle solid built from two opposing frustums
+    /// sharing a common narrow waist ring. Wide at top and bottom, minimum
+    /// radius at the waist mid-point. When waist_radius equals top_radius
+    /// the shape degenerates to a cylinder.
+    WaspWaist {
+        id: String,
+        top_radius: Scalar,
+        waist_radius: Scalar,
+        total_height: Scalar,
+        segments: usize,
+    },
+
+    /// Flask: flat-bottomed laboratory flask shape — cylindrical body,
+    /// smooth frustum shoulder tapering up, and a thin cylindrical neck.
+    /// Models Erlenmeyer / conical-flask silhouettes.
+    Flask {
+        id: String,
+        body_radius: Scalar,
+        body_height: Scalar,
+        neck_radius: Scalar,
+        neck_height: Scalar,
+        shoulder_height: Scalar,
+        segments: usize,
+    },
+
+    /// Pear: a pear-shaped solid with a wide spherical bottom body and a
+    /// narrow frustum neck tapering to a small flat top. Inspired by the
+    /// natural pear fruit profile.
+    Pear {
+        id: String,
+        body_radius: Scalar,
+        neck_radius: Scalar,
+        neck_height: Scalar,
+        stacks: usize,
+        segments: usize,
+    },
 }
 
 impl Feature {
@@ -4560,6 +4608,10 @@ impl Feature {
             | Feature::Pringle { id, .. }
             | Feature::Cone2 { id, .. }
             | Feature::Lozenge { id, .. }
+            | Feature::Onion { id, .. }
+            | Feature::WaspWaist { id, .. }
+            | Feature::Flask { id, .. }
+            | Feature::Pear { id, .. }
 => id,
 
             Feature::ChamferedHole { id, .. }
@@ -4912,6 +4964,10 @@ impl Feature {
             | Feature::Pringle { .. }
             | Feature::Cone2 { .. }
             | Feature::Lozenge { .. }
+            | Feature::Onion { .. }
+            | Feature::WaspWaist { .. }
+            | Feature::Flask { .. }
+            | Feature::Pear { .. }
 => Vec::new(),
 
             Feature::ChamferedHole { input, .. }
