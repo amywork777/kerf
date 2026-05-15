@@ -12,7 +12,7 @@ import init, {
 } from "./wasm/kerf_cad_wasm.js";
 import { exportThreeViewPng } from "./drawings.js";
 import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js";
-import { mountViewCube } from "./view-cube.js";
+import { findEdgeLoop, findFaceLoop } from "./pick-loops.js";
 
 await init();
 
@@ -113,7 +113,16 @@ let sectionView: SectionViewHandle | undefined;
 let currentVertexPositions: Float32Array | null = null;
 let currentEdgeEndpoints: Uint32Array | null = null;
 let currentVertexToFaces: { offsets: Uint32Array; indices: Uint32Array } | null = null;
+let currentVertexToEdges: { offsets: Uint32Array; indices: Uint32Array } | null = null;
 let currentEdgeToFaces: { offsets: Uint32Array; indices: Uint32Array } | null = null;
+let currentFaceToFaces: { offsets: Uint32Array; indices: Uint32Array } | null = null;
+let highlightedVertex = -1;
+let highlightedEdge = -1;
+
+// Loop selection state: when Alt+click triggers an edge/face loop, we store
+// all ids in the loop so they can be highlighted together.
+let highlightedEdgeLoop: number[] = [];
+let highlightedFaceLoop: number[] = [];
 
 // Picking mode: which kind of topology element does a click select?
 type PickMode = "face" | "edge" | "vertex";
@@ -278,25 +287,37 @@ function refreshVertexHighlight() {
 }
 
 /// Update or create the highlighted-edge LineSegments.
+/// When an edge loop is active (highlightedEdgeLoop), all loop edges are drawn.
 function refreshEdgeHighlight() {
   if (edgeHighlightLine) {
     scene.remove(edgeHighlightLine);
     edgeHighlightLine.geometry.dispose();
     edgeHighlightLine = null;
   }
-  if (picking.highlightedEdge < 0 || !currentEdgeEndpoints || !currentVertexPositions) return;
-  const eid = picking.highlightedEdge;
-  const va = currentEdgeEndpoints[eid * 2]!;
-  const vb = currentEdgeEndpoints[eid * 2 + 1]!;
-  if (va === 0xffffffff || vb === 0xffffffff) return;
-  const positions = new Float32Array([
-    currentVertexPositions[va * 3]!,
-    currentVertexPositions[va * 3 + 1]!,
-    currentVertexPositions[va * 3 + 2]!,
-    currentVertexPositions[vb * 3]!,
-    currentVertexPositions[vb * 3 + 1]!,
-    currentVertexPositions[vb * 3 + 2]!,
-  ]);
+  if (!currentEdgeEndpoints || !currentVertexPositions) return;
+
+  // Collect the set of edges to draw: loop takes precedence, else single edge.
+  const edgesToDraw: number[] =
+    highlightedEdgeLoop.length > 0
+      ? highlightedEdgeLoop
+      : highlightedEdge >= 0
+        ? [highlightedEdge]
+        : [];
+  if (edgesToDraw.length === 0) return;
+
+  const posArr: number[] = [];
+  for (const eid of edgesToDraw) {
+    const va = currentEdgeEndpoints[eid * 2]!;
+    const vb = currentEdgeEndpoints[eid * 2 + 1]!;
+    if (va === 0xffffffff || vb === 0xffffffff) continue;
+    posArr.push(
+      currentVertexPositions[va * 3]!, currentVertexPositions[va * 3 + 1]!, currentVertexPositions[va * 3 + 2]!,
+      currentVertexPositions[vb * 3]!, currentVertexPositions[vb * 3 + 1]!, currentVertexPositions[vb * 3 + 2]!,
+    );
+  }
+  if (posArr.length === 0) return;
+
+  const positions = new Float32Array(posArr);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   const mat = new THREE.LineBasicMaterial({
@@ -328,7 +349,12 @@ function setMesh(
   currentFaceIds = faceIds;
   currentFaceOwnerTags = faceOwnerTags;
   currentFaceCount = faceCount;
-  picking = clearAll(picking);
+  highlightedFace = -1;
+  hoveredFace = -1;
+  highlightedVertex = -1;
+  highlightedEdge = -1;
+  highlightedEdgeLoop = [];
+  highlightedFaceLoop = [];
   refreshVertexHighlight();
   refreshEdgeHighlight();
 
@@ -381,8 +407,9 @@ function resetColors(colors: Float32Array, faceIds: Uint32Array) {
 }
 
 function colorForFace(faceId: number): THREE.Color {
-  if (picking.selectedFaces.has(faceId)) return HIGHLIGHT_COLOR;
-  if (faceId === picking.hoveredFace) return HOVER_COLOR;
+  if (faceId === highlightedFace) return HIGHLIGHT_COLOR;
+  if (highlightedFaceLoop.includes(faceId)) return HIGHLIGHT_COLOR;
+  if (faceId === hoveredFace) return HOVER_COLOR;
   return BASE_COLOR;
 }
 
@@ -416,7 +443,11 @@ pickModeButtons.forEach((btn) => {
     pickMode = btn.dataset.pick as PickMode;
     pickModeButtons.forEach((b) => b.classList.toggle("active", b === btn));
     // Clear selection when switching modes.
-    picking = clearAll(picking);
+    highlightedFace = -1;
+    highlightedVertex = -1;
+    highlightedEdge = -1;
+    highlightedEdgeLoop = [];
+    highlightedFaceLoop = [];
     refreshFaceColors();
     refreshVertexHighlight();
     refreshEdgeHighlight();
@@ -476,6 +507,63 @@ function pickFaceAt(clientX: number, clientY: number): number {
 }
 
 renderer.domElement.addEventListener("click", (e) => {
+  // --- Cmd+click: smart-pick — cycle face → edge → vertex → face ---
+  if (e.metaKey || e.ctrlKey) {
+    const cycle: PickMode[] = ["face", "edge", "vertex"];
+    const next = cycle[(cycle.indexOf(pickMode) + 1) % cycle.length]!;
+    pickMode = next;
+    pickModeButtons.forEach((b) => b.classList.toggle("active", b.dataset.pick === next));
+    // Clear selection state when mode cycles.
+    highlightedFace = -1;
+    highlightedVertex = -1;
+    highlightedEdge = -1;
+    highlightedEdgeLoop = [];
+    highlightedFaceLoop = [];
+    refreshFaceColors();
+    refreshVertexHighlight();
+    refreshEdgeHighlight();
+    ok(`smart-pick: mode → ${next}`);
+    return;
+  }
+
+  // --- Alt+click: loop/ring selection ---
+  if (e.altKey) {
+    if (pickMode === "edge" && currentEdgeEndpoints && currentVertexToEdges && currentEdgeToFaces) {
+      const eid = pickEdgeAt(e.clientX, e.clientY);
+      if (eid >= 0) {
+        const loop = findEdgeLoop(eid, currentEdgeEndpoints, currentVertexToEdges, currentEdgeToFaces);
+        highlightedEdgeLoop = loop;
+        highlightedEdge = eid;
+        highlightedFace = -1;
+        highlightedVertex = -1;
+        highlightedFaceLoop = [];
+        refreshFaceColors();
+        refreshVertexHighlight();
+        refreshEdgeHighlight();
+        ok(`edge loop: ${loop.length} edges [${loop.join(",")}]`);
+      }
+    } else if (pickMode === "face" && currentFaceToFaces) {
+      const fid = pickFaceAt(e.clientX, e.clientY);
+      if (fid >= 0) {
+        const ring = findFaceLoop(fid, currentFaceToFaces);
+        highlightedFaceLoop = ring;
+        highlightedFace = fid;
+        highlightedEdge = -1;
+        highlightedVertex = -1;
+        highlightedEdgeLoop = [];
+        refreshFaceColors();
+        refreshVertexHighlight();
+        refreshEdgeHighlight();
+        ok(`face ring: ${ring.length} faces [${ring.join(",")}]`);
+      }
+    }
+    return;
+  }
+
+  // --- Normal click: single-element selection ---
+  highlightedEdgeLoop = [];
+  highlightedFaceLoop = [];
+
   if (pickMode === "face") {
     const rawFid = pickFaceAt(e.clientX, e.clientY);
     // Apply feature-kind filter: if the face doesn't pass, treat as a miss.
@@ -571,6 +659,43 @@ let pmHandle: PropertyManagerHandle | null = null;
 
 const SEGMENTS = 24;
 
+/**
+ * Build a face→face adjacency CSR from edgeToFaces data.
+ * Two faces are adjacent when they share at least one edge.
+ */
+function buildFaceAdjacency(
+  faceCount: number,
+  edgeToFacesOffsets: Uint32Array,
+  edgeToFacesIndices: Uint32Array,
+): { offsets: Uint32Array; indices: Uint32Array } {
+  const adjSets: Set<number>[] = Array.from({ length: faceCount }, () => new Set());
+  const nEdges = edgeToFacesOffsets.length - 1;
+  for (let eid = 0; eid < nEdges; eid++) {
+    const lo = edgeToFacesOffsets[eid]!;
+    const hi = edgeToFacesOffsets[eid + 1]!;
+    const faces: number[] = [];
+    for (let k = lo; k < hi; k++) faces.push(edgeToFacesIndices[k]!);
+    for (let a = 0; a < faces.length; a++) {
+      for (let b = 0; b < faces.length; b++) {
+        if (a !== b) adjSets[faces[a]!]!.add(faces[b]!);
+      }
+    }
+  }
+  const offsets = new Uint32Array(faceCount + 1);
+  let total = 0;
+  for (let i = 0; i < faceCount; i++) {
+    offsets[i] = total;
+    total += adjSets[i]!.size;
+  }
+  offsets[faceCount] = total;
+  const indices = new Uint32Array(total);
+  let k = 0;
+  for (let i = 0; i < faceCount; i++) {
+    for (const f of adjSets[i]!) indices[k++] = f;
+  }
+  return { offsets, indices };
+}
+
 function ok(msg: string) {
   status.classList.remove("error");
   status.textContent = msg;
@@ -621,13 +746,26 @@ function rebuild(fit: boolean = false) {
         offsets: new Uint32Array(result.vertex_to_faces_offsets),
         indices: new Uint32Array(result.vertex_to_faces_indices),
       };
+      currentVertexToEdges = {
+        offsets: new Uint32Array(result.vertex_to_edges_offsets),
+        indices: new Uint32Array(result.vertex_to_edges_indices),
+      };
       currentEdgeToFaces = {
         offsets: new Uint32Array(result.edge_to_faces_offsets),
         indices: new Uint32Array(result.edge_to_faces_indices),
       };
+      // Derive face→face adjacency from edgeToFaces: two faces are adjacent
+      // if they share an edge.
+      currentFaceToFaces = buildFaceAdjacency(
+        result.face_count_topo,
+        new Uint32Array(result.edge_to_faces_offsets),
+        new Uint32Array(result.edge_to_faces_indices),
+      );
     } else {
       currentVertexToFaces = null;
+      currentVertexToEdges = null;
       currentEdgeToFaces = null;
+      currentFaceToFaces = null;
     }
     // Extract face_owner_tags (face-id string key → owner feature id).
     faceOwnerTags = new Map();
