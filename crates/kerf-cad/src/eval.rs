@@ -131,7 +131,7 @@ impl Model {
         stack.pop();
 
         // Compute this feature's fingerprint from its inputs'.
-        // Use the resolved params so equations affect cache keys.
+        // Use the resolved params so equations + configuration overlay affect cache keys.
         let input_fps: Vec<Fingerprint> = feature
             .inputs()
             .iter()

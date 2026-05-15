@@ -113,6 +113,25 @@ pub fn target_ids_of(json: &str) -> Result<Vec<String>, JsError> {
     Ok(model.ids().map(|s| s.to_string()).collect())
 }
 
+/// Return the sorted list of configuration names defined in the model.
+/// Excludes the implicit "default" — caller treats `null`
+/// active_configuration as the default. The viewer uses this to populate
+/// the configuration dropdown.
+#[wasm_bindgen]
+pub fn list_configurations(json: &str) -> Result<Vec<String>, JsError> {
+    let model = Model::from_json_str(json).map_err(|e| JsError::new(&format!("parse: {e}")))?;
+    Ok(model.configuration_names().map(|s| s.to_string()).collect())
+}
+
+/// Return the active configuration name, or `null` if the implicit
+/// default is in effect.
+#[wasm_bindgen]
+pub fn active_configuration(json: &str) -> Result<JsValue, JsError> {
+    let model = Model::from_json_str(json).map_err(|e| JsError::new(&format!("parse: {e}")))?;
+    serde_wasm_bindgen::to_value(&model.active_configuration)
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Re-evaluate the model with overridden parameters and return the mesh.
 /// Parameters from `params_json` (a flat `{"name": number}` JSON object)
 /// replace the model's defaults. Anything not in `params_json` keeps the
