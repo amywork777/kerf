@@ -12,7 +12,7 @@ import init, {
 } from "./wasm/kerf_cad_wasm.js";
 import { exportThreeViewPng } from "./drawings.js";
 import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js";
-import { applyFilter, collectFeatureKinds, type ParsedFeature, type FilterKind } from "./pick-filter.js";
+import { mountMassProperties, type MassPropertiesData } from "./mass-properties.js";
 
 await init();
 
@@ -47,8 +47,8 @@ const gdtHelpLink = document.getElementById("gdt-help-link")!;
 const featureTreeEl = document.getElementById("feature-tree")!;
 const featureListEl = document.getElementById("feature-list")!;
 const featureCountEl = document.getElementById("feature-count")!;
-const pickModeGroupEl = document.getElementById("pick-mode-group")!;
-const pickFilterEl = document.getElementById("pick-filter") as HTMLSelectElement;
+const massPropHost = document.getElementById("mass-properties")!;
+const massPropertiesPanel = mountMassProperties(massPropHost);
 
 // --- three.js scene ---
 const scene = new THREE.Scene();
@@ -639,13 +639,21 @@ function rebuild(fit: boolean = false) {
       `target='${model.targetId}'  V/E/F/S=${result.vertex_count}/${result.edge_count}/${result.face_count_topo}/${result.shell_count}` +
         `  vol=${result.volume.toFixed(3)}  tris=${tris.length / 9}  eval=${dt.toFixed(1)}ms`,
     );
-    // Attempt BOM — only works if the loaded JSON is an Assembly; for plain
-    // Model files this will fail gracefully and we pass null to the panel.
-    try {
-      const bomRows = assembly_bom_of(model.json) as BomEntry[];
-      bomPanel.update(Array.isArray(bomRows) && bomRows.length > 0 ? bomRows : null);
-    } catch {
-      bomPanel.update(null);
+    // Update mass properties panel (skip if mesh is empty).
+    if (tris.length > 0) {
+      try {
+        const mp = mass_properties_of(
+          model.json,
+          model.targetId,
+          JSON.stringify(model.parameters),
+          SEGMENTS,
+        ) as MassPropertiesData;
+        massPropertiesPanel.update(mp);
+      } catch {
+        massPropertiesPanel.update(null);
+      }
+    } else {
+      massPropertiesPanel.update(null);
     }
   } catch (e) {
     err(String(e));
