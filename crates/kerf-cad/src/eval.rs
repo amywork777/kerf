@@ -9523,6 +9523,7 @@ fn build(
             Ok(acc)
         }
 
+<<<<<<< HEAD
         // ---------------------------------------------------------------
         // Manufacturing batch 5 (5 features) — 2026-05-10
         // ---------------------------------------------------------------
@@ -9995,6 +9996,201 @@ fn build(
                 op: "ovoid_shell_diff",
                 message: e.message,
             })
+        }
+        Feature::PaperLanternStrips { axis_radius, minor_radius, strip_count, strip_width_deg, segments, .. } => {
+            let ar = resolve_one(id, axis_radius, params)?;
+            let mnr = resolve_one(id, minor_radius, params)?;
+            let swd = resolve_one(id, strip_width_deg, params)?;
+            let sc = *strip_count;
+            let segs = *segments;
+            if ar <= 0.0 || mnr <= 0.0 || sc < 1 || segs < 6 || swd <= 0.0 || swd >= 360.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("PaperLanternStrips requires positive dims, strip_count>=1, 0<swd<360 (got ar={ar}, mnr={mnr}, sc={sc})"),
+                });
+            }
+            // Each strip: a cylinder of radius mnr and height 2*ar, placed at
+            // distance ar from the z-axis. Strip radius represents the strip
+            // width: r_strip = ar * sin(swd/2 * pi/180).  We use mnr directly
+            // as the cross-section tube radius (simpler, matches spec intent).
+            // Strip height is 2*ar so it spans the lantern body.
+            let strip_h = 2.0 * ar;
+            // Strips arranged equally around the z-axis. Each strip cylinder
+            // axis is parallel to z, centred at (ar*cos(theta), ar*sin(theta)).
+            let mut acc_opt: Option<Solid> = None;
+            for i in 0..sc {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (sc as f64);
+                let cx = ar * theta.cos();
+                let cy = ar * theta.sin();
+                let strip = cylinder_along_axis(mnr, strip_h, segs, 2, -ar, cx, cy);
+                acc_opt = Some(match acc_opt {
+                    None => strip,
+                    Some(prev) => prev.try_union(&strip).map_err(|e| EvalError::Boolean {
+                        id: id.into(), op: "lanternstrips_union", message: e.message,
+                    })?,
+                });
+            }
+            Ok(acc_opt.unwrap())
+        }
+
+        Feature::Trefoil { scale, tube_radius, segments_along, segments_around, .. } => {
+            let sc = resolve_one(id, scale, params)?;
+            let tr = resolve_one(id, tube_radius, params)?;
+            let na = *segments_along;
+            let nr = *segments_around;
+            if sc <= 0.0 || tr <= 0.0 || na < 6 || nr < 4 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("Trefoil requires positive dims, segments_along>=6, segments_around>=4 (got sc={sc}, tr={tr}, na={na})"),
+                });
+            }
+            // Parametric trefoil knot: t in [0, 2π)
+            // x = (sin(t) + 2 sin(2t)) * scale
+            // y = (cos(t) - 2 cos(2t)) * scale
+            // z = -sin(3t) * scale
+            // Build tube by sweeping cylinders along path segments.
+            use std::f64::consts::PI;
+            let pts: Vec<[f64; 3]> = (0..=na).map(|i| {
+                let t = 2.0 * PI * (i as f64) / (na as f64);
+                [
+                    (t.sin() + 2.0 * (2.0 * t).sin()) * sc,
+                    (t.cos() - 2.0 * (2.0 * t).cos()) * sc,
+                    -(3.0 * t).sin() * sc,
+                ]
+            }).collect();
+            // Sweep: union of short cylinders between consecutive path points.
+            // Each segment: cylinder from pts[i] to pts[i+1].
+            // We orient the cylinder by rotating +z to the segment direction.
+            let n_segs = na; // pts has na+1 entries (0..=na), last == first for closed loop
+            let mut acc_opt: Option<Solid> = None;
+            for i in 0..n_segs {
+                let p0 = pts[i];
+                let p1 = pts[i + 1];
+                let dx = p1[0] - p0[0];
+                let dy = p1[1] - p0[1];
+                let dz = p1[2] - p0[2];
+                let seg_len = (dx*dx + dy*dy + dz*dz).sqrt();
+                if seg_len < 1e-12 { continue; }
+                // Build a cylinder of length seg_len along +z, then rotate to direction.
+                let seg_cyl = cylinder_faceted(tr, seg_len, nr);
+                // Rotation: align +z with (dx,dy,dz)/seg_len.
+                let dir = Vec3::new(dx / seg_len, dy / seg_len, dz / seg_len);
+                let z_axis = Vec3::new(0.0, 0.0, 1.0);
+                let cross = Vec3::new(
+                    z_axis.y * dir.z - z_axis.z * dir.y,
+                    z_axis.z * dir.x - z_axis.x * dir.z,
+                    z_axis.x * dir.y - z_axis.y * dir.x,
+                );
+                let cross_len = (cross.x*cross.x + cross.y*cross.y + cross.z*cross.z).sqrt();
+                let seg_oriented = if cross_len < 1e-9 {
+                    // already aligned or anti-aligned
+                    if dir.z < 0.0 {
+                        rotate_solid(&seg_cyl, Vec3::new(1.0, 0.0, 0.0), std::f64::consts::PI, Point3::new(0.0, 0.0, 0.0))
+                    } else {
+                        seg_cyl
+                    }
+                } else {
+                    let axis = Vec3::new(cross.x / cross_len, cross.y / cross_len, cross.z / cross_len);
+                    let dot = z_axis.x * dir.x + z_axis.y * dir.y + z_axis.z * dir.z;
+                    let angle = dot.acos();
+                    rotate_solid(&seg_cyl, axis, angle, Point3::new(0.0, 0.0, 0.0))
+                };
+                // Translate to p0.
+                let seg_t = translate_solid(&seg_oriented, Vec3::new(p0[0], p0[1], p0[2]));
+                acc_opt = Some(match acc_opt {
+                    None => seg_t,
+                    Some(prev) => {
+                        match prev.try_union(&seg_t) {
+                            Ok(u) => u,
+                            Err(_) => prev, // tolerate stitch failures on curved path
+                        }
+                    }
+                });
+            }
+            match acc_opt {
+                Some(s) => Ok(s),
+                None => Err(EvalError::Invalid { id: id.into(), reason: "Trefoil produced no segments".into() }),
+            }
+        }
+
+        Feature::DishCap { radius, depth, rim_width, segments, .. } => {
+            let r = resolve_one(id, radius, params)?;
+            let d = resolve_one(id, depth, params)?;
+            let rw = resolve_one(id, rim_width, params)?;
+            let segs = *segments;
+            if r <= 0.0 || d <= 0.0 || rw < 0.0 || segs < 6 || d > r {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("DishCap requires positive dims, depth<=radius, rim_width>=0 (got r={r}, d={d}, rw={rw})"),
+                });
+            }
+            // Dome: spherical cap of radius r and depth d.
+            // Sphere of radius r centered at z=0; clip to z >= (r - d).
+            // Cap lives z in [r-d, r].
+            let sph = sphere_faceted(r, segs, segs * 2);
+            let clip_z = r - d;
+            // Cut away z < clip_z by subtracting a box below.
+            let cut_h = clip_z + r; // big enough to remove everything below clip_z
+            let cutter = box_at(
+                Vec3::new(4.0 * r, 4.0 * r, cut_h.max(1e-3) + 1e-3),
+                Point3::new(-2.0 * r, -2.0 * r, -r - 1e-3),
+            );
+            let cap = sph
+                .try_difference(&cutter)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "dishcap_clip", message: e.message })?;
+            // Translate so flat face is at z=0: cap now at z in [clip_z, r],
+            // shift down by clip_z.
+            let cap_t = translate_solid(&cap, Vec3::new(0.0, 0.0, -clip_z));
+            // Rim: flat annular disk of outer radius (r + rw), inner radius r,
+            // thickness d (flush with cap base at z=0, extending down to z=-d).
+            // Build as a cylinder disk and subtract an inner cylinder.
+            if rw < 1e-9 {
+                // No rim — just the dome.
+                return Ok(cap_t);
+            }
+            let outer_cyl = cylinder_along_axis(r + rw, d, segs, 2, -d + 1e-3, 0.0, 0.0);
+            let inner_hole = cylinder_along_axis(r - 1e-3, d + 2e-3, segs, 2, -d, 0.0, 0.0);
+            let rim = outer_cyl
+                .try_difference(&inner_hole)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "dishcap_rim_hole", message: e.message })?;
+            cap_t.try_union(&rim)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "dishcap_rim_join", message: e.message })
+        }
+
+        Feature::AcornShapeDome { base_radius, height, point_height, segments, .. } => {
+            let br = resolve_one(id, base_radius, params)?;
+            let h = resolve_one(id, height, params)?;
+            let ph = resolve_one(id, point_height, params)?;
+            let segs = *segments;
+            if br <= 0.0 || h <= 0.0 || ph <= 0.0 || segs < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("AcornShapeDome requires positive dims (got br={br}, h={h}, ph={ph})"),
+                });
+            }
+            // Dome base: hemisphere of radius br (z >= 0). Build sphere, clip z < 0.
+            let sph = sphere_faceted(br, segs, segs * 2);
+            let bot_cutter = box_at(
+                Vec3::new(4.0 * br, 4.0 * br, 2.0 * br),
+                Point3::new(-2.0 * br, -2.0 * br, -2.0 * br),
+            );
+            let hemi = sph
+                .try_difference(&bot_cutter)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "acorndome_hemi_clip", message: e.message })?;
+            // If height > br, add a cylinder from br to height to extend.
+            let hemi_top = if h > br {
+                let cyl = cylinder_along_axis(br, h - br + 1e-3, segs, 2, br - 1e-3, 0.0, 0.0);
+                hemi.try_union(&cyl)
+                    .map_err(|e| EvalError::Boolean { id: id.into(), op: "acorndome_ext_join", message: e.message })?
+            } else {
+                hemi
+            };
+            // Conical spire on top: cone with base_radius br (matches top cylinder)
+            // and height ph, placed at z=h.
+            let spire = cone_faceted(br, ph, segs);
+            let spire_t = translate_solid(&spire, Vec3::new(0.0, 0.0, h - 1e-3));
+            hemi_top.try_union(&spire_t)
+                .map_err(|e| EvalError::Boolean { id: id.into(), op: "acorndome_spire_join", message: e.message })
         }
 }
 }

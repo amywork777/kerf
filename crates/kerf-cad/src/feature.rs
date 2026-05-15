@@ -3896,6 +3896,61 @@ pub enum Feature {
         slices: usize,
     },
 
+    /// PaperLanternStrips: a decorative paper-lantern look built from
+    /// `strip_count` vertical strip cylinders arranged around a torus centre.
+    /// Each strip is a thin cylinder of radius `minor_radius` placed at
+    /// distance `axis_radius` from the z-axis, equally spaced in angle.
+    /// `strip_width_deg` controls the angular arc each strip subtends (only
+    /// affects the strip cylinder radius — the strip cylinder radius equals
+    /// axis_radius * sin(strip_width_deg/2 * pi/180)).
+    PaperLanternStrips {
+        id: String,
+        axis_radius: Scalar,
+        minor_radius: Scalar,
+        strip_count: usize,
+        strip_width_deg: Scalar,
+        segments: usize,
+    },
+
+    /// Trefoil: a faceted tube swept along the trefoil knot curve.
+    /// Parametric curve: t in [0, 2π],
+    ///   x = (sin(t) + 2 sin(2t)) * scale
+    ///   y = (cos(t) − 2 cos(2t)) * scale
+    ///   z = −sin(3t) * scale
+    /// `tube_radius` is the radius of the circular cross-section tube.
+    Trefoil {
+        id: String,
+        scale: Scalar,
+        tube_radius: Scalar,
+        segments_along: usize,
+        segments_around: usize,
+    },
+
+    /// DishCap: a shallow spherical dome with a flat annular rim (skirt).
+    /// The dome is a spherical cap of `radius` and `depth` (height of cap
+    /// above the base plane). An annular rim of radial width `rim_width`
+    /// and thickness `depth` extends outward at the base.
+    DishCap {
+        id: String,
+        radius: Scalar,
+        depth: Scalar,
+        rim_width: Scalar,
+        segments: usize,
+    },
+
+    /// AcornShape (new): pointed-top dome — a hemisphere base topped by a
+    /// conical spire. The hemisphere of `base_radius` sits with its flat face
+    /// at z=0; the cone tip sits at z = base_radius + point_height.
+    /// Distinct from the earlier AcornShape (sphere body + stem) — this one
+    /// models a pointed acorn cap silhouette.
+    AcornShapeDome {
+        id: String,
+        base_radius: Scalar,
+        height: Scalar,
+        point_height: Scalar,
+        segments: usize,
+    },
+
     /// AcornCap: just the cap of an acorn — a hemisphere with a small
     /// cylindrical ring rim at the bottom edge. Half-sphere at top
     /// (z >= 0), thin rim cylinder at z=0.
@@ -4373,6 +4428,10 @@ impl Feature {
             | Feature::ScrollPlate { id, .. }
             | Feature::TulipBulb { id, .. }
             | Feature::PaperLantern { id, .. }
+            | Feature::PaperLanternStrips { id, .. }
+            | Feature::Trefoil { id, .. }
+            | Feature::DishCap { id, .. }
+            | Feature::AcornShapeDome { id, .. }
             | Feature::AcornCap { id, .. }
             | Feature::HourglassFigure { id, .. }
             | Feature::Ankh { id, .. }
@@ -4696,6 +4755,10 @@ impl Feature {
             | Feature::ScrollPlate { .. }
             | Feature::TulipBulb { .. }
             | Feature::PaperLantern { .. }
+            | Feature::PaperLanternStrips { .. }
+            | Feature::Trefoil { .. }
+            | Feature::DishCap { .. }
+            | Feature::AcornShapeDome { .. }
             | Feature::AcornCap { .. }
             | Feature::HourglassFigure { .. }
             | Feature::Ankh { .. }

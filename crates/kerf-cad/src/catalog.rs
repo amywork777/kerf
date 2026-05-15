@@ -762,6 +762,7 @@ fn usize_default(_variant: &str, name: &str) -> u64 {
         | "major_segs"
         | "body_segs"
         | "torus_segs" => 16,
+        "segments_along" | "segments_around" => 12,
         "segments_per_turn" => 12,
         "segments_per_tooth" => 4,
         "count" | "bolt_count" | "tooth_count" | "ridge_count" | "flute_count" | "step_count"
@@ -1681,6 +1682,39 @@ fn curated_override(variant: &str) -> Option<serde_json::Map<String, serde_json:
             m.insert("length".into(), num(8.0));
             m.insert("thickness".into(), num(0.5));
             m.insert("segments".into(), json!(12));
+            Some(m)
+        }
+        "DishCap" => {
+            // depth must be <= radius.
+            m.insert("radius".into(), num(5.0));
+            m.insert("depth".into(), num(2.0));
+            m.insert("rim_width".into(), num(1.0));
+            m.insert("segments".into(), json!(16));
+            Some(m)
+        }
+        "PaperLanternStrips" => {
+            // strip_count >= 1, swd in (0, 360).
+            m.insert("axis_radius".into(), num(3.0));
+            m.insert("minor_radius".into(), num(0.5));
+            m.insert("strip_count".into(), json!(6_u64));
+            m.insert("strip_width_deg".into(), num(30.0));
+            m.insert("segments".into(), json!(12_u64));
+            Some(m)
+        }
+        "Trefoil" => {
+            // segments_along >= 6, segments_around >= 4.
+            m.insert("scale".into(), num(2.0));
+            m.insert("tube_radius".into(), num(0.3));
+            m.insert("segments_along".into(), json!(18_u64));
+            m.insert("segments_around".into(), json!(8_u64));
+            Some(m)
+        }
+        "AcornShapeDome" => {
+            // positive dims.
+            m.insert("base_radius".into(), num(3.0));
+            m.insert("height".into(), num(3.0));
+            m.insert("point_height".into(), num(2.0));
+            m.insert("segments".into(), json!(16_u64));
             Some(m)
         }
         _ => None,
