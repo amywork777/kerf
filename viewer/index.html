@@ -198,32 +198,26 @@
   .sk-examples a { color: var(--accent); cursor: pointer; }
   .sk-examples a:hover { text-decoration: underline; }
 
-  /* --- mass properties --- */
-  #mass-properties { margin-top: 14px; }
-  #mass-properties .mp-header {
-    display: flex; align-items: center; gap: 6px; cursor: pointer;
-    color: var(--muted); font-size: 12px; user-select: none;
-    padding: 2px 0;
-  }
-  #mass-properties .mp-header:hover { color: var(--fg); }
-  #mass-properties .mp-chevron { font-size: 10px; }
-  #mass-properties .mp-title { font-weight: 600; color: var(--fg); }
-  #mass-properties .mp-body { margin-top: 6px; }
-  #mass-properties .mp-table {
-    width: 100%; border-collapse: collapse;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 11px;
-  }
-  #mass-properties .mp-table td { padding: 2px 0; vertical-align: top; }
-  #mass-properties .mp-label {
-    color: var(--muted); white-space: nowrap; padding-right: 8px; width: 50%;
-  }
-  #mass-properties .mp-value {
-    color: var(--fg); text-align: right; font-variant-numeric: tabular-nums;
-  }
-  #mass-properties .mp-section {
-    color: var(--muted); padding-top: 6px; font-size: 11px;
-  }
+  /* --- BOM panel --- */
+  #bom { margin-top: 14px; }
+  .bom-header { display: flex; align-items: center; gap: 6px; cursor: pointer;
+    color: var(--muted); font-size: 12px; font-weight: 600;
+    padding: 4px 0; user-select: none; }
+  .bom-header:hover { color: var(--fg); }
+  .bom-chevron { font-size: 10px; }
+  .bom-body { margin-top: 4px; }
+  .bom-placeholder { font-size: 11px; color: var(--muted); font-style: italic; margin: 0; }
+  .bom-table-wrap { overflow-x: auto; }
+  .bom-table { width: 100%; border-collapse: collapse;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; }
+  .bom-table th { color: var(--muted); font-weight: 600; padding: 4px 6px;
+    border-bottom: 1px solid var(--line); white-space: nowrap; text-align: right; }
+  .bom-table th:first-child { text-align: left; }
+  .bom-table td { padding: 3px 6px; border-bottom: 1px solid rgba(48,54,61,0.5); }
+  .bom-table tr:last-child td { border-bottom: none; }
+  .bom-col-name { text-align: left; min-width: 80px; }
+  .bom-col-num { text-align: right; }
+  .bom-col-mat { text-align: left; }
 </style>
 </head>
 <body>
@@ -299,13 +293,7 @@
         <code>W</code>wireframe <code>R</code>reset <code>D</code>drawing <code>S</code>save
       </div>
     </div>
-    <div id="selected-feature" hidden>
-      <div class="sf-head">
-        <span id="selected-feature-title"></span>
-        <span class="sf-close" title="clear (Esc)">✕</span>
-      </div>
-      <div id="selected-feature-body"></div>
-    </div>
+    <div id="bom"></div>
     <div id="status">no model loaded</div>
     <button id="sketcher-toggle">Open 2D sketcher</button>
   </aside>

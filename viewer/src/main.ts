@@ -8,12 +8,17 @@ import init, {
   mass_properties_of,
   parameters_of,
   target_ids_of,
+  assembly_bom_of,
 } from "./wasm/kerf_cad_wasm.js";
 import { exportThreeViewPng } from "./drawings.js";
 import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js";
-import { mountConfigDropdown, mountDesignTable } from "./configurations.js";
+import { mountBom, type BomEntry } from "./bom.js";
 
 await init();
+
+// --- BOM panel ---
+const bomEl = document.getElementById("bom")!;
+const bomPanel = mountBom(bomEl);
 
 const stage = document.getElementById("stage")!;
 const status = document.getElementById("status")!;
@@ -598,21 +603,13 @@ function rebuild(fit: boolean = false) {
       `target='${model.targetId}'  V/E/F/S=${result.vertex_count}/${result.edge_count}/${result.face_count_topo}/${result.shell_count}` +
         `  vol=${result.volume.toFixed(3)}  tris=${tris.length / 9}  eval=${dt.toFixed(1)}ms`,
     );
-    // Update mass properties panel (skip if mesh is empty).
-    if (tris.length > 0) {
-      try {
-        const mp = mass_properties_of(
-          model.json,
-          model.targetId,
-          JSON.stringify(model.parameters),
-          SEGMENTS,
-        ) as MassPropertiesData;
-        massPropertiesPanel.update(mp);
-      } catch {
-        massPropertiesPanel.update(null);
-      }
-    } else {
-      massPropertiesPanel.update(null);
+    // Attempt BOM — only works if the loaded JSON is an Assembly; for plain
+    // Model files this will fail gracefully and we pass null to the panel.
+    try {
+      const bomRows = assembly_bom_of(model.json) as BomEntry[];
+      bomPanel.update(Array.isArray(bomRows) && bomRows.length > 0 ? bomRows : null);
+    } catch {
+      bomPanel.update(null);
     }
   } catch (e) {
     err(String(e));

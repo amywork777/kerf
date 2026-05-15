@@ -5,6 +5,7 @@
 //! JSON serde lets the recipe be data, not code.
 
 pub mod assembly;
+pub mod bom;
 pub mod cache;
 pub mod catalog;
 pub mod equations;
@@ -22,6 +23,7 @@ pub use assembly::{
     apply_pose_to_solid, Assembly, AssemblyError, AssemblyRef, AxisRef, Instance, Mate, MateError,
     Pose, ResolvedPose, SurfaceRef,
 };
+pub use bom::{assembly_bom, BomComponent, BomEntry, BomInput, BomInstance};
 pub use cache::{EvalCache, Fingerprint};
 pub use mass::{mass_properties, MassProperties};
 pub use eval::EvalError;
