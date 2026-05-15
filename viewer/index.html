@@ -90,13 +90,24 @@
   #feature-tree label { display: block; color: var(--muted); margin-bottom: 4px;
     font-size: 12px; }
   #feature-tree label .muted { color: var(--muted); font-weight: 400; margin-left: 4px; }
+  #feature-search-wrap { display: flex; gap: 4px; margin-bottom: 6px; }
+  #feature-search { flex: 1; padding: 4px 8px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 4px; font: inherit; font-size: 11px; }
+  #feature-search:focus { outline: none; border-color: var(--accent); }
+  #feature-search-clear { padding: 4px 8px; font-size: 11px; flex: none; }
   #feature-list { margin: 0; padding: 0 0 0 18px; max-height: 150px; overflow-y: auto;
     font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; }
   #feature-list li { line-height: 1.6; padding: 1px 4px; border-radius: 3px; cursor: pointer; }
   #feature-list li { display: flex; align-items: center; gap: 6px; }
   #feature-list li:hover { background: var(--bg); color: var(--accent); }
   #feature-list li.target { color: var(--accent); }
+  #feature-list li.dragging { opacity: 0.4; }
+  #feature-list li.drag-over-before { border-top: 2px solid var(--accent); }
+  #feature-list li.drag-over-after { border-bottom: 2px solid var(--accent); }
+  #feature-list li.hidden { display: none; }
   #feature-list .kind { color: var(--muted); }
+  #feature-list .drag-handle { color: var(--muted); cursor: grab; font-size: 10px;
+    padding: 0 2px; user-select: none; }
   #feature-list .id { flex: 1; }
   #feature-list .del { color: var(--muted); padding: 0 4px; visibility: hidden;
     border-radius: 3px; cursor: pointer; }
@@ -245,6 +256,10 @@
     </div>
     <div id="feature-tree" hidden>
       <label>Features <span class="muted" id="feature-count"></span></label>
+      <div id="feature-search-wrap">
+        <input id="feature-search" type="search" placeholder="filter by id or kind…" autocomplete="off" />
+        <button id="feature-search-clear" title="Clear filter">✕</button>
+      </div>
       <ol id="feature-list"></ol>
     </div>
     <div id="params"></div>
