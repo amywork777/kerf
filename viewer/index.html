@@ -179,6 +179,33 @@
   .sk-examples { margin-top: 8px; font-size: 11px; color: var(--muted); }
   .sk-examples a { color: var(--accent); cursor: pointer; }
   .sk-examples a:hover { text-decoration: underline; }
+
+  /* --- mass properties --- */
+  #mass-properties { margin-top: 14px; }
+  #mass-properties .mp-header {
+    display: flex; align-items: center; gap: 6px; cursor: pointer;
+    color: var(--muted); font-size: 12px; user-select: none;
+    padding: 2px 0;
+  }
+  #mass-properties .mp-header:hover { color: var(--fg); }
+  #mass-properties .mp-chevron { font-size: 10px; }
+  #mass-properties .mp-title { font-weight: 600; color: var(--fg); }
+  #mass-properties .mp-body { margin-top: 6px; }
+  #mass-properties .mp-table {
+    width: 100%; border-collapse: collapse;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+  }
+  #mass-properties .mp-table td { padding: 2px 0; vertical-align: top; }
+  #mass-properties .mp-label {
+    color: var(--muted); white-space: nowrap; padding-right: 8px; width: 50%;
+  }
+  #mass-properties .mp-value {
+    color: var(--fg); text-align: right; font-variant-numeric: tabular-nums;
+  }
+  #mass-properties .mp-section {
+    color: var(--muted); padding-top: 6px; font-size: 11px;
+  }
 </style>
 </head>
 <body>
@@ -233,6 +260,7 @@
         <code>W</code>wireframe <code>R</code>reset <code>D</code>drawing <code>S</code>save
       </div>
     </div>
+    <div id="mass-properties"></div>
     <div id="status">no model loaded</div>
     <button id="sketcher-toggle">Open 2D sketcher</button>
   </aside>

@@ -6,6 +6,7 @@ import init, {
   evaluate_with_params,
   evaluate_with_face_ids,
   import_step_to_model,
+  mass_properties_of,
   parameters_of,
   target_ids_of,
 } from "./wasm/kerf_cad_wasm.js";
@@ -13,6 +14,7 @@ import { exportThreeViewPng } from "./drawings.js";
 import { mountSketcher, buildExtrudeModelJson, type Sketch } from "./sketcher.js";
 import { mountPropertyManager, type PropertyManagerHandle } from "./property-manager.js";
 import { mountToolbar } from "./toolbar.js";
+import { mountMassProperties, type MassPropertiesData } from "./mass-properties.js";
 
 await init();
 
@@ -33,6 +35,8 @@ const actions2El = document.getElementById("actions2")!;
 const featureTreeEl = document.getElementById("feature-tree")!;
 const featureListEl = document.getElementById("feature-list")!;
 const featureCountEl = document.getElementById("feature-count")!;
+const massPropHost = document.getElementById("mass-properties")!;
+const massPropertiesPanel = mountMassProperties(massPropHost);
 
 // --- three.js scene ---
 const scene = new THREE.Scene();
@@ -546,8 +550,25 @@ function rebuild(fit: boolean = false) {
       `target='${model.targetId}'  V/E/F/S=${result.vertex_count}/${result.edge_count}/${result.face_count_topo}/${result.shell_count}` +
         `  vol=${result.volume.toFixed(3)}  tris=${tris.length / 9}  eval=${dt.toFixed(1)}ms`,
     );
+    // Update mass properties panel (skip if mesh is empty).
+    if (tris.length > 0) {
+      try {
+        const mp = mass_properties_of(
+          model.json,
+          model.targetId,
+          JSON.stringify(model.parameters),
+          SEGMENTS,
+        ) as MassPropertiesData;
+        massPropertiesPanel.update(mp);
+      } catch {
+        massPropertiesPanel.update(null);
+      }
+    } else {
+      massPropertiesPanel.update(null);
+    }
   } catch (e) {
     err(String(e));
+    massPropertiesPanel.update(null);
   }
 }
 
