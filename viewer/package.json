@@ -7,8 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run --exclude '**/sketch_state.test.ts' && rm -rf .test-out && tsc --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop --outDir .test-out --lib ES2022,DOM src/sketcher.ts src/sketch_state.test.ts && node .test-out/sketch_state.test.js",
-    "test:watch": "vitest"
+    "test:legacy": "rm -rf .test-out && tsc --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop --outDir .test-out --lib ES2022,DOM src/sketcher.ts src/sketch_state.test.ts && node .test-out/sketch_state.test.js",
+    "test": "vitest run"
   },
   "dependencies": {
     "three": "^0.170.0"
@@ -16,7 +16,6 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@types/three": "^0.170.0",
-    "@vitest/coverage-v8": "^2.1.8",
     "jsdom": "^25.0.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.10",
