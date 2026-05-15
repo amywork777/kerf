@@ -1106,6 +1106,76 @@ function renderFeatureTree() {
   applyFeatureSearch();
 }
 
+/// Build the draggable rollback bar element. `currentIndex` is the bar's
+/// position (0..features.length).
+function makeRollbackBar(currentIndex: number): HTMLElement {
+  const bar = document.createElement("li");
+  bar.className = "rollback-bar";
+  bar.dataset.index = String(currentIndex);
+  bar.title = "Rollback bar — drag up to mark features as inactive";
+  bar.innerHTML = `<span class="bar-line"></span>`;
+  bar.addEventListener("mousedown", startRollbackDrag);
+  return bar;
+}
+
+let rollbackDragState: { startY: number; startIndex: number } | null = null;
+
+function startRollbackDrag(e: MouseEvent) {
+  e.preventDefault();
+  e.stopPropagation();
+  const target = e.currentTarget as HTMLElement;
+  const startIndex = Number(target.dataset.index ?? "0");
+  rollbackDragState = { startY: e.clientY, startIndex };
+  document.body.style.cursor = "ns-resize";
+  window.addEventListener("mousemove", onRollbackDragMove);
+  window.addEventListener("mouseup", onRollbackDragEnd, { once: true });
+}
+
+function onRollbackDragMove(e: MouseEvent) {
+  if (!rollbackDragState || !model) return;
+  // Find the row index closest to the cursor by walking the children.
+  const rows = Array.from(featureListEl.children) as HTMLElement[];
+  // Use the midpoint of each feature row to decide where the bar should sit.
+  const featureRows = rows.filter((r) => !r.classList.contains("rollback-bar"));
+  if (featureRows.length === 0) return;
+  let targetIndex = featureRows.length;
+  for (let i = 0; i < featureRows.length; i++) {
+    const rect = featureRows[i]!.getBoundingClientRect();
+    if (e.clientY < rect.top + rect.height / 2) {
+      targetIndex = i;
+      break;
+    }
+  }
+  // Clamp to [1, features.length] — refusing to roll back past feature 0
+  // (we always keep at least one feature active so the viewer has
+  // something to render).
+  const clamped = Math.max(1, Math.min(targetIndex, featureRows.length));
+  const bar = rows.find((r) => r.classList.contains("rollback-bar"));
+  if (!bar) return;
+  bar.dataset.previewIndex = String(clamped);
+  // Live preview: physically reposition the bar between feature rows so
+  // the user sees where it will land. The bar sits *after* row[clamped-1]
+  // (or before all rows if clamped == 0, but the clamp above prevents
+  // that). insertBefore is a no-op when the node is already in place.
+  const anchor = featureRows[clamped] ?? null;
+  featureListEl.insertBefore(bar, anchor);
+}
+
+function onRollbackDragEnd(_e: MouseEvent) {
+  document.body.style.cursor = "";
+  window.removeEventListener("mousemove", onRollbackDragMove);
+  if (!rollbackDragState || !model) {
+    rollbackDragState = null;
+    return;
+  }
+  const bar = featureListEl.querySelector(".rollback-bar") as HTMLElement | null;
+  const idxStr = bar?.dataset.previewIndex ?? bar?.dataset.index;
+  const idx = idxStr === undefined ? null : Number(idxStr);
+  rollbackDragState = null;
+  if (idx === null || Number.isNaN(idx)) return;
+  setRollbackByBarIndex(idx);
+}
+
 function deleteFeature(id: string) {
   if (!model) return;
   const parsed = JSON.parse(model.json);

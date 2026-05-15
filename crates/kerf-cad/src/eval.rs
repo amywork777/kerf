@@ -12179,6 +12179,36 @@ fn fold_boolean(
     Ok(acc)
 }
 
+/// Same fold as [`fold_boolean`], but takes the effective input ids as a
+/// `&[&str]`. Used when suppression has filtered a boolean's inputs at
+/// evaluate time. With a single remaining input it returns that input
+/// directly (suppress one operand of a 2-input difference → see the
+/// remaining shape unchanged).
+fn fold_boolean_ids(
+    id: &str,
+    inputs: &[&str],
+    cache: &HashMap<String, Solid>,
+    op: BoolKind,
+) -> Result<Solid, EvalError> {
+    debug_assert!(
+        !inputs.is_empty(),
+        "fold_boolean_ids invariant: effective_inputs already rejects empty active sets"
+    );
+    if inputs.len() == 1 {
+        return Ok(cache_get(cache, inputs[0])?.clone());
+    }
+    let mut acc = cache_get(cache, inputs[0])?.clone();
+    for next_id in &inputs[1..] {
+        let next = cache_get(cache, next_id)?;
+        acc = op.apply(&acc, next).map_err(|e| EvalError::Boolean {
+            id: id.into(),
+            op: op.name(),
+            message: e.message,
+        })?;
+    }
+    Ok(acc)
+}
+
 fn cache_get<'a>(cache: &'a HashMap<String, Solid>, id: &str) -> Result<&'a Solid, EvalError> {
     cache
         .get(id)
