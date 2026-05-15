@@ -9477,6 +9477,309 @@ fn build(
                 id: id.into(), op: "cross3d_union", message: e.message,
             })
         }
+        // ----------------------------------------------------------------
+        // Batch-2 sweep/loft variants
+        // ----------------------------------------------------------------
+        Feature::HelicalSweep { profile, axis_radius, pitch, turns, axis, segments, .. } => {
+            let r = resolve_one(id, axis_radius, params)?;
+            let p = resolve_one(id, pitch, params)?;
+            let t = resolve_one(id, turns, params)?;
+            let n_seg = *segments;
+            if r <= 0.0 || p <= 0.0 || t <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "HelicalSweep requires positive axis_radius, pitch, turns (got r={r}, p={p}, t={t})"
+                    ),
+                });
+            }
+            if n_seg < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("HelicalSweep segments must be >= 6 (got {n_seg})"),
+                });
+            }
+            if profile.points.len() < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "HelicalSweep profile needs at least 3 points (got {})",
+                        profile.points.len()
+                    ),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let total_angle = 2.0 * std::f64::consts::PI * t;
+            let total_samples = n_seg + 1;
+            // Build path: helix in the plane perpendicular to axis_idx.
+            // For axis z: x = r*cos(θ), y = r*sin(θ), z = p*θ/(2π).
+            // We permute: axis_idx=0→x, 1→y, 2→z.
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            let mut path_scalars: Vec<[Scalar; 3]> = Vec::with_capacity(total_samples);
+            for i in 0..total_samples {
+                let theta = total_angle * i as f64 / n_seg as f64;
+                let rise = p * theta / (2.0 * std::f64::consts::PI);
+                let mut pt = [0.0f64; 3];
+                pt[a_idx] = r * theta.cos();
+                pt[b_idx] = r * theta.sin();
+                pt[axis_idx] = rise;
+                path_scalars.push([
+                    Scalar::lit(pt[0]),
+                    Scalar::lit(pt[1]),
+                    Scalar::lit(pt[2]),
+                ]);
+            }
+            build_sweep_profile(id, profile, &path_scalars, 1, None, None, params)
+        }
+
+        Feature::AxisTaperedTube { start_radius, end_radius, length, axis, segments, wall_thickness, .. } => {
+            let r0 = resolve_one(id, start_radius, params)?;
+            let r1 = resolve_one(id, end_radius, params)?;
+            let l = resolve_one(id, length, params)?;
+            let wt = resolve_one(id, wall_thickness, params)?;
+            let n_seg = *segments;
+            if r0 <= 0.0 || r1 <= 0.0 || l <= 0.0 || wt <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "AxisTaperedTube requires positive start_radius, end_radius, length, wall_thickness (got r0={r0}, r1={r1}, l={l}, wt={wt})"
+                    ),
+                });
+            }
+            if r0 - wt <= 0.0 || r1 - wt <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "AxisTaperedTube inner radius must be > 0 at both ends (start_inner={}, end_inner={})",
+                        r0 - wt, r1 - wt
+                    ),
+                });
+            }
+            if n_seg < 6 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("AxisTaperedTube segments must be >= 6 (got {n_seg})"),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            // Build outer and inner frustra along the chosen axis.
+            // frustum_faceted(r_bot, r_top, h) is along +z; we rotate/permute.
+            // For axis z: trivial. For x/y: rotate.
+            let outer_local = frustum_faceted(r0, r1, l, n_seg);
+            let inner_local = frustum_faceted(r0 - wt, r1 - wt, l + 2e-3, n_seg);
+            let inner_shifted = translate_solid(&inner_local, {
+                let mut v = Vec3::new(0.0, 0.0, 0.0);
+                v.z = -1e-3;
+                v
+            });
+            let outer_bore = outer_local.try_difference(&inner_shifted).map_err(|e| EvalError::Boolean {
+                id: id.into(),
+                op: "axis_tapered_tube_bore",
+                message: e.message,
+            })?;
+            // If axis is already z nothing to do; otherwise rotate.
+            if axis_idx == 2 {
+                Ok(outer_bore)
+            } else {
+                // Rotate the +z frustum onto the target axis.
+                // For x: rotate 90° about +y.
+                // For y: rotate -90° about +x.
+                let (rot_axis, angle) = match axis_idx {
+                    0 => (Vec3::new(0.0, 1.0, 0.0), std::f64::consts::FRAC_PI_2),
+                    1 => (Vec3::new(1.0, 0.0, 0.0), -std::f64::consts::FRAC_PI_2),
+                    _ => unreachable!(),
+                };
+                Ok(rotate_solid(&outer_bore, rot_axis, angle, Point3::origin()))
+            }
+        }
+
+        Feature::AxisTwistExtrude { profile, length, axis, total_twist_deg, segments, .. } => {
+            let l = resolve_one(id, length, params)?;
+            let twist_total_deg = resolve_one(id, total_twist_deg, params)?;
+            let n_seg = *segments;
+            if l <= 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("AxisTwistExtrude requires positive length (got {l})"),
+                });
+            }
+            if n_seg < 1 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("AxisTwistExtrude segments must be >= 1 (got {n_seg})"),
+                });
+            }
+            if profile.points.len() < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "AxisTwistExtrude profile needs at least 3 points (got {})",
+                        profile.points.len()
+                    ),
+                });
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            // Resolve profile XY.
+            let mut prof_pts: Vec<(f64, f64)> = Vec::with_capacity(profile.points.len());
+            for p in &profile.points {
+                let xy = resolve_arr(p, params).map_err(|m| EvalError::Parameter {
+                    id: id.into(),
+                    message: m,
+                })?;
+                prof_pts.push((xy[0], xy[1]));
+            }
+            let np = prof_pts.len() as f64;
+            let cx = prof_pts.iter().map(|p| p.0).sum::<f64>() / np;
+            let cy = prof_pts.iter().map(|p| p.1).sum::<f64>() / np;
+            let step_h = l / n_seg as f64;
+            let twist_per_seg = twist_total_deg.to_radians() / n_seg as f64;
+            // Build lofted slices along the axis.
+            // For axis_idx == 2 (+z): profile XY is in XY, extrude along Z.
+            // For axis_idx == 0 (+x): profile XY becomes YZ, extrude along X.
+            // For axis_idx == 1 (+y): profile XY becomes XZ, extrude along Y.
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            let make_slice = |z_val: f64, twist_rad: f64| -> Vec<Point3> {
+                let cos_t = twist_rad.cos();
+                let sin_t = twist_rad.sin();
+                prof_pts
+                    .iter()
+                    .map(|&(u, v)| {
+                        let du = u - cx;
+                        let dv = v - cy;
+                        let ru = du * cos_t - dv * sin_t + cx;
+                        let rv = du * sin_t + dv * cos_t + cy;
+                        let mut pt = [0.0f64; 3];
+                        pt[axis_idx] = z_val;
+                        pt[a_idx] = ru;
+                        pt[b_idx] = rv;
+                        Point3::new(pt[0], pt[1], pt[2])
+                    })
+                    .collect()
+            };
+            let mut acc: Option<Solid> = None;
+            for i in 0..n_seg {
+                let z0 = step_h * i as f64;
+                let z1 = step_h * (i + 1) as f64;
+                let twist0 = twist_per_seg * i as f64;
+                let twist1 = twist_per_seg * (i + 1) as f64;
+                let bot = make_slice(z0, twist0);
+                let top = make_slice(z1, twist1);
+                let seg = extrude_lofted(&bot, &top);
+                acc = Some(match acc.take() {
+                    None => seg,
+                    Some(prev) => prev.try_union(&seg).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "axis_twist_extrude_union",
+                        message: format!("segment {i}: {}", e.message),
+                    })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+
+        Feature::PolarRevolveLoft { sections, axis_radius, axis, segments_around, .. } => {
+            let r = resolve_one(id, axis_radius, params)?;
+            let n = *segments_around;
+            if r < 0.0 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("PolarRevolveLoft axis_radius must be >= 0 (got {r})"),
+                });
+            }
+            if sections.len() < n || (sections.len() != n && sections.len() != n + 1) {
+                // sections.len() must equal segments_around (closed ring uses section[0] as both start and end)
+            }
+            if sections.is_empty() {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: "PolarRevolveLoft requires at least 1 section".into(),
+                });
+            }
+            if n < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("PolarRevolveLoft segments_around must be >= 3 (got {n})"),
+                });
+            }
+            // If sections.len() == n we wrap; if sections.len() == n+1 the last is same as first.
+            // We require sections.len() == n (closed ring) or n+1.
+            if sections.len() != n {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!(
+                        "PolarRevolveLoft expects {} sections for segments_around={n} (got {})",
+                        n, sections.len()
+                    ),
+                });
+            }
+            let n_pts = sections[0].points.len();
+            if n_pts < 3 {
+                return Err(EvalError::Invalid {
+                    id: id.into(),
+                    reason: format!("PolarRevolveLoft sections need at least 3 points (got {n_pts})"),
+                });
+            }
+            for (i, sec) in sections.iter().enumerate() {
+                if sec.points.len() != n_pts {
+                    return Err(EvalError::Invalid {
+                        id: id.into(),
+                        reason: format!(
+                            "PolarRevolveLoft section {i} has {} points; section 0 has {n_pts}",
+                            sec.points.len()
+                        ),
+                    });
+                }
+            }
+            let axis_idx = parse_axis(id, axis)?;
+            let (a_idx, b_idx) = perpendicular_axes(axis_idx);
+            // Place section i at angle theta_i around the axis.
+            // The section profile XY maps to the plane tangent to the circle at theta_i.
+            // Profile X → radial direction, profile Y → axis direction.
+            let place_section = |sec: &Profile2D, theta: f64| -> Result<Vec<Point3>, EvalError> {
+                let cos_t = theta.cos();
+                let sin_t = theta.sin();
+                // Radial unit vector (in a_idx / b_idx plane): (cos, sin, 0).
+                // Axial direction: axis_idx.
+                let center = [r * cos_t, r * sin_t, 0.0]; // in (a,b,axis) coords
+                let mut pts = Vec::with_capacity(sec.points.len());
+                for p in &sec.points {
+                    let xy = resolve_arr(p, params).map_err(|m| EvalError::Parameter {
+                        id: id.into(),
+                        message: m,
+                    })?;
+                    // xy[0] is radial offset, xy[1] is axial offset.
+                    let radial = xy[0];
+                    let axial  = xy[1];
+                    let mut world = [0.0f64; 3];
+                    world[a_idx]    = (r + radial) * cos_t;
+                    world[b_idx]    = (r + radial) * sin_t;
+                    world[axis_idx] = axial;
+                    pts.push(Point3::new(world[0], world[1], world[2]));
+                }
+                let _ = center; // suppress unused warning
+                Ok(pts)
+            };
+            let mut acc: Option<Solid> = None;
+            for i in 0..n {
+                let theta_a = 2.0 * std::f64::consts::PI * i as f64 / n as f64;
+                let theta_b = 2.0 * std::f64::consts::PI * ((i + 1) % n) as f64 / n as f64;
+                let sec_a = &sections[i];
+                let sec_b = &sections[(i + 1) % n];
+                let pts_a = place_section(sec_a, theta_a)?;
+                let pts_b = place_section(sec_b, theta_b)?;
+                let seg = extrude_lofted(&pts_a, &pts_b);
+                acc = Some(match acc.take() {
+                    None => seg,
+                    Some(prev) => prev.try_union(&seg).map_err(|e| EvalError::Boolean {
+                        id: id.into(),
+                        op: "polar_revolve_loft_union",
+                        message: format!("segment {i}: {}", e.message),
+                    })?,
+                });
+            }
+            Ok(acc.unwrap())
+        }
+
         Feature::Chair { seat_size, seat_thickness, leg_height, leg_thickness, leg_inset, back_thickness, back_height, .. } => {
             let ss = resolve_one(id, seat_size, params)?;
             let st = resolve_one(id, seat_thickness, params)?;

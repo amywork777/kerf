@@ -1266,6 +1266,74 @@ pub enum Feature {
         slices: usize,
     },
 
+    /// HelicalSweep: sweep an arbitrary 2D profile along a helix. The
+    /// profile XY is placed perpendicular to the helix tangent at each
+    /// sample point. `axis_radius` is the helix cylinder radius,
+    /// `pitch` is the rise per full revolution, `turns` is the number of
+    /// revolutions, `axis` selects the helix axis ("x" | "y" | "z"),
+    /// `segments` is the total number of polyline segments (≥ 6) used to
+    /// approximate the helix. Generalises Coil/Spring/Helix to an
+    /// arbitrary profile cross-section.
+    HelicalSweep {
+        id: String,
+        profile: Profile2D,
+        axis_radius: Scalar,
+        pitch: Scalar,
+        turns: Scalar,
+        axis: String,
+        segments: usize,
+    },
+
+    /// AxisTaperedTube: a hollow tube whose cross-section radius varies
+    /// linearly from `start_radius` at one end to `end_radius` at the
+    /// other, with constant `wall_thickness`. Oriented along `axis`
+    /// ("x" | "y" | "z") and extends for `length`. When start_radius ==
+    /// end_radius the result is a uniform hollow cylinder (same as Tube).
+    /// Both inner radii (start_radius − wall_thickness and end_radius −
+    /// wall_thickness) must be > 0.
+    AxisTaperedTube {
+        id: String,
+        start_radius: Scalar,
+        end_radius: Scalar,
+        length: Scalar,
+        axis: String,
+        segments: usize,
+        wall_thickness: Scalar,
+    },
+
+    /// AxisTwistExtrude: extrude a 2D profile along `axis` ("x" | "y" |
+    /// "z") for `length`, applying a progressive rotation of
+    /// `total_twist_deg` degrees about the extrusion axis. The sweep is
+    /// divided into `segments` equal-height steps; at step i the profile
+    /// is rotated by `total_twist_deg * i / segments` degrees about its
+    /// centroid. When `total_twist_deg == 0` the result is identical to a
+    /// straight extrusion (same as TaperedExtrude with equal radii).
+    /// `segments` must be ≥ 1.
+    AxisTwistExtrude {
+        id: String,
+        profile: Profile2D,
+        length: Scalar,
+        axis: String,
+        total_twist_deg: Scalar,
+        segments: usize,
+    },
+
+    /// PolarRevolveLoft: loft through N sections arranged evenly around a
+    /// circle of radius `axis_radius` centred on the origin in the plane
+    /// perpendicular to `axis` ("x" | "y" | "z"). Section i is placed at
+    /// angle `2π * i / N` around the axis. Each consecutive pair of
+    /// sections is connected by an `extrude_lofted` segment; the last
+    /// section is connected back to the first to form a closed ring.
+    /// `segments_around` is the number of sections (must be ≥ 3). All
+    /// sections must have the same vertex count (≥ 3).
+    PolarRevolveLoft {
+        id: String,
+        sections: Vec<Profile2D>,
+        axis_radius: Scalar,
+        axis: String,
+        segments_around: usize,
+    },
+
     /// Mortise: rectangular pocket cut into the +z face of a workpiece.
     /// Centered on (cx, cy), spanning (width, length, depth) where depth
     /// is along -z. Produces a freestanding pocket solid; subtract it
@@ -4418,6 +4486,10 @@ impl Feature {
             | Feature::SweepWithScale { id, .. }
             | Feature::HelicalThread { id, .. }
             | Feature::TwistedTube { id, .. }
+            | Feature::HelicalSweep { id, .. }
+            | Feature::AxisTaperedTube { id, .. }
+            | Feature::AxisTwistExtrude { id, .. }
+            | Feature::PolarRevolveLoft { id, .. }
             | Feature::Mortise { id, .. }
             | Feature::Tenon { id, .. }
             | Feature::FingerJoint { id, .. }
@@ -4757,6 +4829,10 @@ impl Feature {
             | Feature::SweepWithScale { .. }
             | Feature::HelicalThread { .. }
             | Feature::TwistedTube { .. }
+            | Feature::HelicalSweep { .. }
+            | Feature::AxisTaperedTube { .. }
+            | Feature::AxisTwistExtrude { .. }
+            | Feature::PolarRevolveLoft { .. }
             | Feature::Mortise { .. }
             | Feature::Tenon { .. }
             | Feature::FingerJoint { .. }
