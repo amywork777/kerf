@@ -162,6 +162,14 @@
     box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
   .save-toast:hover { border-color: var(--fg); }
 
+  /* --- section view --- */
+  #section-view-host { margin-top: 14px; }
+  #section-view { }
+  #section-view label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 12px; }
+  #section-view .sv-row { display: flex; gap: 4px; margin-bottom: 6px; }
+  #section-view input[type=range] { width: 100%; margin-bottom: 4px; }
+  #section-flip { flex: 0 0 auto; padding: 6px 8px; }
+
   /* --- sketcher panel --- */
   #sketcher-toggle { margin-top: 14px; }
   #sketcher-panel { display: none; position: fixed; right: 16px; top: 16px;
@@ -246,6 +254,7 @@
         <code>W</code>wireframe <code>R</code>reset <code>D</code>drawing <code>S</code>save
       </div>
     </div>
+    <div id="section-view-host"></div>
     <div id="status">no model loaded</div>
     <button id="sketcher-toggle">Open 2D sketcher</button>
   </aside>
