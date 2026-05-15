@@ -3711,6 +3711,7 @@ pub enum Feature {
         to: [Scalar; 3],
         shaft_radius: Scalar,
         head_radius: Scalar,
+        segments: usize,
     },
 
     // -------------------------------------------------------------------
