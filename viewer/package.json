@@ -19,6 +19,7 @@
     "three": "^0.170.0"
   },
   "devDependencies": {
+<<<<<<< HEAD
     "@tauri-apps/cli": "^2",
     "@types/three": "^0.170.0",
 <<<<<<< HEAD
@@ -31,6 +32,12 @@
 =======
     "jsdom": "^25.0.0",
 >>>>>>> d5a399c (feat(sketcher): add snap engine and DOF readout to 2D sketcher)
+=======
+    "@types/jsdom": "^28.0.1",
+    "@types/three": "^0.170.0",
+    "@vitest/coverage-v8": "^2.1.9",
+    "jsdom": "^29.1.1",
+>>>>>>> 582a0c7 (feat(sketcher): add undo/redo history stack + inline dimension entry)
     "typescript": "^5.6.3",
     "vite": "^5.4.10",
     "vitest": "^2.1.9"
