@@ -9,17 +9,18 @@
 //! example: `cargo run --example readiness_matrix -p kerf-brep`.
 
 use kerf_brep::primitives::{
-    box_, box_at, cylinder_faceted, extrude_polygon, revolve_polyline,
+    box_, box_at, cylinder_faceted, extrude_polygon, frustum_faceted, revolve_polyline,
 };
 use kerf_brep::Solid;
 use kerf_geom::{Point3, Vec3};
 
 /// Minimum number of (primitive × primitive × op) combos that must succeed.
 /// Bumped milestone-by-milestone in docs/readiness.md.
-const READINESS_FLOOR: usize = 168;
+const READINESS_FLOOR: usize = 213;
 
-/// Total number of combos run by the matrix (8 inputs × 7 others × 3 ops).
-const READINESS_TOTAL: usize = 168;
+/// Total number of combos run by the matrix (9 inputs × 8 others × 3 ops).
+/// Added frustum_n8 in M21 (168→216 total, 168→213 ok: 45/48 new frustum combos pass).
+const READINESS_TOTAL: usize = 216;
 
 #[derive(Clone, Copy)]
 enum Op {
@@ -65,6 +66,9 @@ fn build_inputs() -> Vec<(&'static str, Solid)> {
         ),
         ("cyl_n12", cylinder_faceted(0.6, 3.0, 12)),
         ("cyl_n4", cylinder_faceted(0.7, 2.0, 4)),
+        // frustum_faceted: bottom radius 0.8, top radius 0.4, height 2.5, 8 sides.
+        // Positioned so it overlaps with the 2³ box and other inputs.
+        ("frustum_n8", frustum_faceted(0.8, 0.4, 2.5, 8)),
         (
             "vase",
             revolve_polyline(&[
