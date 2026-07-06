@@ -1,4 +1,5 @@
 //! Solid constructors. v1: box_, extrude_polygon. M13: cylinder. M14: cone. M15: sphere. M16: torus. M17: frustum. M20: revolve.
+//! Faceted (all-planar): cylinder_faceted (M23), sphere_faceted, capsule_faceted, torus_faceted.
 
 pub mod box_;
 pub mod capsule_faceted;
@@ -11,6 +12,7 @@ pub mod revolve;
 pub mod sphere;
 pub mod sphere_faceted;
 pub mod torus;
+pub mod torus_faceted;
 
 pub use box_::{box_, box_at};
 pub use capsule_faceted::capsule_faceted;
@@ -23,3 +25,4 @@ pub use revolve::revolve_polyline;
 pub use sphere::sphere;
 pub use sphere_faceted::sphere_faceted;
 pub use torus::torus;
+pub use torus_faceted::torus_faceted;

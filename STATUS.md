@@ -1,13 +1,13 @@
 # Kerf B-rep Kernel — Progress Status
 
-## Scorecard (updated 2026-05-11)
+## Scorecard (updated 2026-07-06)
 
 | Metric | Value |
 |---|---|
 | Readiness matrix | 119 / 168 (71%) |
-| Total tests passing | 342 |
+| Total tests passing | 348 |
 | Ignored (known limitations) | 4 |
-| Primitives | 12 (box, box_at, cone, cylinder, cylinder_faceted, capsule_faceted, extrude_polygon, frustum, revolve_polyline, sphere, sphere_faceted, torus) |
+| Primitives | 13 (box, box_at, cone, cylinder, cylinder_faceted, capsule_faceted, extrude_polygon, frustum, revolve_polyline, sphere, sphere_faceted, torus, **torus_faceted**) |
 
 ## Primitives
 
@@ -18,6 +18,7 @@
 | `cylinder_faceted(r, h, n)` | Polyhedral prism | ✅ works when edges don't pierce faces |
 | `sphere_faceted(r, n)` | Polyhedral UV sphere | ✅ full (all-planar) |
 | `capsule_faceted(r, h, n)` | Polyhedral capsule | ✅ full (all-planar) |
+| `torus_faceted(R, r, n)` | Polyhedral torus (genus 1) | ✅ full (all-planar) |
 | `cylinder(r, h)` | Analytic curved | ❌ curved boolean path incomplete |
 | `cone(r, h)` | Analytic curved | ❌ curved boolean path incomplete |
 | `sphere(r)` | Analytic curved | ❌ curved boolean path incomplete |
@@ -28,7 +29,8 @@
 ## Gap list (ordered by achievability)
 
 ### Quick wins (1–2 hours per run)
-- [ ] **More faceted primitives** — `cylinder_faceted_capped` (hemisphere caps), `ellipsoid_faceted`, `torus_faceted`
+- [x] **`torus_faceted`** — genus-1 polyhedral torus, works directly with booleans. 6 unit tests. (done 2026-07-06)
+- [ ] **More faceted primitives** — `ellipsoid_faceted`, `cone_faceted`, `hemisphere_faceted`
 - [ ] **Boolean jitter expansion** — add ±x, ±y, ±z offset variants to the tier-3 retry to push readiness past 71%
 - [ ] **`solid_volume` mesh fallback** — for analytic-only solids (sphere, torus), tessellate + sum to get an approximate volume
 - [ ] **Face-index API on Solid** — expose face normals / centroids for downstream use
@@ -58,4 +60,4 @@
 
 ## Recommended next-week target
 
-**Add `readiness_faceted.rs` integration test suite** — wire `sphere_faceted` and `capsule_faceted` into a curved-primitive-style test suite (volume convergence, diff, intersection, union with box, STL roundtrip). Then attempt `torus_faceted` to give a genus-1 polyhedral primitive that works directly with the boolean pipeline without tessellate-then-import.
+**Add `readiness_faceted.rs` integration test suite** — wire `sphere_faceted`, `capsule_faceted`, and `torus_faceted` into a readiness_curved-style test suite covering: volume convergence at multiple n, union/intersection/difference with box, STL roundtrip. Then attempt **boolean jitter expansion** (add ±x, ±y, ±z diagonal variants to the tier-3 retry) to push the readiness matrix past 71%.

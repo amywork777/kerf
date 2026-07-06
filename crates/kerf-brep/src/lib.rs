@@ -18,7 +18,7 @@ pub use mesh_import::{from_triangles, read_ascii, read_stl_auto, read_stl_binary
 pub use obj::{read_obj, read_obj_to_solid, write_obj};
 pub use primitives::{
     box_, box_at, capsule_faceted, cone, cylinder, cylinder_faceted, extrude_polygon, frustum,
-    revolve_polyline, sphere, sphere_faceted, torus,
+    revolve_polyline, sphere, sphere_faceted, torus, torus_faceted,
 };
 pub use serde_io::{read_json, write_json};
 pub use solid::{try_boolean_solid, BooleanError, Solid};
