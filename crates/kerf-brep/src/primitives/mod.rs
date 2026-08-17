@@ -1,4 +1,4 @@
-//! Solid constructors. v1: box_, extrude_polygon. M13: cylinder. M14: cone. M15: sphere. M16: torus. M17: frustum. M20: revolve.
+//! Solid constructors. v1: box_, extrude_polygon. M13: cylinder. M14: cone. M15: sphere. M16: torus. M17: frustum. M20: revolve. M21: cone_faceted.
 
 pub mod box_;
 pub mod cone;

@@ -1,19 +1,18 @@
-//! `cone_faceted(r, h, n)` — n-gon pyramid approximation of a cone.
+//! `cone_faceted(radius, height, n)` — n-gon pyramid approximation of a cone.
 //!
-//! Unlike [`super::cone`], every face is a flat plane: one base n-gon and
-//! n triangular lateral faces. The all-planar topology means the solid
-//! tessellates exactly and integrates with the planar boolean pipeline.
+//! Unlike [`cone`], the lateral surface is a fan of `n` planar triangles instead
+//! of one analytic `Cone` surface. The geometry is fully planar, so it
+//! tessellates to a clean STL without any seam-edge special cases.
 //!
-//! Topology (Euler: V − E + F = (n+1) − 2n + (n+1) = 2 ✓):
-//!   - V = n+1  (n base ring vertices + 1 apex)
-//!   - E = 2n   (n base ring edges + n lateral edges from apex to ring)
-//!   - F = n+1  (1 base n-gon + n triangular lateral faces)
+//! # Topology (Euler: V = n+1, E = 2n, F = n+1, S = 1)
+//! (n+1) - 2n + (n+1) - 0 = 2 ✓
 //!
-//! Analytic volume: V_cone = (n · r² · sin(2π/n) · h) / 6
-//!                         = (1/3) · A_n · h
-//! where A_n = (n · r² · sin(2π/n)) / 2 is the area of the inscribed n-gon.
+//! - 1 base n-gon face (outward normal = -z)
+//! - n lateral triangle faces (outward normals point away from z-axis)
+//! - Base half-edge loop is CW from +z (CCW from outward -z).
+//! - Lateral loops wind: b_k → b_{k+1} → apex → b_k (CCW from outward).
 
-use std::f64::consts::TAU;
+use std::f64::consts::PI;
 
 use kerf_geom::{Frame, Line, Plane, Point3, Vec3};
 use kerf_topo::validate;
@@ -21,185 +20,202 @@ use kerf_topo::validate;
 use crate::geometry::{CurveSegment, SurfaceKind};
 use crate::Solid;
 
-/// Build an n-gon pyramid inscribed in a cone of base radius `r` and height `h`.
+/// Build an n-gon pyramid (faceted cone) with base radius `r`, height `h`,
+/// and `n` lateral triangular faces.
 ///
-/// The base is a regular n-gon in the z = 0 plane (CCW from +z), with a single
-/// apex vertex at (0, 0, h). All n+1 faces are planar. Higher n → closer to a
-/// true cone; the result has n+1 vertices, 2n edges, and n+1 faces.
+/// The base is a regular n-gon centered at the origin in the z = 0 plane,
+/// with a phase offset of π/n so that for n = 4 the base is an axis-aligned
+/// square. The apex is at (0, 0, h). All faces are planar.
+///
+/// The solid has 2n + 1 faces (1 base + n lateral), 2n edges, and n + 1
+/// vertices.
 ///
 /// # Panics (debug)
-/// Panics in debug mode if `r ≤ 0`, `h ≤ 0`, or `n < 3`.
-pub fn cone_faceted(r: f64, h: f64, n: usize) -> Solid {
-    debug_assert!(r > 0.0, "radius must be positive");
-    debug_assert!(h > 0.0, "height must be positive");
+/// Panics if `radius <= 0`, `height <= 0`, or `n < 3`.
+pub fn cone_faceted(radius: f64, height: f64, n: usize) -> Solid {
+    debug_assert!(radius > 0.0, "radius must be positive");
+    debug_assert!(height > 0.0, "height must be positive");
     debug_assert!(n >= 3, "n must be at least 3");
 
     let mut s = Solid::new();
 
-    // ── 1. Vertices ──────────────────────────────────────────────────────────
-    let apex = s.topo.build_insert_vertex();
-    s.vertex_geom.insert(apex, Point3::new(0.0, 0.0, h));
-
-    // Base ring: b[i] at angle 2πi/n in the z=0 plane (CCW from +z).
-    let bv: Vec<_> = (0..n)
+    // ---- 1. Vertices ----
+    // Base ring: n vertices evenly spaced, phased by π/n.
+    let phase = PI / n as f64;
+    let base_verts: Vec<_> = (0..n)
         .map(|i| {
-            let theta = TAU * i as f64 / n as f64;
-            let vid = s.topo.build_insert_vertex();
+            let v = s.topo.build_insert_vertex();
+            let theta = phase + 2.0 * PI * i as f64 / n as f64;
             s.vertex_geom
-                .insert(vid, Point3::new(r * theta.cos(), r * theta.sin(), 0.0));
-            vid
+                .insert(v, Point3::new(radius * theta.cos(), radius * theta.sin(), 0.0));
+            v
         })
         .collect();
 
-    // ── 2. Solid + Shell ─────────────────────────────────────────────────────
+    // Apex vertex.
+    let v_apex = s.topo.build_insert_vertex();
+    s.vertex_geom.insert(v_apex, Point3::new(0.0, 0.0, height));
+
+    // ---- 2. Solid + Shell ----
     let solid_id = s.topo.build_insert_solid();
     s.topo.build_set_active_solid(Some(solid_id));
-    let shell = s.topo.build_insert_shell(solid_id);
+    let shell_id = s.topo.build_insert_shell(solid_id);
 
-    // ── 3. Faces + Loops ─────────────────────────────────────────────────────
-    let base_lp = s.topo.build_insert_loop_placeholder();
-    let base_face = s.topo.build_insert_face(base_lp, shell);
-    s.topo.build_set_loop_face(base_lp, base_face);
-    s.topo.build_push_shell_face(shell, base_face);
+    // ---- 3. Faces + Loops ----
+    // Base face (1 n-gon).
+    let base_loop = s.topo.build_insert_loop_placeholder();
+    let base_face = s.topo.build_insert_face(base_loop, shell_id);
+    s.topo.build_set_loop_face(base_loop, base_face);
+    s.topo.build_push_shell_face(shell_id, base_face);
 
-    let lat_lps: Vec<_> = (0..n)
-        .map(|_| s.topo.build_insert_loop_placeholder())
-        .collect();
-    let lat_faces: Vec<_> = (0..n)
-        .map(|i| {
-            let lp = lat_lps[i];
-            let f = s.topo.build_insert_face(lp, shell);
-            s.topo.build_set_loop_face(lp, f);
-            s.topo.build_push_shell_face(shell, f);
-            f
-        })
-        .collect();
-
-    // ── 4. Base half-edges ───────────────────────────────────────────────────
-    // Outward normal of the base face is −z (pointing away from the enclosed
-    // volume). CCW from −z = CW from +z = reverse ring order.
-    //   base_he[j] origin: b[(n−j) % n]
-    //   j=0: b[0], j=1: b[n-1], j=2: b[n-2], ..., j=n-1: b[1]
-    let base_he: Vec<_> = (0..n)
-        .map(|j| s.topo.build_insert_half_edge(bv[(n - j) % n], base_lp))
-        .collect();
-    for j in 0..n {
-        s.topo
-            .build_set_half_edge_next_prev(base_he[j], base_he[(j + 1) % n]);
-    }
-    s.topo.build_set_loop_half_edge(base_lp, Some(base_he[0]));
-
-    // ── 5. Lateral half-edges ────────────────────────────────────────────────
-    // Lateral face i covers triangle (apex, b[i], b[(i+1)%n]).
-    // Winding apex→b[i]→b[(i+1)%n] gives outward normal (verified via volume).
-    //   lat_he[i][0]: origin apex,       goes to b[i]           (lateral edge i)
-    //   lat_he[i][1]: origin b[i],       goes to b[(i+1)%n]     (base ring edge i)
-    //   lat_he[i][2]: origin b[(i+1)%n], goes to apex           (lateral edge (i+1)%n rev)
-    let lat_he: Vec<[_; 3]> = (0..n)
-        .map(|i| {
-            let lp = lat_lps[i];
-            let he0 = s.topo.build_insert_half_edge(apex, lp);
-            let he1 = s.topo.build_insert_half_edge(bv[i], lp);
-            let he2 = s.topo.build_insert_half_edge(bv[(i + 1) % n], lp);
-            [he0, he1, he2]
-        })
-        .collect();
-    for i in 0..n {
-        s.topo
-            .build_set_half_edge_next_prev(lat_he[i][0], lat_he[i][1]);
-        s.topo
-            .build_set_half_edge_next_prev(lat_he[i][1], lat_he[i][2]);
-        s.topo
-            .build_set_half_edge_next_prev(lat_he[i][2], lat_he[i][0]);
-        s.topo.build_set_loop_half_edge(lat_lps[i], Some(lat_he[i][0]));
+    // Lateral triangular faces f_0 … f_{n-1}.
+    let mut lat_loops = Vec::with_capacity(n);
+    let mut lat_faces = Vec::with_capacity(n);
+    for _ in 0..n {
+        let lp = s.topo.build_insert_loop_placeholder();
+        let face = s.topo.build_insert_face(lp, shell_id);
+        s.topo.build_set_loop_face(lp, face);
+        s.topo.build_push_shell_face(shell_id, face);
+        lat_loops.push(lp);
+        lat_faces.push(face);
     }
 
-    // ── 6. Twin pairs ────────────────────────────────────────────────────────
-    // Base ring edge i: b[i]→b[(i+1)%n] ↔ b[(i+1)%n]→b[i]
-    //   forward:  lat_he[i][1]        (in lateral face i)
-    //   backward: base_he[n−1−i]      (in base face; origin b[(i+1)%n])
-    for i in 0..n {
-        s.topo
-            .build_set_half_edge_twin(lat_he[i][1], base_he[n - 1 - i]);
-        s.topo
-            .build_set_half_edge_twin(base_he[n - 1 - i], lat_he[i][1]);
+    // ---- 4. Half-edges ----
+    // Base loop half-edges: he_base[k] origin = b_k.
+    // Loop order: b_0 → b_{n-1} → b_{n-2} → … → b_1 → b_0
+    // (CW from +z = CCW from outward normal -z).
+    let he_base: Vec<_> = (0..n)
+        .map(|k| s.topo.build_insert_half_edge(base_verts[k], base_loop))
+        .collect();
+
+    // Lateral face f_k spans {b_k, b_{k+1 mod n}, apex}.
+    // Loop wind: b_k → b_{k+1} → apex → b_k (CCW from outward normal).
+    //
+    //   he_lat_bot[k]  : origin b_k          (base edge of the triangle)
+    //   he_lat_right[k]: origin b_{k+1 mod n} (right lateral edge)
+    //   he_lat_left[k] : origin apex          (left  lateral edge)
+    let he_lat_bot: Vec<_> = (0..n)
+        .map(|k| s.topo.build_insert_half_edge(base_verts[k], lat_loops[k]))
+        .collect();
+    let he_lat_right: Vec<_> = (0..n)
+        .map(|k| s.topo.build_insert_half_edge(base_verts[(k + 1) % n], lat_loops[k]))
+        .collect();
+    let he_lat_left: Vec<_> = (0..n)
+        .map(|k| s.topo.build_insert_half_edge(v_apex, lat_loops[k]))
+        .collect();
+
+    // ---- 5. Wire next/prev ----
+    // Base loop: he_base[k].next = he_base[(k-1+n) % n]
+    // i.e. b_0 → b_{n-1} → b_{n-2} → … → b_1 → b_0.
+    for k in 0..n {
+        let next_k = if k == 0 { n - 1 } else { k - 1 };
+        s.topo.build_set_half_edge_next_prev(he_base[k], he_base[next_k]);
     }
-    // Lateral edge i: apex→b[i] ↔ b[i]→apex
-    //   forward:  lat_he[i][0]           (origin apex, in face i)
-    //   backward: lat_he[(i-1+n)%n][2]   (origin b[i], in face i-1)
-    for i in 0..n {
-        let prev = (i + n - 1) % n;
+    s.topo.build_set_loop_half_edge(base_loop, Some(he_base[0]));
+
+    // Lateral face f_k: bot → right → left → bot.
+    for k in 0..n {
         s.topo
-            .build_set_half_edge_twin(lat_he[i][0], lat_he[prev][2]);
+            .build_set_half_edge_next_prev(he_lat_bot[k], he_lat_right[k]);
         s.topo
-            .build_set_half_edge_twin(lat_he[prev][2], lat_he[i][0]);
+            .build_set_half_edge_next_prev(he_lat_right[k], he_lat_left[k]);
+        s.topo
+            .build_set_half_edge_next_prev(he_lat_left[k], he_lat_bot[k]);
+        s.topo
+            .build_set_loop_half_edge(lat_loops[k], Some(he_lat_bot[k]));
     }
 
-    // ── 7. Edges ─────────────────────────────────────────────────────────────
-    // n base ring edges
-    for i in 0..n {
+    // ---- 6. Twin pairs ----
+    // Base edge {b_k, b_{k+1}}:
+    //   in base loop:     he_base[(k+1) % n]  (origin b_{k+1}, goes toward b_k)
+    //   in lateral f_k:   he_lat_bot[k]        (origin b_k, goes toward b_{k+1})
+    for k in 0..n {
+        let k1 = (k + 1) % n;
+        s.topo
+            .build_set_half_edge_twin(he_base[k1], he_lat_bot[k]);
+        s.topo
+            .build_set_half_edge_twin(he_lat_bot[k], he_base[k1]);
+    }
+
+    // Lateral edge l_k = {b_k, apex}:
+    //   in face f_k:              he_lat_left[k]              (origin apex)
+    //   in face f_{k-1 mod n}:    he_lat_right[(k+n-1) % n]  (origin b_k)
+    for k in 0..n {
+        let k_prev = (k + n - 1) % n;
+        s.topo
+            .build_set_half_edge_twin(he_lat_right[k_prev], he_lat_left[k]);
+        s.topo
+            .build_set_half_edge_twin(he_lat_left[k], he_lat_right[k_prev]);
+    }
+
+    // ---- 7. Edges ----
+    // n base edges: edge between b_k and b_{k+1}.
+    for k in 0..n {
+        let k1 = (k + 1) % n;
+        let e = s.topo.build_insert_edge([he_base[k1], he_lat_bot[k]]);
+        s.topo.build_set_half_edge_edge(he_base[k1], e);
+        s.topo.build_set_half_edge_edge(he_lat_bot[k], e);
+    }
+    // n lateral edges: edge l_k between b_k and apex.
+    for k in 0..n {
+        let k_prev = (k + n - 1) % n;
         let e = s
             .topo
-            .build_insert_edge([lat_he[i][1], base_he[n - 1 - i]]);
-        s.topo.build_set_half_edge_edge(lat_he[i][1], e);
-        s.topo.build_set_half_edge_edge(base_he[n - 1 - i], e);
-    }
-    // n lateral edges (apex ↔ b[i])
-    for i in 0..n {
-        let prev = (i + n - 1) % n;
-        let e = s.topo.build_insert_edge([lat_he[i][0], lat_he[prev][2]]);
-        s.topo.build_set_half_edge_edge(lat_he[i][0], e);
-        s.topo.build_set_half_edge_edge(lat_he[prev][2], e);
+            .build_insert_edge([he_lat_right[k_prev], he_lat_left[k]]);
+        s.topo.build_set_half_edge_edge(he_lat_right[k_prev], e);
+        s.topo.build_set_half_edge_edge(he_lat_left[k], e);
     }
 
-    // ── 8. Vertex outgoing half-edges ────────────────────────────────────────
-    s.topo.build_set_vertex_outgoing(apex, Some(lat_he[0][0]));
-    for i in 0..n {
-        s.topo.build_set_vertex_outgoing(bv[i], Some(lat_he[i][1]));
+    // ---- 8. Vertex outgoing half-edges ----
+    for k in 0..n {
+        s.topo
+            .build_set_vertex_outgoing(base_verts[k], Some(he_base[k]));
     }
+    s.topo
+        .build_set_vertex_outgoing(v_apex, Some(he_lat_left[0]));
 
     validate(&s.topo).expect("cone_faceted topology violates Euler invariant");
 
-    // ── 9. Edge geometry (line segments) ─────────────────────────────────────
+    // ---- 9. Edge geometry (line segments) ----
     let edge_ids: Vec<_> = s.topo.edge_ids().collect();
-    for eid in edge_ids {
-        let edge = s.topo.edge(eid).unwrap();
+    for eid in &edge_ids {
+        let edge = s.topo.edge(*eid).unwrap();
         let [he_a, _] = edge.half_edges();
         let v0 = s.topo.half_edge(he_a).unwrap().origin();
-        let twin_he = s.topo.half_edge(he_a).unwrap().twin();
-        let v1 = s.topo.half_edge(twin_he).unwrap().origin();
+        let twin = s.topo.half_edge(he_a).unwrap().twin();
+        let v1 = s.topo.half_edge(twin).unwrap().origin();
         let p0 = *s.vertex_geom.get(v0).unwrap();
         let p1 = *s.vertex_geom.get(v1).unwrap();
-        let line = Line::through(p0, p1).unwrap();
-        let length = (p1 - p0).norm();
-        s.edge_geom.insert(eid, CurveSegment::line(line, 0.0, length));
+        let line = Line::through(p0, p1).expect("edge endpoints must be distinct");
+        let seg = CurveSegment::line(line, 0.0, (p1 - p0).norm());
+        s.edge_geom.insert(*eid, seg);
     }
 
-    // ── 10. Face geometry (planes) ───────────────────────────────────────────
-    // Base face: outward normal = −z (away from enclosed volume).
-    {
-        let frame = Frame {
-            origin: Point3::origin(),
-            x: Vec3::x(),
-            y: Vec3::y(),
-            z: -Vec3::z(),
-        };
+    // ---- 10. Face geometry (planes) ----
+    // Base face: outward normal = -z.
+    let base_p = *s.vertex_geom.get(base_verts[0]).unwrap();
+    let base_frame = Frame {
+        origin: base_p,
+        x: Vec3::x(),
+        y: Vec3::y(),
+        z: -Vec3::z(),
+    };
+    s.face_geom
+        .insert(base_face, SurfaceKind::Plane(Plane::new(base_frame)));
+
+    // Lateral face f_k: outward normal = (b_{k+1} - b_k) × (apex - b_k), normalized.
+    let p_apex = *s.vertex_geom.get(v_apex).unwrap();
+    for k in 0..n {
+        let pk = *s.vertex_geom.get(base_verts[k]).unwrap();
+        let pk1 = *s.vertex_geom.get(base_verts[(k + 1) % n]).unwrap();
+        let edge_vec = pk1 - pk;
+        let to_apex = p_apex - pk;
+        let normal = edge_vec.cross(&to_apex).normalize();
+        let x = edge_vec.normalize();
+        let y = normal.cross(&x);
+        let frame = Frame { origin: pk, x, y, z: normal };
         s.face_geom
-            .insert(base_face, SurfaceKind::Plane(Plane::new(frame)));
-    }
-    // Lateral face i: triangle apex, b[i], b[(i+1)%n]. Outward normal from
-    // Frame::from_x_yhint(apex, e1=b[i]−apex, e2=b[i+1]−apex) where
-    // e1 × e2 has positive z and positive radial component → outward. ✓
-    for i in 0..n {
-        let apex_pt = *s.vertex_geom.get(apex).unwrap();
-        let bi_pt = *s.vertex_geom.get(bv[i]).unwrap();
-        let bi1_pt = *s.vertex_geom.get(bv[(i + 1) % n]).unwrap();
-        let e1 = bi_pt - apex_pt;
-        let e2 = bi1_pt - apex_pt;
-        let frame = Frame::from_x_yhint(apex_pt, e1, e2)
-            .expect("non-degenerate lateral triangle");
-        s.face_geom
-            .insert(lat_faces[i], SurfaceKind::Plane(Plane::new(frame)));
+            .insert(lat_faces[k], SurfaceKind::Plane(Plane::new(frame)));
     }
 
     s
@@ -208,19 +224,23 @@ pub fn cone_faceted(r: f64, h: f64, n: usize) -> Solid {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f64::consts::TAU;
+    use std::f64::consts::{PI, TAU};
 
+    use crate::geometry::{CurveKind, SurfaceKind};
+    use crate::measure::solid_volume;
     use crate::serde_io::{read_json, write_json};
-    use crate::solid_volume;
+    use kerf_topo::validate;
 
-    fn analytic_volume(r: f64, h: f64, n: usize) -> f64 {
-        (n as f64 * r * r * (TAU / n as f64).sin() * h) / 6.0
+    /// Analytic volume of a regular n-gon pyramid with circumradius `r` and height `h`:
+    ///   V = (n · r² · h / 6) · sin(2π / n)
+    fn pyramid_volume(r: f64, h: f64, n: usize) -> f64 {
+        (n as f64 * r * r * h / 6.0) * (TAU / n as f64).sin()
     }
 
     #[test]
-    fn cone_faceted_tetrahedron_topology() {
-        // n=3 gives a triangular pyramid (tetrahedron-like): V=4, E=6, F=4.
-        let s = cone_faceted(1.0, 2.0, 3);
+    fn triangle_pyramid_topology() {
+        let s = cone_faceted(1.0, 1.0, 3);
+        // V = 4, E = 6, F = 4
         assert_eq!(s.vertex_count(), 4);
         assert_eq!(s.edge_count(), 6);
         assert_eq!(s.face_count(), 4);
@@ -229,101 +249,145 @@ mod tests {
     }
 
     #[test]
-    fn cone_faceted_square_pyramid_topology() {
-        // n=4: V=5, E=8, F=5.
+    fn square_pyramid_topology() {
         let s = cone_faceted(1.0, 2.0, 4);
+        // V = 5, E = 8, F = 5
         assert_eq!(s.vertex_count(), 5);
         assert_eq!(s.edge_count(), 8);
         assert_eq!(s.face_count(), 5);
+        assert_eq!(s.shell_count(), 1);
         validate(&s.topo).unwrap();
     }
 
     #[test]
-    fn cone_faceted_8gon_topology() {
-        // n=8: V=9, E=16, F=9.
-        let s = cone_faceted(1.0, 2.0, 8);
-        assert_eq!(s.vertex_count(), 9);
-        assert_eq!(s.edge_count(), 16);
-        assert_eq!(s.face_count(), 9);
+    fn hex_pyramid_topology() {
+        let s = cone_faceted(1.0, 1.5, 6);
+        // V = 7, E = 12, F = 7
+        assert_eq!(s.vertex_count(), 7);
+        assert_eq!(s.edge_count(), 12);
+        assert_eq!(s.face_count(), 7);
         validate(&s.topo).unwrap();
     }
 
     #[test]
-    fn cone_faceted_volume_matches_analytic_n3() {
-        let s = cone_faceted(1.0, 3.0, 3);
-        let got = solid_volume(&s);
-        let want = analytic_volume(1.0, 3.0, 3);
-        assert!(
-            (got - want).abs() < 1e-10,
-            "n=3: got={got} want={want}"
-        );
+    fn high_poly_pyramid_topology() {
+        let s = cone_faceted(2.0, 3.0, 24);
+        assert_eq!(s.vertex_count(), 25);
+        assert_eq!(s.edge_count(), 48);
+        assert_eq!(s.face_count(), 25);
+        validate(&s.topo).unwrap();
     }
 
     #[test]
-    fn cone_faceted_volume_matches_analytic_n6() {
-        let s = cone_faceted(2.0, 4.0, 6);
-        let got = solid_volume(&s);
-        let want = analytic_volume(2.0, 4.0, 6);
-        assert!(
-            (got - want).abs() < 1e-10,
-            "n=6: got={got} want={want}"
-        );
-    }
-
-    #[test]
-    fn cone_faceted_volume_matches_analytic_n32() {
-        // n=32: very close to analytic cone volume (1/3)πr²h = (1/3)π·1²·1
-        let r = 1.0_f64;
-        let h = 1.0_f64;
-        let n = 32_usize;
-        let s = cone_faceted(r, h, n);
-        let got = solid_volume(&s);
-        let want = analytic_volume(r, h, n);
-        // Also verify approach to π/3
-        let true_cone_vol = std::f64::consts::PI * r * r * h / 3.0;
-        assert!(
-            (got - want).abs() < 1e-10,
-            "n=32: got={got} want={want}"
-        );
-        // n=32 inscribed polygon is within 1% of the true cone (actual ~0.64%)
-        assert!(
-            (got - true_cone_vol).abs() / true_cone_vol < 0.01,
-            "n=32 should be within 1% of true cone vol, got={got} true={true_cone_vol}"
-        );
-    }
-
-    #[test]
-    fn cone_faceted_all_faces_planar_all_edges_linear() {
-        use crate::geometry::{CurveKind, SurfaceKind};
-        let s = cone_faceted(1.5, 3.0, 8);
+    fn all_faces_plane_all_edges_line() {
+        let s = cone_faceted(1.0, 2.0, 6);
         for (_, surf) in &s.face_geom {
-            assert!(matches!(surf, SurfaceKind::Plane(_)), "all faces must be planar");
+            assert!(
+                matches!(surf, SurfaceKind::Plane(_)),
+                "expected Plane, got {surf:?}"
+            );
         }
         for (_, seg) in &s.edge_geom {
-            assert!(matches!(seg.curve, CurveKind::Line(_)), "all edges must be linear");
+            assert!(
+                matches!(seg.curve, CurveKind::Line(_)),
+                "expected Line, got {:?}",
+                seg.curve
+            );
         }
     }
 
     #[test]
-    fn cone_faceted_json_roundtrip() {
-        let s = cone_faceted(1.0, 2.0, 6);
-        let vol_before = solid_volume(&s);
-        let v = s.vertex_count();
-        let e = s.edge_count();
-        let f = s.face_count();
-
-        let mut buf = Vec::new();
-        write_json(&s, &mut buf).expect("write_json");
-        let s2 = read_json(&mut buf.as_slice()).expect("read_json");
-
-        assert_eq!(s2.vertex_count(), v);
-        assert_eq!(s2.edge_count(), e);
-        assert_eq!(s2.face_count(), f);
-        let vol_after = solid_volume(&s2);
+    fn triangle_pyramid_volume_matches_analytic() {
+        let r = 1.0_f64;
+        let h = 1.0_f64;
+        let n = 3;
+        let s = cone_faceted(r, h, n);
+        let got = solid_volume(&s);
+        let expected = pyramid_volume(r, h, n);
         assert!(
-            (vol_after - vol_before).abs() < 1e-10,
-            "volume changed after JSON round-trip: {vol_before} → {vol_after}"
+            (got - expected).abs() < 1e-12,
+            "n=3: got {got}, expected {expected}"
         );
+    }
+
+    #[test]
+    fn square_pyramid_volume_matches_analytic() {
+        let r = 2.0_f64;
+        let h = 3.0_f64;
+        let n = 4;
+        let s = cone_faceted(r, h, n);
+        let got = solid_volume(&s);
+        let expected = pyramid_volume(r, h, n);
+        assert!(
+            (got - expected).abs() < 1e-9,
+            "n=4 r=2 h=3: got {got}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn high_poly_volume_converges_to_cone() {
+        // For large n: V_pyramid → π r² h / 3 (the analytic cone volume).
+        let r = 1.0_f64;
+        let h = 2.0_f64;
+        let n = 256;
+        let s = cone_faceted(r, h, n);
+        let got = solid_volume(&s);
+        let analytic_cone = PI * r * r * h / 3.0;
+        // Inscribed n-gon underestimates π·r² by O(π³/(3n²)); at n=256 the gap is ~2e-4.
+        assert!(
+            (got - analytic_cone).abs() < 1e-3,
+            "n=256: got {got}, cone analytic={analytic_cone}"
+        );
+    }
+
+    #[test]
+    fn json_round_trip_triangle_pyramid() {
+        let s = cone_faceted(1.0, 2.0, 3);
+        let mut buf = Vec::new();
+        write_json(&s, &mut buf).unwrap();
+        let s2 = read_json(&mut buf.as_slice()).unwrap();
+        assert_eq!(s.vertex_count(), s2.vertex_count());
+        assert_eq!(s.edge_count(), s2.edge_count());
+        assert_eq!(s.face_count(), s2.face_count());
         validate(&s2.topo).unwrap();
+    }
+
+    #[test]
+    fn json_round_trip_hex_pyramid() {
+        let s = cone_faceted(3.0, 1.5, 6);
+        let mut buf = Vec::new();
+        write_json(&s, &mut buf).unwrap();
+        let s2 = read_json(&mut buf.as_slice()).unwrap();
+        assert_eq!(s.vertex_count(), s2.vertex_count());
+        assert_eq!(s.edge_count(), s2.edge_count());
+        assert_eq!(s.face_count(), s2.face_count());
+        validate(&s2.topo).unwrap();
+    }
+
+    #[test]
+    fn apex_is_at_origin_plus_height() {
+        let h = 3.7_f64;
+        let s = cone_faceted(1.0, h, 5);
+        let positions: Vec<_> = s.vertex_geom.values().copied().collect();
+        let apex_found = positions
+            .iter()
+            .any(|p| p.x.abs() < 1e-12 && p.y.abs() < 1e-12 && (p.z - h).abs() < 1e-12);
+        assert!(apex_found, "apex at (0, 0, {h}) not found in vertex positions");
+    }
+
+    #[test]
+    fn base_vertices_lie_on_circle() {
+        let r = 2.5_f64;
+        let s = cone_faceted(r, 1.0, 8);
+        let positions: Vec<_> = s.vertex_geom.values().copied().collect();
+        let base_verts: Vec<_> = positions.iter().filter(|p| p.z.abs() < 1e-12).collect();
+        assert_eq!(base_verts.len(), 8, "expected 8 base vertices at z=0");
+        for p in &base_verts {
+            let dist = (p.x * p.x + p.y * p.y).sqrt();
+            assert!(
+                (dist - r).abs() < 1e-12,
+                "base vertex at distance {dist} from z-axis, expected {r}"
+            );
+        }
     }
 }

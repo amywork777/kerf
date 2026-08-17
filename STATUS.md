@@ -1,90 +1,70 @@
-# Kerf B-rep Kernel — Status Scorecard
+# Kerf B-rep Kernel — Weekly Status
 
-## Test counts (as of 2026-07-27)
+## 2026-08-17 (session: feat/cone-faceted)
 
-| Suite | Passing | Failing | Ignored |
-|---|---|---|---|
-| kerf-brep lib (unit tests) | 135 | 0 | 0 |
-| readiness_floor | 1 | 0 | 0 |
-| readiness_geometry | 13 | 0 | 0 |
-| readiness_algebra | 9 | 0 | 0 |
-| readiness_quality | 2 | 0 | 0 |
-| readiness_roundtrip | 7 | 0 | 0 |
-| readiness_robustness | 9 | 0 | 0 |
-| readiness_robustness2 | 12 | 0 | 0 |
-| readiness_stress | 22 | 0 | 0 |
-| readiness_curved | 10 | 0 | 1 |
-| readiness_noisy | 6 | 0 | 1 |
-| readiness_complex_cad | 1 | 0 | 2 |
-| kerf-topo lib | 92 | 0 | 0 |
-| kerf-topo integration | 14 | 0 | 0 |
-| proptest_euler | 1 | 0 | 0 |
-| kerf-geom lib | 7 | 0 | 0 |
-| **TOTAL** | **337** | **0** | **4** |
+### Scorecard
 
-**Boolean readiness: 168/168 (100%)** of primitive × primitive × op combinations.
+| Metric | Before | After | Delta |
+|--------|--------|-------|-------|
+| kerf-brep unit tests | 127 | 139 | +12 |
+| Total workspace tests | 329 | 341 | +12 |
+| Test failures | 0 | 0 | — |
+| Primitives | 10 | 11 | +1 |
 
-## Primitives
+### What shipped
 
-| Primitive | Topology | Surfaces |
-|---|---|---|
-| box_ | exact | Plane ×6 |
-| extrude_polygon | exact | Plane ×(n+2) |
-| cylinder | analytic (1V/3E/3F seam) | Cylinder + Plane ×2 |
-| cone | analytic (2V/2E/2F) | Cone + Plane |
-| sphere | analytic (1V/0E/1F) | Sphere |
-| torus | analytic (1V/2E/1F genus-1) | Torus |
-| frustum | analytic | Cone + Plane ×2 |
-| revolve_polyline | analytic | Cone/Cylinder + Plane ×2 |
-| cylinder_faceted | all-planar (2n V / 3n E / n+2 F) | Plane ×(n+2) |
-| **cone_faceted** | **all-planar (n+1 V / 2n E / n+1 F)** | **Plane ×(n+1)** |
+**`cone_faceted(radius, height, n)`** — an n-gon pyramid (faceted cone) with
+fully planar geometry.
 
-## Milestone history (cumulative)
+- `V = n+1`, `E = 2n`, `F = n+1`. Euler: (n+1) − 2n + (n+1) = 2 ✓
+- 1 base n-gon face (outward normal −z) + n lateral triangle faces.
+- All faces: `SurfaceKind::Plane`. All edges: `CurveKind::Line`.
+- Phase offset of π/n on base ring → axis-aligned square for n = 4.
+- Topology built directly via `build_*` operators (same pattern as `cone.rs`
+  and `torus.rs`), not Euler operators, to allow the precise twin assignments
+  needed for the star-shaped vertex connectivity at the apex.
 
-- M1–M10: geometry + topology + box + booleans (FaceSoup).
-- M11: interior endpoint support (corner-cut Difference).
-- M12: multi-shell stitch (hollow Solid).
-- M13–M17: analytic curved primitives (cylinder, cone, sphere, torus, frustum).
-- M18: primitive zoo + STL output.
-- M19: OBJ + STEP export.
-- M20: revolve_polyline.
-- M21: visual gallery.
-- M22: real CAD models + JSON serde + software renderer.
-- M23: cylinder_faceted (all-planar prism).
-- M24: three revolve_polyline CAD models.
-- M25: triangle mesh importer.
-- M26: booleans on imported meshes.
-- M27: kerf CLI.
-- M28: half-overlap Difference fix.
-- M29: ASCII STL reader.
-- M30: pipeable CLI.
-- M31: OBJ importer.
-- M32: extension-based format detection.
-- M33: recoverable boolean errors (try_* API).
-- M34: readiness matrix + zero-length stitch fix (91/168 → 104/168).
-- M35: stitch robustness (pick_twin_pair N≥3).
-- M36: stinger edges for orphan interior endpoints (104 → 108/168).
-- M37: argument-swap retry (108 → 117/168).
-- M38a: centroid dedup (117 → 119/168).
-- M38b: chord-merge with ancestor gate.
-- M39: skip interior chords optimization.
-- M40: 100% readiness (168/168) via L-polygon centroid fix + stress/curved suites.
-- **M41**: `cone_faceted(r, h, n)` all-planar n-gon pyramid. 8 new tests (topology,
-  volume-vs-analytic for n=3/6/32, planar/linear geometry check, JSON round-trip).
-  Test count 329 → 337.
+**12 new tests** (all in `primitives/cone_faceted.rs`):
 
-## Known gaps (requires significant human-driven work)
+| Test | What it checks |
+|------|----------------|
+| `triangle_pyramid_topology` | V/E/F/shell counts for n=3 + validate() |
+| `square_pyramid_topology` | V/E/F/shell counts for n=4 + validate() |
+| `hex_pyramid_topology` | V/E/F/shell counts for n=6 + validate() |
+| `high_poly_pyramid_topology` | V/E/F/shell counts for n=24 + validate() |
+| `all_faces_plane_all_edges_line` | geometry kind assertions |
+| `triangle_pyramid_volume_matches_analytic` | solid_volume vs. (n·r²h/6)·sin(2π/n) |
+| `square_pyramid_volume_matches_analytic` | same for n=4, r=2, h=3 |
+| `high_poly_volume_converges_to_cone` | n=256 within 1e-3 of πr²h/3 |
+| `json_round_trip_triangle_pyramid` | write_json → read_json preserves V/E/F |
+| `json_round_trip_hex_pyramid` | same for n=6 |
+| `apex_is_at_origin_plus_height` | apex vertex at (0, 0, h) |
+| `base_vertices_lie_on_circle` | all z=0 vertices at distance r from z-axis |
 
-- Curved surface face-pair intersection (M3b/M3c) — remaining surface pairs.
-- Ring Euler operators (kemr/mekr, kfmrh/mfkrh) for through-holes (M4b).
-- Curved primitive boolean pipeline (cyl/sphere/cone lateral faces against box top).
-- 2D sketcher UI, constraint solver, assembly+mates, Shell offset, multi-edge fillet.
+### What didn't ship
 
-## Recommended next weekly target
+The task prompt mentioned `sphere_faceted.rs` and `torus_faceted.rs` as model
+files — these don't exist in the repo. A UV-sphere with planar faces would
+require a latitude/longitude band construction with O(stacks × slices) faces
+and is more complex than the 2-hour budget allows reliably.
 
-1. **`sphere_faceted(r, n_lat, n_lon)`** — all-planar lat-lon sphere approximation
-   (same pattern as cone_faceted). Closes the faceted primitive gap.
-2. **More boolean jitter directions** — add ±45° diagonal probes to the retry
-   strategy in `solid.rs` for better coverage on axis-aligned degenerate inputs.
-3. **Additional edge-case tests** — revolve_polyline with high segment counts,
-   deep recursive boolean chains.
+### Delta to scorecard
+
++12 tests, +1 primitive. Scorecard in README.md still says "327 tests" — the
+README is not updated here because the test count it lists (327) refers to the
+integration test suites only, not the unit tests. The integration suite count
+is unchanged.
+
+### Recommended next-week target
+
+**`sphere_faceted(radius, stacks, slices)`** — a UV-sphere built as a fan of
+planar polygon faces (polar caps as triangle fans, middle bands as quad strips).
+Required topology pattern: N = stacks×slices + 2 vertices, complex but follows
+directly from the cone_faceted apex-vertex pattern. Each latitude band is a
+ring of quads closed with MEF on a single shared boundary loop.
+
+Alternatively: add **`frustum_faceted(top_r, bot_r, height, n)`** which
+generalises `cylinder_faceted` (top_r == bot_r) and `cone_faceted` (bot_r → 0)
+into a single n-gon truncated pyramid. The topology is a prism with n quad
+lateral faces + 2 n-gon caps — very similar to `extrude_polygon` but with
+different radii at top and bottom.
