@@ -54,6 +54,15 @@ fn face_signed_volume(s: &Solid, face_id: FaceId) -> f64 {
     let Some(lp) = s.topo.loop_(face.outer_loop()) else {
         return 0.0;
     };
+    // Analytic sphere (1V, 0E, 1F) has an empty outer loop (half_edge: None).
+    // Use the closed-form formula so solid_volume(sphere(r)) returns (4/3)πr³.
+    if lp.half_edge().is_none() {
+        if let Some(crate::geometry::SurfaceKind::Sphere(sph)) = s.face_geom.get(face_id) {
+            let r = sph.radius;
+            return (4.0 / 3.0) * std::f64::consts::PI * r * r * r;
+        }
+        return 0.0;
+    }
     let Some(start) = lp.half_edge() else {
         return 0.0;
     };
@@ -115,6 +124,20 @@ mod tests {
     fn empty_solid_has_zero_volume() {
         let s = Solid::new();
         assert_eq!(solid_volume(&s), 0.0);
+    }
+
+    #[test]
+    fn analytic_sphere_volume() {
+        use crate::primitives::sphere;
+        use std::f64::consts::PI;
+        let r = 2.0;
+        let s = sphere(r);
+        let expected = (4.0 / 3.0) * PI * r * r * r;
+        let got = solid_volume(&s);
+        assert!(
+            (got - expected).abs() < 1e-9,
+            "solid_volume(sphere(2)) = {got}, expected {expected}"
+        );
     }
 
     #[test]

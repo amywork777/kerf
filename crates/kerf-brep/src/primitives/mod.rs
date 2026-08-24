@@ -8,6 +8,7 @@ pub mod extrude;
 pub mod frustum;
 pub mod revolve;
 pub mod sphere;
+pub mod sphere_faceted;
 pub mod torus;
 
 pub use box_::{box_, box_at};
@@ -18,4 +19,5 @@ pub use extrude::extrude_polygon;
 pub use frustum::frustum;
 pub use revolve::revolve_polyline;
 pub use sphere::sphere;
+pub use sphere_faceted::sphere_faceted;
 pub use torus::torus;
