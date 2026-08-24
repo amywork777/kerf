@@ -178,4 +178,60 @@ mod tests {
             "volume ratio for 2r/r should be ≈8, got {ratio}"
         );
     }
+
+    // --- boolean sanity ---
+    // sphere_faceted is fully planar so it feeds the standard boolean pipeline.
+    // Geometries below are chosen to avoid T-junction configurations that hit
+    // the known M11 phase-B stitch limitation (where a box edge lands in the
+    // interior of a sphere triangle face).
+
+    #[test]
+    fn sphere_faceted_union_with_laterally_offset_box() {
+        use crate::primitives::box_at;
+        use kerf_geom::Vec3;
+        // Box starting at x=1.1 (past the equator), cutting the +x cap of the sphere.
+        let s = sphere_faceted(1.0, 8);
+        let b = box_at(Vec3::new(2.0, 2.0, 2.0), kerf_geom::Point3::new(1.1, -1.0, -1.0));
+        let r = s.try_union(&b);
+        assert!(r.is_ok(), "sphere_faceted ∪ box should succeed: {:?}", r.err());
+        kerf_topo::validate(&r.unwrap().topo).unwrap();
+    }
+
+    #[test]
+    fn sphere_faceted_union_with_enclosing_box() {
+        use crate::primitives::box_at;
+        use kerf_geom::Vec3;
+        // Box that fully encloses the unit sphere; result volume should be box volume.
+        let s = sphere_faceted(1.0, 8);
+        let b = box_at(Vec3::new(4.0, 4.0, 4.0), kerf_geom::Point3::new(-2.0, -2.0, -2.0));
+        let r = s.try_union(&b).expect("sphere ∪ enclosing box should succeed");
+        kerf_topo::validate(&r.topo).unwrap();
+        // Union of nested solid = enclosing solid; volume must equal box volume.
+        let box_vol = 4.0_f64.powi(3);
+        let got = solid_volume(&r);
+        assert!(
+            (got - box_vol).abs() < 1e-6,
+            "union volume should equal box volume ({box_vol}), got {got}"
+        );
+    }
+
+    #[test]
+    fn sphere_faceted_difference_with_box() {
+        use crate::primitives::box_at;
+        use kerf_geom::Vec3;
+        // Box trimming the +x cap of the unit sphere; result should be smaller than the sphere.
+        let r = 1.0;
+        let s = sphere_faceted(r, 8);
+        let b = box_at(Vec3::new(2.0, 2.0, 2.0), kerf_geom::Point3::new(1.1, -1.0, -1.0));
+        let result = s.try_difference(&b);
+        assert!(result.is_ok(), "sphere_faceted − box should succeed: {:?}", result.err());
+        let diff = result.unwrap();
+        kerf_topo::validate(&diff.topo).unwrap();
+        let sphere_vol = (4.0 / 3.0) * PI * r * r * r;
+        let diff_vol = solid_volume(&diff);
+        assert!(
+            diff_vol > 0.0 && diff_vol < sphere_vol,
+            "difference volume {diff_vol} should be in (0, {sphere_vol:.4})"
+        );
+    }
 }

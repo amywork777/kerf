@@ -2,10 +2,10 @@
 
 | Metric | Value |
 |---|---|
-| Last updated | 2026-08-10 |
-| Tests passing | 336 / 0 failed / 4 ignored |
+| Last updated | 2026-08-24 |
+| Tests passing | 339 / 0 failed / 4 ignored |
 | Readiness matrix | 168 / 168 (100%) prim × prim × op |
-| Last milestone | M38b+fix — `sphere_faceted` + `solid_volume` analytic sphere fix |
+| Last milestone | M38b+fix+bool — `sphere_faceted` boolean tests (union/difference/enclosing) |
 
 ## Primitive inventory
 
@@ -24,13 +24,20 @@
 
 "Full boolean-safe" = all three ops (union/intersection/difference) succeed on all axis-aligned overlapping configurations via the planar pipeline.
 
-## This week's additions (2026-08-10)
+## Additions (2026-08-24)
+
+- **sphere_faceted boolean tests**: added 3 boolean-pipeline tests for `sphere_faceted`:
+  `sphere_faceted_union_with_laterally_offset_box`, `sphere_faceted_union_with_enclosing_box`
+  (with volume assertion), and `sphere_faceted_difference_with_box` (volume check).
+  Geometries are chosen to avoid the known M11 phase-B T-junction limitation.
+  Tests: 336 → 339 (+3 new tests).
+
+## Additions (2026-08-10)
 
 - **`solid_volume` analytic sphere fix**: `solid_volume(sphere(r))` previously returned 0
   because the analytic sphere has an empty outer loop (no half-edges). Now returns the
   exact value `(4/3)πr³` by detecting `SurfaceKind::Sphere` when the loop is empty.
   1 new test: `analytic_sphere_volume`.
-
 - Tests: 335 → 336 (+1 test from the measure fix).
 
 ## Gap list (NOT achievable in a weekly agent run)
