@@ -37,6 +37,17 @@ pub fn shell_volume(s: &Solid, shell: ShellId) -> f64 {
 }
 
 fn face_signed_volume(s: &Solid, face_id: FaceId) -> f64 {
+    // Analytic torus (1V, 2E, 1F — genus-1 surface): all 4 half-edges in the
+    // outer loop originate from the same anchor vertex, so the degenerate
+    // "polygon" has zero area and the divergence theorem returns 0. Use
+    // Pappus's centroid theorem instead: V = 2π²·R·r².
+    if let Some(crate::geometry::SurfaceKind::Torus(t)) = s.face_geom.get(face_id) {
+        return 2.0 * std::f64::consts::PI * std::f64::consts::PI
+            * t.major_radius
+            * t.minor_radius
+            * t.minor_radius;
+    }
+
     // Walk the face's outer loop DIRECTLY (no winding normalization). The
     // loop order encodes the result-face's outward orientation: stitch
     // preserves input polygon order, and input polygons are normalized to
@@ -127,5 +138,50 @@ mod tests {
             .sum();
         assert!((total - 8.0).abs() < 1e-9);
         assert!((solid_volume(&s) - 8.0).abs() < 1e-9);
+    }
+
+    // ---- analytic-surface volume fallbacks ----
+
+    #[test]
+    fn analytic_torus_volume_uses_pappus_formula() {
+        use crate::primitives::torus;
+        use std::f64::consts::PI;
+        // Pappus: V = 2π²·R·r²
+        let big_r = 3.0;
+        let small_r = 1.0;
+        let s = torus(big_r, small_r);
+        let expected = 2.0 * PI * PI * big_r * small_r * small_r;
+        let got = solid_volume(&s);
+        assert!(
+            (got - expected).abs() < 1e-9,
+            "solid_volume(torus({big_r},{small_r})) = {got}, expected {expected} (Pappus)"
+        );
+    }
+
+    #[test]
+    fn analytic_torus_volume_scales_correctly() {
+        use crate::primitives::torus;
+        // Doubling minor radius r → 4× volume (V ∝ r²).
+        let r = 4.0;
+        let s1 = torus(r, 1.0);
+        let s2 = torus(r, 2.0);
+        let ratio = solid_volume(&s2) / solid_volume(&s1);
+        assert!(
+            (ratio - 4.0).abs() < 1e-9,
+            "Doubling minor_r should 4× volume; got ratio={ratio}"
+        );
+    }
+
+    #[test]
+    fn analytic_torus_volume_scales_with_major_radius() {
+        use crate::primitives::torus;
+        // Doubling major radius R → 2× volume (V ∝ R).
+        let s1 = torus(3.0, 1.0);
+        let s2 = torus(6.0, 1.0);
+        let ratio = solid_volume(&s2) / solid_volume(&s1);
+        assert!(
+            (ratio - 2.0).abs() < 1e-9,
+            "Doubling major_R should 2× volume; got ratio={ratio}"
+        );
     }
 }
