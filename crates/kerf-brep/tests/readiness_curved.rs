@@ -14,7 +14,7 @@
 use std::io::Cursor;
 
 use kerf_brep::booleans::BooleanOp;
-use kerf_brep::primitives::{box_, box_at, cone, sphere, torus};
+use kerf_brep::primitives::{box_, box_at, cone, sphere, sphere_faceted, torus};
 use kerf_brep::{
     read_stl_binary_to_solid, solid_volume, tessellate, write_binary, BooleanError, Solid,
 };
@@ -287,4 +287,128 @@ fn box_minus_imported_sphere_works() {
     );
     // 2 shells: outer box + sphere cavity.
     assert_eq!(r.topo.shell_count(), 2);
+}
+
+// ============================================================================
+// sphere_faceted (all-planar UV-sphere polyhedron)
+// ============================================================================
+
+#[test]
+fn sphere_faceted_volume_is_inscribed_in_analytic() {
+    // All vertices lie on the sphere of radius r, so V_faceted < V_analytic.
+    // UV sphere convergence is O(1/n²): n=8×16 gives ~5-6% error,
+    // n=16×32 gives ~1.4%, n=24×48 gives ~0.6%.
+    let r = 1.0;
+    let s = sphere_faceted(r, 8, 16);
+    let v = solid_volume(&s);
+    let analytic = 4.0 / 3.0 * PI * r.powi(3);
+    assert!(v > 0.0, "faceted sphere volume must be positive; got {v}");
+    assert!(
+        v < analytic,
+        "faceted sphere must be inscribed (v={v} ≥ analytic={analytic})"
+    );
+    // At n_lat=8, n_lon=16 the UV sphere approximates within ~6% of analytic.
+    assert!(
+        analytic - v < analytic * 0.07,
+        "faceted sphere volume {v} too far from analytic {analytic}"
+    );
+}
+
+#[test]
+fn sphere_faceted_topology_validates() {
+    let s = sphere_faceted(1.0, 6, 12);
+    kerf_topo::validate(&s.topo).expect("sphere_faceted topology must be valid");
+    // V=2+6*12=74, E=3*6*12=216, F=2*6*12=144. Euler=74-216+144=2.
+    assert_eq!(s.topo.vertex_count(), 74);
+    assert_eq!(s.topo.edge_count(), 216);
+    assert_eq!(s.topo.face_count(), 144);
+}
+
+#[test]
+fn sphere_faceted_diff_box_removes_chunk() {
+    // Carve a box-shaped chunk from a faceted sphere. Result volume should be
+    // sphere_vol − cutter_vol (cutter fully inside sphere).
+    let s = sphere_faceted(1.0, 8, 16);
+    let cutter = box_at(
+        Vec3::new(0.3, 0.3, 0.3),
+        Point3::new(0.0, 0.0, 0.1),
+    );
+    // Verify cutter is inside sphere: farthest corner (0.3, 0.3, 0.4),
+    // distance = √(0.09 + 0.09 + 0.16) = √0.34 ≈ 0.583 < 1.0 ✓
+    let v_before = solid_volume(&s);
+    let cutter_vol = 0.3_f64.powi(3);
+    let r = try_op(&s, &cutter, BooleanOp::Difference).expect("sphere_faceted − box");
+    let v_after = solid_volume(&r);
+    let expected = v_before - cutter_vol;
+    assert!(
+        (v_after - expected).abs() < VOL_TOL,
+        "sphere_faceted − box: got {v_after}, expected ≈ {expected}"
+    );
+}
+
+#[test]
+fn sphere_faceted_union_box_contains_both() {
+    // Union with an overlapping box: result volume ≥ max(sphere_vol, box_vol).
+    let s = sphere_faceted(1.0, 6, 12);
+    let b = box_at(Vec3::new(0.5, 0.5, 0.5), Point3::new(0.5, -0.25, -0.25));
+    let v_sphere = solid_volume(&s);
+    let v_box = 0.5_f64.powi(3);
+    let r = try_op(&s, &b, BooleanOp::Union).expect("sphere_faceted ∪ box");
+    let v_union = solid_volume(&r);
+    assert!(
+        v_union >= v_sphere.max(v_box) - VOL_TOL,
+        "union volume {v_union} should be ≥ max({v_sphere}, {v_box})"
+    );
+    // Union ≤ sphere_vol + box_vol (conservative: overlap region counted once).
+    assert!(
+        v_union <= v_sphere + v_box + VOL_TOL,
+        "union volume {v_union} exceeds sphere+box={}", v_sphere + v_box
+    );
+}
+
+#[test]
+fn sphere_faceted_intersect_box_is_inside_both() {
+    // Intersection with a box that is fully inside the sphere.
+    // Result volume = box volume (box is entirely within sphere).
+    let s = sphere_faceted(1.0, 8, 16);
+    let b = box_at(Vec3::new(0.4, 0.4, 0.4), Point3::new(0.0, 0.0, 0.0));
+    // Verify box corners are inside sphere: farthest at (0.4,0.4,0.4), dist=√0.48≈0.693 < 1 ✓
+    let v_box = 0.4_f64.powi(3);
+    let r = try_op(&s, &b, BooleanOp::Intersection).expect("sphere_faceted ∩ box");
+    let v_inter = solid_volume(&r);
+    assert!(
+        (v_inter - v_box).abs() < VOL_TOL,
+        "sphere ∩ box (box fully inside): got {v_inter}, expected {v_box}"
+    );
+}
+
+#[test]
+fn box_minus_sphere_faceted_hollow() {
+    // Carve a sphere-shaped cavity from a block. Yields a hollow box with
+    // 2 shells: outer box shell + inner sphere cavity.
+    let block = box_(Vec3::new(2.0, 2.0, 2.0));
+    let sphere = sphere_faceted(0.5, 6, 12);
+    // Translate sphere to box center (1,1,1).
+    let mut s = sphere;
+    use kerf_brep::SurfaceKind;
+    let offset = Vec3::new(1.0, 1.0, 1.0);
+    for v in s.vertex_geom.values_mut() {
+        *v += offset;
+    }
+    for surf in s.face_geom.values_mut() {
+        if let SurfaceKind::Plane(plane) = surf {
+            plane.frame.origin += offset;
+        }
+    }
+    let v_block = solid_volume(&block);
+    let v_sphere = solid_volume(&s);
+    let r = try_op(&block, &s, BooleanOp::Difference).expect("box − sphere_faceted");
+    let v_after = solid_volume(&r);
+    let expected = v_block - v_sphere;
+    assert!(
+        (v_after - expected).abs() < VOL_TOL,
+        "box − sphere_faceted: got {v_after}, expected ≈ {expected}"
+    );
+    // Two shells: outer box + inner cavity.
+    assert_eq!(r.topo.shell_count(), 2, "expected 2 shells (hollow box)");
 }
