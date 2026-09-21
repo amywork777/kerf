@@ -12,7 +12,7 @@ combinations succeed. See [`docs/readiness.md`](docs/readiness.md) for the
 milestone history. Run `cargo run --example readiness_matrix -p kerf-brep`
 to refresh.
 
-**Validation: 327 tests across 9 suites:**
+**Validation: 340 tests across 9 suites + 2 new primitive test modules:**
 - `readiness_floor.rs` (1) — topology validates for all 168 matrix cases.
 - `readiness_geometry.rs` (13) — universal volume invariants + analytic
   exact-volume checks for box pairs + Euler-Poincaré on every result.
@@ -117,6 +117,7 @@ Boolean output is safe: `try_*` variants never panic and return
 - [x] M36 — Stinger edges for orphan interior endpoints. M11 phase B no longer panics when an interior intersection point has no boundary-anchored sibling — it mev's a "stinger" edge from any face boundary vertex to the orphan, leaving a topological fjord (face's outer loop has a spike). 104/168 → 108/168 (62% → 64%); the M11 phase-B family of failures now flows past phase B into the stitch single-half-edge bucket (recoverable). `tests/readiness_floor.rs` asserts ≥ 108/168 to prevent regressions.
 - [x] M37 — Argument-swap retry. The boolean classifier is order-dependent for the OnBoundary case — `a.try_union(&b)` can fail where `b.try_union(&a)` succeeds. `try_*` now retries with arguments swapped on failure for commutative ops. 108/168 → 117/168 (64% → 70%), +9 cases unblocked. Floor bumped to 117.
 - [x] M38a — Centroid dedup before averaging. M36's stinger fjords add duplicate spike-anchor vertices to the face polygon, which biases polygon-average centroids enough that the OUTER face of a cyl-pierced box top mis-classifies as Inside (centroid lands in the hole). `face_centroid` now dedups vertices before averaging. 117/168 → 119/168 (70% → 71%). Chord-merge module integrated (same-source + Inside-only restrictions) but doesn't unblock new cases yet — `cyl ∪ box` still fails downstream in stitch.
+- [x] M38b — `sphere_faceted(r, n_stacks, n_slices)` and `capsule_faceted(r, h, n_hemi, n_slices)` pure-mesh primitives. Both are built via `from_triangles` (UV-sphere triangulation with CCW-outward winding), so they enter the boolean pipeline directly without a tessellate→reimport step — bypassing the analytic-sphere boolean degeneracies documented above. `sphere_faceted` at n=16×32 is within 2% of analytic volume; `capsule_faceted` at n=12×24 is within 2% of π r² h + (4/3)π r³. 11 new tests (topology, volume convergence, JSON round-trip); total test count: 340.
 
 ## Visual gallery
 
