@@ -12,7 +12,7 @@ combinations succeed. See [`docs/readiness.md`](docs/readiness.md) for the
 milestone history. Run `cargo run --example readiness_matrix -p kerf-brep`
 to refresh.
 
-**Validation: 327 tests across 9 suites:**
+**Validation: 341 tests across 9 suites + 2 new primitive modules:**
 - `readiness_floor.rs` (1) — topology validates for all 168 matrix cases.
 - `readiness_geometry.rs` (13) — universal volume invariants + analytic
   exact-volume checks for box pairs + Euler-Poincaré on every result.
@@ -117,6 +117,7 @@ Boolean output is safe: `try_*` variants never panic and return
 - [x] M36 — Stinger edges for orphan interior endpoints. M11 phase B no longer panics when an interior intersection point has no boundary-anchored sibling — it mev's a "stinger" edge from any face boundary vertex to the orphan, leaving a topological fjord (face's outer loop has a spike). 104/168 → 108/168 (62% → 64%); the M11 phase-B family of failures now flows past phase B into the stitch single-half-edge bucket (recoverable). `tests/readiness_floor.rs` asserts ≥ 108/168 to prevent regressions.
 - [x] M37 — Argument-swap retry. The boolean classifier is order-dependent for the OnBoundary case — `a.try_union(&b)` can fail where `b.try_union(&a)` succeeds. `try_*` now retries with arguments swapped on failure for commutative ops. 108/168 → 117/168 (64% → 70%), +9 cases unblocked. Floor bumped to 117.
 - [x] M38a — Centroid dedup before averaging. M36's stinger fjords add duplicate spike-anchor vertices to the face polygon, which biases polygon-average centroids enough that the OUTER face of a cyl-pierced box top mis-classifies as Inside (centroid lands in the hole). `face_centroid` now dedups vertices before averaging. 117/168 → 119/168 (70% → 71%). Chord-merge module integrated (same-source + Inside-only restrictions) but doesn't unblock new cases yet — `cyl ∪ box` still fails downstream in stitch.
+- [x] M41 — `sphere_faceted(r, n)` and `torus_faceted(r_maj, r_min, n_maj, n_min)` constructors. UV-sphere polyhedron: `n²+2` vertices, `3n²` edges, `2n²` triangular faces; Euler V−E+F=2. UV-torus polyhedron (genus 1): `n_maj·n_min` vertices, `3·n_maj·n_min` edges, `2·n_maj·n_min` triangular faces; Euler V−E+F=0. Both use all-planar topology via `from_triangles`, so the boolean pipeline applies wherever edges meet planar faces. Winding verified analytically against outward-normal cross-product: [A,D,C]+[A,C,B] for body quads, fan triangles at poles. 12 new tests: topology (V/E/F counts + validate), volume-vs-analytic (< 2% at n=32), radius-scaling invariant, JSON round-trip.
 
 ## Visual gallery
 
