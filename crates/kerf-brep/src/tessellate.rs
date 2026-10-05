@@ -116,12 +116,20 @@ pub fn tessellate(solid: &Solid, lateral_segments: usize) -> FaceSoup {
                 if circles.len() == 1 {
                     let c = circles[0];
                     let apex = find_apex_in_face(solid, face_id);
+                    // When the apex is BELOW the base circle (apex.z < circle.z), the
+                    // outward normals for [apex, p0, p1] point inward. Reverse winding
+                    // so outward normals face away from the solid in both cases.
+                    let apex_below = apex.z < c.frame.origin.z - 1e-10;
                     for i in 0..lateral_segments {
                         let t0 = i as f64 * dt;
                         let t1 = ((i + 1) % lateral_segments) as f64 * dt;
                         let p0 = c.point_at(t0);
                         let p1 = c.point_at(t1);
-                        soup.triangles.push([apex, p0, p1]);
+                        if apex_below {
+                            soup.triangles.push([apex, p1, p0]);
+                        } else {
+                            soup.triangles.push([apex, p0, p1]);
+                        }
                     }
                 } else if circles.len() >= 2 {
                     // Frustum: top and bottom circles. Sort by z so winding is correct.
@@ -202,8 +210,10 @@ pub fn tessellate(solid: &Solid, lateral_segments: usize) -> FaceSoup {
 }
 
 /// Walk a cone face's outer loop to find the apex vertex position.
-/// The apex is the origin of the seam half-edge that points to a non-self-loop vertex
-/// (i.e., the half-edge whose origin is the apex vertex, not on the base circle).
+///
+/// The apex of a revolution-solid cone face is always on the z-axis (x=y=0);
+/// the base-circle seam vertex is off-axis. We use x.abs() + y.abs() < 1e-10
+/// as the axis test, which works for apexes at any z (including z=0).
 fn find_apex_in_face(solid: &Solid, face_id: FaceId) -> kerf_geom::Point3 {
     use kerf_geom::Point3;
     let Some(face) = solid.topo.face(face_id) else {
@@ -220,20 +230,16 @@ fn find_apex_in_face(solid: &Solid, face_id: FaceId) -> kerf_geom::Point3 {
         let Some(he) = solid.topo.half_edge(cur) else {
             break;
         };
-        // The apex half-edge has a Line curve on its edge.
         let eid = he.edge();
         if let Some(seg) = solid.edge_geom.get(eid) {
             if matches!(&seg.curve, CurveKind::Line(_)) {
-                // origin of this half-edge: if the line goes apex→bot, origin is apex.
-                // apex is the vertex that is NOT on the base circle (z == height, not 0).
                 let origin_vid = he.origin();
                 if let Some(pos) = solid.vertex_geom.get(origin_vid) {
-                    // The apex is at z = height > 0; base is at z = 0.
-                    // Return whichever endpoint is not on the base (z ≠ 0).
-                    if pos.z.abs() > 1e-10 {
+                    // Apex is on the z-axis (x≈0, y≈0); base seam vertex is off-axis.
+                    if pos.x.abs() + pos.y.abs() < 1e-10 {
                         return *pos;
                     }
-                    // Otherwise the twin endpoint is apex; get dest vertex via twin.
+                    // Origin is the off-axis base vertex; apex is the twin's origin.
                     let twin_id = he.twin();
                     if let Some(twin) = solid.topo.half_edge(twin_id) {
                         let dest_vid = twin.origin();
